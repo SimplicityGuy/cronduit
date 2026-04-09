@@ -8,59 +8,37 @@
 
 ### System Overview
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│                          Single Tokio Process                          │
-│                                                                        │
-│  ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐   │
-│  │ Config Loader    │   │  Scheduler Core  │   │   Web Server     │   │
-│  │ + Watcher        │◄──┤  (cron clock)    │   │   (axum)         │   │
-│  │ (notify / SIGHUP)│   │  tokio::select   │   │  + /health       │   │
-│  └────────┬─────────┘   └────────┬─────────┘   │  + /metrics      │   │
-│           │                      │             │  + HTML (askama) │   │
-│           │ ConfigSnapshot       │ JobFire     │  + SSE /events   │   │
-│           ▼                      ▼             └────────┬─────────┘   │
-│  ┌────────────────────────────────────────┐             │             │
-│  │         Job Registry (Arc<RwLock>)      │◄────────────┘             │
-│  │  HashMap<JobId, ResolvedJob>            │                           │
-│  └────────────┬───────────────────────────┘                           │
-│               │                                                        │
-│               ▼                                                        │
-│  ┌────────────────────────────────────────┐                           │
-│  │         Executor Dispatcher             │                           │
-│  │  spawn(run_job(job, ExecBackend))       │                           │
-│  └─┬──────────────┬──────────────┬────────┘                           │
-│    │              │              │                                     │
-│    ▼              ▼              ▼                                     │
-│ ┌──────┐     ┌─────────┐    ┌──────────┐                              │
-│ │Docker│     │ Command │    │  Script  │                              │
-│ │backnd│     │ backend │    │  backend │                              │
-│ │bollard│    │ tokio:: │    │ tempfile │                              │
-│ │      │    │ process │    │ + proc    │                              │
-│ └──┬───┘     └────┬────┘    └────┬─────┘                              │
-│    │              │              │                                     │
-│    └──────────────┴──────────────┘                                     │
-│                   │                                                    │
-│                   ▼                                                    │
-│        ┌──────────────────────┐         ┌──────────────────────┐      │
-│        │  Event Bus           │────────►│  Broadcast Channel   │      │
-│        │  (tokio::broadcast)  │         │  for SSE/HTMX        │      │
-│        └──────────┬───────────┘         └──────────────────────┘      │
-│                   │                                                    │
-│                   ▼                                                    │
-│        ┌──────────────────────┐                                        │
-│        │  Persistence Layer   │                                        │
-│        │  (sqlx Pool)         │                                        │
-│        │  SQLite | Postgres   │                                        │
-│        └──────────┬───────────┘                                        │
-│                   ▼                                                    │
-│             ┌────────────┐                                             │
-│             │ jobs       │                                             │
-│             │ job_runs   │                                             │
-│             │ job_logs   │                                             │
-│             │ job_events │                                             │
-│             └────────────┘                                             │
-└───────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Process["Single Tokio Process"]
+        direction TB
+        Config["Config Loader + Watcher<br/>(notify / SIGHUP)"]
+        Scheduler["Scheduler Core<br/>tokio::select! cron clock"]
+        Web["Web Server (axum)<br/>HTML (askama_web)<br/>SSE /events<br/>/health · /metrics"]
+        Registry["Job Registry<br/>Arc&lt;RwLock&lt;HashMap&lt;JobId, ResolvedJob&gt;&gt;&gt;"]
+        Dispatcher["Executor Dispatcher<br/>tokio::spawn(run_job(...))"]
+        Docker["Docker Backend<br/>(bollard)"]
+        Cmd["Command Backend<br/>(tokio::process)"]
+        Script["Script Backend<br/>(tempfile + proc)"]
+        Bus["Event Bus<br/>tokio::broadcast"]
+        SSE["Broadcast Channel<br/>for SSE / HTMX"]
+        Db["Persistence Layer<br/>sqlx Pool · SQLite | Postgres"]
+        Tables[("jobs · job_runs<br/>job_logs · job_events")]
+
+        Config -- "ConfigSnapshot" --> Scheduler
+        Scheduler -- "JobFire" --> Registry
+        Web --> Registry
+        Registry --> Dispatcher
+        Dispatcher --> Docker
+        Dispatcher --> Cmd
+        Dispatcher --> Script
+        Docker --> Bus
+        Cmd --> Bus
+        Script --> Bus
+        Bus --> SSE
+        Bus --> Db
+        Db --> Tables
+    end
 ```
 
 ### Component Responsibilities
@@ -246,53 +224,39 @@ async fn run_job(state: AppState, job: ResolvedJob) {
 
 ### Startup Boot Flow
 
-```
-main.rs
-  │
-  ├─► parse CLI (clap)
-  ├─► init tracing (JSON to stdout)
-  ├─► load config (TOML + env interp)      ─┐
-  ├─► open DB pool                          │
-  ├─► run migrations                        │
-  ├─► sync_config_to_db(snapshot)  ◄────────┘
-  │      • upsert jobs by name
-  │      • mark removed jobs enabled=false
-  │      • resolve @random, persist resolved_schedule
-  │      • enforce random_min_gap across all randomized jobs
-  ├─► build JobRegistry from db::jobs where enabled=true
-  ├─► build broadcast bus, mpsc scheduler control channel
-  ├─► build AppState
-  ├─► spawn scheduler loop (tokio::spawn)
-  ├─► spawn config watcher (notify + SIGHUP)
-  ├─► spawn log retention pruner (daily)
-  ├─► build axum Router with AppState
-  └─► axum::serve(...).with_graceful_shutdown(shutdown_signal)
+```mermaid
+flowchart TD
+    Start([main.rs]) --> Cli["parse CLI (clap)"]
+    Cli --> Trace["init tracing<br/>(JSON to stdout)"]
+    Trace --> Load["load config<br/>(TOML + env interpolation)"]
+    Load --> Pool["open DB pool"]
+    Pool --> Mig["run migrations"]
+    Mig --> Sync["sync_config_to_db(snapshot)<br/>· upsert jobs by name<br/>· mark removed jobs enabled=false<br/>· resolve @random → resolved_schedule<br/>· enforce random_min_gap"]
+    Sync --> Reg["build JobRegistry<br/>(jobs where enabled=true)"]
+    Reg --> Bus["build broadcast bus<br/>+ mpsc scheduler control channel"]
+    Bus --> State["build AppState"]
+    State --> Sched["spawn scheduler loop<br/>(tokio::spawn)"]
+    Sched --> Watch["spawn config watcher<br/>(notify + SIGHUP)"]
+    Watch --> Prune["spawn log retention pruner<br/>(daily)"]
+    Prune --> Router["build axum Router<br/>with AppState"]
+    Router --> Serve["axum::serve(...)<br/>.with_graceful_shutdown(shutdown_signal)"]
+    Serve --> Run([running])
 ```
 
 ### Config Reload Flow (SIGHUP / POST /api/reload)
 
-```
-Signal/HTTP
-    │
-    ▼
-config::watch  ──load→  ConfigSnapshot ──send→ SchedulerCmd::Reload
-                                                    │
-                                                    ▼
-                                             scheduler loop
-                                                    │
-                                        ┌───────────┴───────────┐
-                                        ▼                       ▼
-                              diff old vs new registry   sync_to_db (same fn as boot)
-                                        │                       │
-                                        └───────────┬───────────┘
-                                                    ▼
-                                        registry.write() = new map
-                                                    │
-                                                    ▼
-                                         recompute next_fire
-                                                    │
-                                                    ▼
-                                         events::JobsReloaded → SSE
+```mermaid
+flowchart TD
+    Trigger["SIGHUP · notify event ·<br/>POST /api/reload"] --> Watch["config::watch<br/>load + parse + interpolate"]
+    Watch --> Snap["ConfigSnapshot"]
+    Snap --> Cmd["SchedulerCmd::Reload"]
+    Cmd --> Loop["scheduler loop<br/>(receives on mpsc)"]
+    Loop --> Diff["diff old vs new registry"]
+    Loop --> Sync["sync_to_db<br/>(same fn as boot)"]
+    Diff --> Swap["registry.write() = new map"]
+    Sync --> Swap
+    Swap --> Recompute["recompute next_fire"]
+    Recompute --> Emit["events::JobsReloaded → SSE"]
 ```
 
 **Idempotency:** `sync_to_db` is keyed on `(job.name, config_hash)`. Same config → no writes. Removed jobs → `enabled=false`, history preserved. New jobs → insert. Changed jobs → update and null out `resolved_schedule` if the schedule changed (forcing re-randomization on next resolve).
@@ -301,42 +265,35 @@ config::watch  ──load→  ConfigSnapshot ──send→ SchedulerCmd::Reload
 
 ### Job Fire → Execute → Persist → Publish Flow
 
-```
-scheduler tick reaches next_fire
-    │
-    ▼
-SchedulerCmd::Fire(job_id)
-    │
-    ▼
-executor::dispatch(state, job)  ── tokio::spawn
-    │
-    ▼
-db::runs::insert_running()  ─────► job_runs row (status=running, start_time=now)
-    │
-    ▼
-events.send(RunStarted) ──────────► broadcast::Sender
-                                          │
-                                          ▼
-                                    SSE /events → HTMX swap in dashboard
-    │
-    ▼
-backend.execute(job)
-  (docker | command | script)
-    │
-    ├── log stream ──► logs pipeline ──► db::logs::insert_batch()
-    │                         │
-    │                         └──► events.send(LogLine) ──► SSE → run detail tail
-    ▼
-wait_exit + timeout guard
-    │
-    ▼
-db::runs::finalize(status, exit_code, end_time, duration_ms)
-    │
-    ▼
-metrics: runs_total{status} inc, run_duration_seconds observe
-    │
-    ▼
-events.send(RunFinished) ────────► SSE → status badge update
+```mermaid
+sequenceDiagram
+    participant S as Scheduler loop
+    participant E as Executor task<br/>(per-run)
+    participant B as Backend<br/>(docker/command/script)
+    participant L as Log pipeline
+    participant DB as sqlx Pool
+    participant Bus as Event Bus<br/>(broadcast)
+    participant W as Web (SSE)
+    participant M as Metrics
+
+    S->>S: tick reaches next_fire
+    S->>E: SchedulerCmd::Fire(job_id)<br/>tokio::spawn(run_job)
+    E->>DB: db::runs::insert_running()
+    DB-->>E: run_id
+    E->>Bus: events.send(RunStarted)
+    Bus-->>W: SSE /events → HTMX swap (dashboard)
+    E->>B: backend.execute(job)
+    activate B
+    B->>L: log stream chunks
+    L->>DB: db::logs::insert_batch()
+    L->>Bus: events.send(LogLine)
+    Bus-->>W: SSE → run detail tail
+    B-->>E: wait_exit + timeout guard
+    deactivate B
+    E->>DB: db::runs::finalize(status, exit_code, ...)
+    E->>M: runs_total{status}.inc()<br/>run_duration_seconds.observe()
+    E->>Bus: events.send(RunFinished)
+    Bus-->>W: SSE → status badge update
 ```
 
 ### Live Tail Flow (Run Detail)
@@ -404,6 +361,55 @@ Given jobs with any @random in their schedule, grouped by "same day" constraint:
 ## Database Schema
 
 The schema must work on both SQLite and Postgres with one logical migration. Use portable types: text timestamps (RFC3339), TEXT for enums, `INTEGER PRIMARY KEY`. Use per-backend migration files if needed.
+
+```mermaid
+erDiagram
+    jobs ||--o{ job_runs : "executes"
+    job_runs ||--o{ job_logs : "produces"
+    jobs ||--o{ job_events : "emits"
+    job_runs ||--o{ job_events : "emits"
+
+    jobs {
+        INTEGER id PK
+        TEXT name UK
+        TEXT schedule "raw, e.g. @random"
+        TEXT resolved_schedule "concrete cron"
+        TEXT job_type "docker | command | script"
+        TEXT config_json
+        TEXT config_hash "sha256, idempotent sync key"
+        INTEGER enabled "0 = removed from config"
+        INTEGER timeout_secs
+        TEXT created_at "RFC3339"
+        TEXT updated_at "RFC3339"
+    }
+    job_runs {
+        INTEGER id PK
+        INTEGER job_id FK
+        TEXT status "running | success | failed | timeout | error"
+        TEXT trigger "schedule | manual | startup"
+        TEXT start_time "RFC3339"
+        TEXT end_time "nullable"
+        INTEGER duration_ms "nullable"
+        INTEGER exit_code "nullable"
+        TEXT container_id "nullable, docker only"
+        TEXT error_message "nullable"
+    }
+    job_logs {
+        INTEGER id PK
+        INTEGER run_id FK
+        TEXT stream "stdout | stderr"
+        TEXT ts "line timestamp"
+        TEXT line
+    }
+    job_events {
+        INTEGER id PK
+        TEXT kind "run_started | run_finished | log_line | jobs_reloaded"
+        INTEGER run_id "nullable"
+        INTEGER job_id "nullable"
+        TEXT payload "JSON"
+        TEXT created_at "RFC3339"
+    }
+```
 
 ```sql
 -- 20260101000000_initial.up.sql

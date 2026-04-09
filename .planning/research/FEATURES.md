@@ -94,61 +94,34 @@ These are features that users will request but that would either bloat scope, br
 
 ## Feature Dependencies
 
-```
-┌─────────────────────┐
-│ Cron parser         │◄─── Foundation for everything
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│ Scheduler loop      │
-└─────────┬───────────┘
-          │
-          ├──────► Job executor (command, script, docker)
-          │              │
-          │              ├──► bollard integration
-          │              │        │
-          │              │        └──► Network mode support
-          │              │                  │
-          │              │                  └──► container:<name> (THE diff)
-          │              │
-          │              └──► Log capture (stdout/stderr streaming)
-          │                         │
-          │                         ▼
-          │                 ┌─────────────────┐
-          │                 │ Persistence     │ ◄── SQLite + migrations
-          │                 └────────┬────────┘
-          │                          │
-          │                          ▼
-          │                 ┌─────────────────┐
-          │                 │ Web UI          │
-          │                 └────────┬────────┘
-          │                          │
-          │                          ├──► Dashboard list
-          │                          ├──► Job detail (needs resolved config)
-          │                          ├──► Run detail (needs logs)
-          │                          ├──► Run Now (needs scheduler + executor)
-          │                          └──► Auto-refresh (needs HTMX + polling endpoint)
-          │
-          ├──────► @random resolver
-          │              │
-          │              └──► random_min_gap solver (depends on @random)
-          │
-          ├──────► Config parser (TOML)
-          │              │
-          │              └──► Sync-on-startup (create/update/disable/preserve)
-          │                          │
-          │                          └──► Config reload (SIGHUP + API)
-          │
-          └──────► Graceful shutdown (depends on in-flight run tracking)
+```mermaid
+flowchart TD
+    Cron["Cron parser<br/>(foundation)"] --> Loop["Scheduler loop"]
+    Loop --> Exec["Job executor<br/>(command · script · docker)"]
+    Loop --> Random["@random resolver"]
+    Loop --> Config["Config parser (TOML)"]
+    Loop --> Shutdown["Graceful shutdown<br/>(in-flight run tracking)"]
 
-┌─────────────────────┐
-│ /metrics endpoint   │◄── Enhances observability (independent)
-└─────────────────────┘
+    Exec --> Bollard["bollard integration"]
+    Bollard --> NetMode["Network mode support"]
+    NetMode --> CtrName["container:&lt;name&gt;<br/>(THE differentiator)"]
+    Exec --> LogCap["Log capture<br/>(stdout/stderr streaming)"]
 
-┌─────────────────────┐
-│ /health endpoint    │◄── Required for compose healthcheck (independent)
-└─────────────────────┘
+    LogCap --> Persist["Persistence<br/>(SQLite + migrations)"]
+    Persist --> Web["Web UI"]
+    Web --> Dash["Dashboard list"]
+    Web --> JobDet["Job detail<br/>(resolved config)"]
+    Web --> RunDet["Run detail<br/>(logs)"]
+    Web --> RunNow["Run Now<br/>(scheduler + executor)"]
+    Web --> Refresh["Auto-refresh<br/>(HTMX + polling endpoint)"]
+
+    Random --> MinGap["random_min_gap solver<br/>(depends on @random)"]
+
+    Config --> Sync["Sync-on-startup<br/>(create / update / disable / preserve)"]
+    Sync --> Reload["Config reload<br/>(SIGHUP + API)"]
+
+    Metrics["/metrics endpoint<br/>(observability — independent)"]
+    Health["/health endpoint<br/>(compose healthcheck — independent)"]
 ```
 
 ### Dependency Notes
