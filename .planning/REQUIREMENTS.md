@@ -173,17 +173,110 @@ Explicitly excluded from the project. Documented to prevent scope creep.
 
 ## Traceability
 
-Phase mapping is populated by the roadmap agent in the next step. After roadmap creation, every v1 requirement above must appear in this table mapped to exactly one phase.
+Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` for phase details.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (populated by roadmap creation) | | |
+| FOUND-01 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Pending |
+| FOUND-03 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Pending |
+| FOUND-05 | Phase 1 | Pending |
+| FOUND-06 | Phase 1 | Pending |
+| FOUND-07 | Phase 1 | Pending |
+| FOUND-08 | Phase 1 | Pending |
+| FOUND-09 | Phase 1 | Pending |
+| FOUND-10 | Phase 1 | Pending |
+| FOUND-11 | Phase 1 | Pending |
+| CONF-01 | Phase 1 | Pending |
+| CONF-02 | Phase 1 | Pending |
+| CONF-03 | Phase 1 | Pending |
+| CONF-04 | Phase 1 | Pending |
+| CONF-05 | Phase 1 | Pending |
+| CONF-06 | Phase 1 | Pending |
+| CONF-07 | Phase 1 | Pending |
+| CONF-08 | Phase 1 | Pending |
+| CONF-09 | Phase 1 | Pending |
+| CONF-10 | Phase 1 | Pending |
+| DB-01 | Phase 1 | Pending |
+| DB-02 | Phase 1 | Pending |
+| DB-03 | Phase 1 | Pending |
+| DB-04 | Phase 1 | Pending |
+| DB-05 | Phase 1 | Pending |
+| DB-06 | Phase 1 | Pending |
+| DB-07 | Phase 1 | Pending |
+| DB-08 | Phase 6 | Pending |
+| SCHED-01 | Phase 2 | Pending |
+| SCHED-02 | Phase 2 | Pending |
+| SCHED-03 | Phase 2 | Pending |
+| SCHED-04 | Phase 2 | Pending |
+| SCHED-05 | Phase 2 | Pending |
+| SCHED-06 | Phase 2 | Pending |
+| SCHED-07 | Phase 2 | Pending |
+| SCHED-08 | Phase 4 | Pending |
+| RAND-01 | Phase 5 | Pending |
+| RAND-02 | Phase 5 | Pending |
+| RAND-03 | Phase 5 | Pending |
+| RAND-04 | Phase 5 | Pending |
+| RAND-05 | Phase 5 | Pending |
+| RAND-06 | Phase 5 | Pending |
+| EXEC-01 | Phase 2 | Pending |
+| EXEC-02 | Phase 2 | Pending |
+| EXEC-03 | Phase 2 | Pending |
+| EXEC-04 | Phase 2 | Pending |
+| EXEC-05 | Phase 2 | Pending |
+| EXEC-06 | Phase 2 | Pending |
+| DOCKER-01 | Phase 4 | Pending |
+| DOCKER-02 | Phase 4 | Pending |
+| DOCKER-03 | Phase 4 | Pending |
+| DOCKER-04 | Phase 4 | Pending |
+| DOCKER-05 | Phase 4 | Pending |
+| DOCKER-06 | Phase 4 | Pending |
+| DOCKER-07 | Phase 4 | Pending |
+| DOCKER-08 | Phase 4 | Pending |
+| DOCKER-09 | Phase 4 | Pending |
+| DOCKER-10 | Phase 4 | Pending |
+| RELOAD-01 | Phase 5 | Pending |
+| RELOAD-02 | Phase 5 | Pending |
+| RELOAD-03 | Phase 5 | Pending |
+| RELOAD-04 | Phase 5 | Pending |
+| RELOAD-05 | Phase 5 | Pending |
+| RELOAD-06 | Phase 5 | Pending |
+| RELOAD-07 | Phase 5 | Pending |
+| UI-01 | Phase 3 | Pending |
+| UI-02 | Phase 3 | Pending |
+| UI-03 | Phase 3 | Pending |
+| UI-04 | Phase 3 | Pending |
+| UI-05 | Phase 3 | Pending |
+| UI-06 | Phase 3 | Pending |
+| UI-07 | Phase 3 | Pending |
+| UI-08 | Phase 3 | Pending |
+| UI-09 | Phase 3 | Pending |
+| UI-10 | Phase 3 | Pending |
+| UI-11 | Phase 3 | Pending |
+| UI-12 | Phase 3 | Pending |
+| UI-13 | Phase 3 | Pending |
+| UI-14 | Phase 6 | Pending |
+| UI-15 | Phase 3 | Pending |
+| OPS-01 | Phase 3 | Pending |
+| OPS-02 | Phase 6 | Pending |
+| OPS-03 | Phase 1 | Pending |
+| OPS-04 | Phase 6 | Pending |
+| OPS-05 | Phase 6 | Pending |
 
 **Coverage:**
 - v1 requirements: 86 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 86 ⚠️ (will be 0 after roadmap creation)
+- Mapped to phases: 86
+- Unmapped: 0 ✓
+
+**Distribution by phase:**
+- Phase 1 (Foundation, Security Posture & Persistence Base): 29 requirements
+- Phase 2 (Scheduler Core & Command/Script Executor): 13 requirements
+- Phase 3 (Read-Only Web UI & Health Endpoint): 15 requirements
+- Phase 4 (Docker Executor & container-network Differentiator): 11 requirements
+- Phase 5 (Config Reload & `@random` Resolver): 13 requirements
+- Phase 6 (Live Events, Metrics, Retention & Release Engineering): 5 requirements
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-09 after research synthesis*
+*Last updated: 2026-04-09 after roadmap creation — traceability table populated with full 86/86 mapping*
