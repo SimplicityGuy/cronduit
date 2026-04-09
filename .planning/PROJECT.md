@@ -117,13 +117,17 @@ Cronduit collapses those into one tool: define jobs in a config file, get a dash
 ## Constraints
 
 - **Tech stack (locked)**: Rust backend using `bollard` for the Docker API. No CLI shelling out. No alternative languages for v1.
-- **Persistence (locked)**: `sqlx` with SQLite default and PostgreSQL optional. Same schema targets both.
-- **Frontend (locked)**: Tailwind CSS + server-rendered HTML templating (askama or maud) with HTMX-style live updates. No React/Vue/Svelte.
-- **Config format (soft-locked)**: TOML is the working assumption; research phase will explicitly validate TOML vs. YAML (and note INI/JSON) before freezing the decision.
+- **Persistence (locked)**: `sqlx` with SQLite default and PostgreSQL optional. Same logical schema, per-backend migration files where dialect requires. Separate read/write SQLite pools (WAL + busy_timeout) per pitfalls research.
+- **Frontend (locked)**: Tailwind CSS + server-rendered HTML via `askama_web` 0.15 with the `axum-0.8` feature (NOT the deprecated `askama_axum` crate). HTMX-style live updates. No React/Vue/Svelte.
+- **Config format (locked)**: TOML. `serde-yaml` is archived on GitHub and the YAML ecosystem is fragmented; research phase confirmed TOML is the right call.
+- **Cron crate (locked)**: `croner` 3.0 — DST-aware (Vixie-cron-aligned), supports `L`/`#`/`W` modifiers, has human-readable descriptions. NOT the `cron` crate or `saffron` (abandoned 2021).
+- **TLS / cross-compile (locked)**: rustls everywhere. `cargo tree -i openssl-sys` must return empty. Multi-arch (amd64 + arm64) via `cargo-zigbuild`, not QEMU emulation.
 - **Deployment shape**: Single binary + Docker image. Cronduit itself runs inside Docker, mounting the host Docker socket.
-- **Security posture**: No plaintext secrets in the config file; interpolate from env. Config mounted read-only. Web UI ships unauthenticated in v1 (see Out of Scope).
-- **Quality bar**: Tests + GitHub Actions CI from phase 1. Clippy + fmt gate on CI. README sufficient for a stranger to self-host.
+- **Security posture**: No plaintext secrets in the config file; interpolate from env, wrap in a `SecretString` type. Config mounted read-only. **Default bind `127.0.0.1:8080`**; loud startup warning if bind is non-loopback. Web UI ships unauthenticated in v1 (see Out of Scope) — operators are expected to either keep Cronduit on loopback / trusted LAN or front it with their existing reverse proxy. Threat model documented in `THREAT_MODEL.md`; README leads with a security section.
+- **Quality bar**: Tests + GitHub Actions CI from phase 1. Clippy + fmt gate on CI. CI matrix covers `linux/amd64 + linux/arm64 × SQLite + Postgres`. README sufficient for a stranger to self-host.
 - **Design fidelity**: Web UI must match `design/DESIGN_SYSTEM.md` (Cronduit terminal-green brand), not ship in default Tailwind look.
+- **Documentation**: All diagrams in any project artifact (planning docs, README, PR descriptions, code comments) must be authored as mermaid code blocks. No ASCII art diagrams.
+- **Workflow**: All changes land via pull request on a feature branch. No direct commits to `main`.
 
 ## Key Decisions
 
@@ -132,10 +136,24 @@ Cronduit collapses those into one tool: define jobs in a config file, get a dash
 | Rust for the backend | Performance, reliability, single binary, strong async story via tokio, good Docker client (`bollard`) | — Pending |
 | `bollard` Docker client (not CLI) | Direct API access = all network modes work (`container:<name>`), no shell-out fragility, better error surface | — Pending |
 | SQLite default, PostgreSQL optional | Zero-config for homelabs, upgrade path for shared deployments | — Pending |
+| Separate read/write SQLite pools (WAL + busy_timeout) | Avoids writer-contention collapse under concurrent log writes (pitfalls research) | — Pending |
+| `croner` 3.0 for cron parsing | DST-aware (Vixie-aligned), supports `L`/`#`/`W`, has human-readable descriptions; `cron` crate is too limited and `saffron` is abandoned | — Pending |
+| Hand-roll the scheduler loop on `tokio::select!` | `tokio-cron-scheduler` lacks SQLite persistence and would create a dual source of truth with our `jobs` table | — Pending |
+| `askama_web` 0.15 with `axum-0.8` feature | `askama_axum` is deprecated; `askama_web` is the supported integration crate | — Pending |
+| HTMX polling for dashboard, SSE only for log tail | Keeps SSE subscriber count low; polling is debuggable and cache-friendly | — Pending |
 | Tailwind + server-rendered HTML (no SPA) | Matches single-binary goal, fits terminal aesthetic, no JS build complexity | — Pending |
-| Web UI auth deferred to v2 | v1 assumes trusted LAN; unblocks shipping; users can front with reverse proxy | — Pending |
+| Tailwind via standalone binary (no Node) | Preserves single-binary toolchain story | — Pending |
+| `rust-embed` 8.x for static assets | Debug-mode disk-read makes the inner dev loop 10× faster than `include_dir` | — Pending |
+| TOML as the locked config format | `serde-yaml` is archived on GitHub; YAML's required quoting around `*`/`@random` is hostile for cron configs | ✓ Settled by research |
+| rustls everywhere (zero `openssl-sys`) | Cross-compile cleanliness for musl/arm64; `cargo-zigbuild` build path | — Pending |
+| Default bind `127.0.0.1`, loud warning on non-loopback | "No auth in v1" must be paired with safe-by-default network exposure (pitfalls research) | — Pending |
+| Never `auto_remove=true` on bollard containers | Races with `wait_container` and loses exit codes / truncates logs (moby#8441) | — Pending |
+| Label every spawned container `cronduit.run_id=<id>` | Required for orphan reconciliation on restart; otherwise DB rows stick in `status=running` | — Pending |
+| Web UI auth deferred to v2 | v1 assumes loopback / trusted LAN / reverse-proxy fronting; threat model documented in `THREAT_MODEL.md` | — Pending |
 | Tests + CI required in phase 1 | Public OSS release — external adopters need a quality signal from day one | — Pending |
-| TOML as primary config (to be validated) | Rust ecosystem maturity, cleaner than YAML for hand-written config; research phase will confirm | ⚠️ Revisit after research |
+| CI matrix: amd64 + arm64 × SQLite + Postgres from phase 1 | Schema parity and cross-compile breakage are otherwise discovered too late (pitfalls research) | — Pending |
+| All diagrams must be mermaid; no ASCII art | Renders natively on GitHub; diff-friendly; readable on narrow viewports (user requirement) | ✓ Settled |
+| All changes land via PR on a feature branch | No direct commits to `main` (user requirement) | ✓ Settled |
 | No ofelia import path | Keeps scope small; operators rewrite schedules once | — Pending |
 
 ## Evolution
@@ -156,4 +174,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-09 after initialization*
+*Last updated: 2026-04-09 after research synthesis (added resolved crate decisions, locked TOML, tightened security posture, captured workflow + diagram requirements)*
