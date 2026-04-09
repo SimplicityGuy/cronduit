@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Background -->
+  <rect width="256" height="256" rx="40" fill="#0a0d0b"/>
+  <rect width="256" height="256" rx="40" fill="none" stroke="#1e2a22" stroke-width="2"/>
+  <!-- Clock-arrow mark centered -->
+  <g transform="translate(56, 72)">
+    <!-- Clock circle -->
+    <circle cx="40" cy="40" r="32" fill="none" stroke="#34d399" stroke-width="5"/>
+    <!-- Hour hand (up) -->
+    <line x1="40" y1="40" x2="40" y2="18" stroke="#34d399" stroke-width="5" stroke-linecap="round"/>
+    <!-- Minute hand (right) -->
+    <line x1="40" y1="40" x2="56" y2="40" stroke="#34d399" stroke-width="5" stroke-linecap="round"/>
+    <!-- Center dot -->
+    <circle cx="40" cy="40" r="4" fill="#34d399"/>
+    <!-- Pipeline -->
+    <line x1="72" y1="40" x2="104" y2="40" stroke="#34d399" stroke-width="4" stroke-linecap="round"/>
+    <!-- Arrow -->
+    <polygon points="98,28 116,40 98,52" fill="#34d399"/>
+  </g>
+  <!-- Wordmark below -->
+  <text x="128" y="176" font-family="'JetBrains Mono', monospace" font-weight="700" font-size="28" fill="#d0ddd4" text-anchor="middle" letter-spacing="0.05em">cronduit</text>
+  <!-- Tagline -->
+  <text x="128" y="200" font-family="'JetBrains Mono', monospace" font-size="9" fill="#4a5a4e" text-anchor="middle">cron, modernized</text>
+</svg>

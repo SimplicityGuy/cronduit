@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cronduit Design System — Showcase</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root, [data-theme="dark"] {
+    --cd-green: #34d399;
+    --cd-green-dim: rgba(52, 211, 153, 0.15);
+    --cd-green-bright: #6ee7b7;
+    --cd-status-active: #34d399;
+    --cd-status-running: #60a5fa;
+    --cd-status-disabled: #fbbf24;
+    --cd-status-error: #f87171;
+    --cd-status-active-bg: rgba(52, 211, 153, 0.12);
+    --cd-status-running-bg: rgba(96, 165, 250, 0.12);
+    --cd-status-disabled-bg: rgba(251, 191, 36, 0.12);
+    --cd-status-error-bg: rgba(248, 113, 113, 0.12);
+    --cd-bg-primary: #050508;
+    --cd-bg-surface: #0a0d0b;
+    --cd-bg-surface-raised: #0f1512;
+    --cd-bg-surface-sunken: #030405;
+    --cd-bg-hover: #141a16;
+    --cd-border: #1e2a22;
+    --cd-border-subtle: #141a16;
+    --cd-border-strong: #2a3a2f;
+    --cd-border-focus: #34d399;
+    --cd-text-primary: #d0ddd4;
+    --cd-text-secondary: #7a8a7e;
+    --cd-text-muted: #4a5a4e;
+    --cd-text-inverse: #0a0d0b;
+    --cd-text-accent: #34d399;
+  }
+
+  [data-theme="light"] {
+    --cd-green: #059669;
+    --cd-green-dim: rgba(5, 150, 105, 0.1);
+    --cd-green-bright: #34d399;
+    --cd-status-active: #059669;
+    --cd-status-running: #2563eb;
+    --cd-status-disabled: #d97706;
+    --cd-status-error: #dc2626;
+    --cd-status-active-bg: rgba(5, 150, 105, 0.08);
+    --cd-status-running-bg: rgba(37, 99, 235, 0.08);
+    --cd-status-disabled-bg: rgba(217, 119, 6, 0.08);
+    --cd-status-error-bg: rgba(220, 38, 38, 0.08);
+    --cd-bg-primary: #f8f8f6;
+    --cd-bg-surface: #ffffff;
+    --cd-bg-surface-raised: #f0f0ed;
+    --cd-bg-surface-sunken: #e8e8e4;
+    --cd-bg-hover: #e8ebe9;
+    --cd-border: #d4d8d5;
+    --cd-border-subtle: #e0e4e1;
+    --cd-border-strong: #b0b8b3;
+    --cd-border-focus: #059669;
+    --cd-text-primary: #1a1f1c;
+    --cd-text-secondary: #5a6a5e;
+    --cd-text-muted: #8a9a8e;
+    --cd-text-inverse: #f8f8f6;
+    --cd-text-accent: #059669;
+  }
+
+  body {
+    background: var(--cd-bg-primary);
+    color: var(--cd-text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 40px 20px;
+    transition: background 0.3s, color 0.3s;
+  }
+
+  .container { max-width: 840px; margin: 0 auto; }
+
+  /* Theme toggle */
+  .theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    background: var(--cd-bg-surface);
+    border: 1px solid var(--cd-border);
+    color: var(--cd-text-primary);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    z-index: 100;
+    transition: all 0.2s;
+  }
+  .theme-toggle:hover { background: var(--cd-bg-hover); }
+
+  /* Section */
+  .section { margin-bottom: 56px; }
+  .section-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--cd-text-accent);
+    margin-bottom: 20px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--cd-border-subtle);
+  }
+
+  /* Banner showcase */
+  .banner-frame {
+    background: var(--cd-bg-surface);
+    border: 1px solid var(--cd-border);
+    border-radius: 12px;
+    padding: 24px;
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+
+  /* Logo grid */
+  .logo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+  }
+  .logo-cell {
+    border: 1px solid var(--cd-border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .logo-cell img, .logo-cell svg { max-width: 100%; height: auto; }
+  .logo-cell .label {
+    font-size: 9px;
+    color: var(--cd-text-muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  /* Color swatches */
+  .swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .swatch {
+    border: 1px solid var(--cd-border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .swatch-color { height: 48px; }
+  .swatch-info {
+    padding: 8px 10px;
+    background: var(--cd-bg-surface);
+  }
+  .swatch-name { font-size: 11px; font-weight: 700; }
+  .swatch-hex { font-size: 10px; color: var(--cd-text-secondary); }
+
+  /* Typography showcase */
+  .type-row {
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    border: 1px solid var(--cd-border-subtle);
+    border-radius: 8px;
+  }
+  .type-label {
+    font-size: 9px;
+    color: var(--cd-text-muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .type-2xl { font-size: 2rem; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; }
+  .type-xl { font-size: 1.5rem; font-weight: 700; line-height: 1.3; letter-spacing: -0.02em; }
+  .type-lg { font-size: 1.25rem; font-weight: 500; line-height: 1.4; }
+  .type-base { font-size: 0.9rem; font-weight: 400; line-height: 1.6; }
+  .type-sm { font-size: 0.8rem; font-weight: 400; line-height: 1.5; color: var(--cd-text-secondary); }
+  .type-xs { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cd-text-muted); }
+
+  /* Badges */
+  .badge-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 4px;
+  }
+  .badge-active { background: var(--cd-status-active-bg); color: var(--cd-status-active); }
+  .badge-running { background: var(--cd-status-running-bg); color: var(--cd-status-running); }
+  .badge-disabled { background: var(--cd-status-disabled-bg); color: var(--cd-status-disabled); }
+  .badge-error { background: var(--cd-status-error-bg); color: var(--cd-status-error); }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .btn {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-primary { background: var(--cd-green); color: var(--cd-text-inverse); }
+  .btn-primary:hover { background: var(--cd-green-bright); }
+  .btn-secondary { background: transparent; border: 1px solid var(--cd-border); color: var(--cd-text-primary); }
+  .btn-secondary:hover { background: var(--cd-bg-hover); }
+  .btn-danger { background: var(--cd-status-error); color: #fff; }
+
+  /* Card */
+  .card-demo {
+    background: var(--cd-bg-surface);
+    border: 1px solid var(--cd-border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-demo h3 { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+  .card-demo p { font-size: 12px; color: var(--cd-text-secondary); }
+
+  /* Input */
+  .input-demo {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 12px;
+    background: var(--cd-bg-surface-sunken);
+    border: 1px solid var(--cd-border);
+    border-radius: 8px;
+    color: var(--cd-text-primary);
+    width: 100%;
+    max-width: 320px;
+    outline: none;
+    transition: border 0.15s, box-shadow 0.15s;
+    margin-bottom: 16px;
+  }
+  .input-demo:focus {
+    border-color: var(--cd-border-focus);
+    box-shadow: 0 0 0 2px var(--cd-green-dim);
+  }
+  .input-demo::placeholder { color: var(--cd-text-muted); }
+
+  /* Table */
+  .table-demo {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+  .table-demo th {
+    text-align: left;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--cd-text-muted);
+    background: var(--cd-bg-surface-raised);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--cd-border);
+  }
+  .table-demo td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--cd-border-subtle);
+  }
+  .table-demo tr:hover td { background: var(--cd-bg-hover); }
+
+  /* Terminal block */
+  .terminal-block {
+    background: #0a0d0b;
+    border: 1px solid #1e2a22;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .terminal-chrome {
+    background: #0f1512;
+    padding: 8px 12px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .terminal-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .terminal-dot-r { background: rgba(255,95,87,0.6); }
+  .terminal-dot-y { background: rgba(254,188,46,0.6); }
+  .terminal-dot-g { background: rgba(40,200,64,0.6); }
+  .terminal-body {
+    padding: 12px 16px;
+    font-size: 12px;
+    color: #d0ddd4;
+    line-height: 1.8;
+  }
+  .terminal-prompt { color: rgba(52,211,153,0.5); }
+  .terminal-cmd { color: #d0ddd4; }
+  .terminal-output { color: #7a8a7e; }
+  .terminal-green { color: #34d399; }
+
+  /* Favicon strip */
+  .favicon-strip {
+    display: flex;
+    gap: 16px;
+    align-items: end;
+    flex-wrap: wrap;
+  }
+  .favicon-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .favicon-item .label { font-size: 9px; color: var(--cd-text-muted); }
+  .favicon-box {
+    background: var(--cd-bg-surface);
+    border: 1px solid var(--cd-border);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+  }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()">◐ toggle theme</button>
+
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="section">
+    <div class="banner-frame">
+      <img src="banners/cronduit-banner-animated.svg" alt="Cronduit animated banner" width="400" height="120">
+    </div>
+  </div>
+
+  <!-- LOGOS -->
+  <div class="section">
+    <div class="section-title">Square Logos</div>
+    <div class="logo-grid">
+      <div class="logo-cell" style="background: #0a0d0b;">
+        <img src="logos/cronduit-square-dark.svg" alt="Cronduit square logo (dark)" width="120" height="120">
+        <span class="label">Dark</span>
+      </div>
+      <div class="logo-cell" style="background: #f8f8f6;">
+        <img src="logos/cronduit-square-light.svg" alt="Cronduit square logo (light)" width="120" height="120">
+        <span class="label">Light</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- COLORS: STATUS -->
+  <div class="section">
+    <div class="section-title">Status Colors</div>
+    <div class="swatch-grid">
+      <div class="swatch">
+        <div class="swatch-color" style="background: var(--cd-status-active);"></div>
+        <div class="swatch-info"><div class="swatch-name">Active / Success</div><div class="swatch-hex">--cd-status-active</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: var(--cd-status-running);"></div>
+        <div class="swatch-info"><div class="swatch-name">Running</div><div class="swatch-hex">--cd-status-running</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: var(--cd-status-disabled);"></div>
+        <div class="swatch-info"><div class="swatch-name">Disabled / Warning</div><div class="swatch-hex">--cd-status-disabled</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: var(--cd-status-error);"></div>
+        <div class="swatch-info"><div class="swatch-name">Error / Failed</div><div class="swatch-hex">--cd-status-error</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COLORS: SURFACES -->
+  <div class="section">
+    <div class="section-title">Surface & Background Colors</div>
+    <div class="swatch-grid">
+      <div class="swatch">
+        <div class="swatch-color" style="background: var(--cd-bg-primary); border-bottom: 1px solid var(--cd-border);"></div>
+        <div class="swatch-info"><div class="swatch-name">Primary BG</div><div class="swatch-hex">--cd-bg-primary</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: var(--cd-bg-surface); border-bottom: 1px solid var(--cd-border);"></div>
+        <div class="swatch-info"><div class="swatch-name">Surface</div><div class="swatch-hex">--cd-bg-surface</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: var(--cd-bg-surface-raised); border-bottom: 1px solid var(--cd-border);"></div>
+        <div class="swatch-info"><div class="swatch-name">Raised</div><div class="swatch-hex">--cd-bg-surface-raised</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: var(--cd-green);"></div>
+        <div class="swatch-info"><div class="swatch-name">Brand Green</div><div class="swatch-hex">--cd-green</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TYPOGRAPHY -->
+  <div class="section">
+    <div class="section-title">Typography — JetBrains Mono</div>
+    <div class="type-row"><div class="type-label">2XL / 700</div><div class="type-2xl">cronduit</div></div>
+    <div class="type-row"><div class="type-label">XL / 700</div><div class="type-xl">Job Scheduling Dashboard</div></div>
+    <div class="type-row"><div class="type-label">LG / 500</div><div class="type-lg">Active Containers</div></div>
+    <div class="type-row"><div class="type-label">BASE / 400</div><div class="type-base">Schedule your cron jobs with a simple YAML configuration file and let cronduit handle the rest.</div></div>
+    <div class="type-row"><div class="type-label">SM / 400</div><div class="type-sm">Last executed 3 minutes ago · Next run in 57 minutes</div></div>
+    <div class="type-row"><div class="type-label">XS / 700 UPPERCASE</div><div class="type-xs">Job ID · Schedule · Status · Last Run · Actions</div></div>
+  </div>
+
+  <!-- BADGES -->
+  <div class="section">
+    <div class="section-title">Status Badges</div>
+    <div class="badge-row">
+      <span class="badge badge-active">Active</span>
+      <span class="badge badge-running">Running</span>
+      <span class="badge badge-disabled">Disabled</span>
+      <span class="badge badge-error">Error</span>
+    </div>
+  </div>
+
+  <!-- BUTTONS -->
+  <div class="section">
+    <div class="section-title">Buttons</div>
+    <div class="btn-row">
+      <button class="btn btn-primary">Create Job</button>
+      <button class="btn btn-secondary">Cancel</button>
+      <button class="btn btn-danger">Delete</button>
+    </div>
+  </div>
+
+  <!-- INPUT -->
+  <div class="section">
+    <div class="section-title">Form Input</div>
+    <input class="input-demo" type="text" placeholder="*/5 * * * * — every 5 minutes" />
+  </div>
+
+  <!-- TABLE -->
+  <div class="section">
+    <div class="section-title">Table</div>
+    <table class="table-demo">
+      <thead>
+        <tr><th>Job Name</th><th>Schedule</th><th>Status</th><th>Last Run</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>db-backup</td>
+          <td style="color:var(--cd-text-accent);">0 2 * * *</td>
+          <td><span class="badge badge-active">Active</span></td>
+          <td style="color:var(--cd-text-secondary);">2 hours ago</td>
+        </tr>
+        <tr>
+          <td>cleanup-logs</td>
+          <td style="color:var(--cd-text-accent);">*/30 * * * *</td>
+          <td><span class="badge badge-running">Running</span></td>
+          <td style="color:var(--cd-text-secondary);">now</td>
+        </tr>
+        <tr>
+          <td>send-reports</td>
+          <td style="color:var(--cd-text-accent);">0 9 * * MON</td>
+          <td><span class="badge badge-disabled">Disabled</span></td>
+          <td style="color:var(--cd-text-secondary);">3 days ago</td>
+        </tr>
+        <tr>
+          <td>sync-cdn</td>
+          <td style="color:var(--cd-text-accent);">*/15 * * * *</td>
+          <td><span class="badge badge-error">Error</span></td>
+          <td style="color:var(--cd-text-secondary);">14 min ago</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- CARD -->
+  <div class="section">
+    <div class="section-title">Card / Panel</div>
+    <div class="card-demo">
+      <h3>db-backup</h3>
+      <p>Runs daily at 02:00 UTC. Backs up PostgreSQL to S3 with 30-day retention. Last successful run completed in 4m 22s.</p>
+    </div>
+  </div>
+
+  <!-- TERMINAL -->
+  <div class="section">
+    <div class="section-title">Terminal / Code Block</div>
+    <div class="terminal-block">
+      <div class="terminal-chrome">
+        <div class="terminal-dot terminal-dot-r"></div>
+        <div class="terminal-dot terminal-dot-y"></div>
+        <div class="terminal-dot terminal-dot-g"></div>
+      </div>
+      <div class="terminal-body">
+        <div><span class="terminal-prompt">~$</span> <span class="terminal-cmd">cronduit start</span></div>
+        <div class="terminal-output">Loading config from cronduit.yml...</div>
+        <div class="terminal-output">Found 4 jobs</div>
+        <div><span class="terminal-green">✓</span> <span class="terminal-output">db-backup        0 2 * * *      ready</span></div>
+        <div><span class="terminal-green">✓</span> <span class="terminal-output">cleanup-logs     */30 * * * *   ready</span></div>
+        <div><span class="terminal-green">✓</span> <span class="terminal-output">send-reports     0 9 * * MON    ready</span></div>
+        <div><span class="terminal-green">✓</span> <span class="terminal-output">sync-cdn         */15 * * * *   ready</span></div>
+        <div class="terminal-output"> </div>
+        <div><span class="terminal-green">cronduit running</span> <span class="terminal-output">— watching for schedules</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAVICONS -->
+  <div class="section">
+    <div class="section-title">Favicon Set</div>
+    <div class="favicon-strip">
+      <div class="favicon-item">
+        <div class="favicon-box" style="width:32px;height:32px;">
+          <img src="favicons/favicon-16.svg" alt="Cronduit favicon 16px" width="16" height="16">
+        </div>
+        <span class="label">16px</span>
+      </div>
+      <div class="favicon-item">
+        <div class="favicon-box" style="width:48px;height:48px;">
+          <img src="favicons/favicon-32.svg" alt="Cronduit favicon 32px" width="32" height="32">
+        </div>
+        <span class="label">32px</span>
+      </div>
+      <div class="favicon-item">
+        <div class="favicon-box" style="width:72px;height:72px;">
+          <img src="favicons/favicon-192.svg" alt="Cronduit favicon 192px" width="56" height="56">
+        </div>
+        <span class="label">192px</span>
+      </div>
+      <div class="favicon-item">
+        <div class="favicon-box" style="width:96px;height:96px;">
+          <img src="favicons/favicon-512.svg" alt="Cronduit favicon 512px" width="80" height="80">
+        </div>
+        <span class="label">512px</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+}
+</script>
+
+</body>
+</html>

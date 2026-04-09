@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="120" viewBox="0 0 400 120">
+  <rect x="4" y="4" width="392" height="112" rx="8" fill="#0a0d0b" stroke="#1e2a22" stroke-width="1.5"/>
+  <rect x="4" y="4" width="392" height="22" rx="8" fill="#0f1512"/>
+  <rect x="4" y="18" width="392" height="8" fill="#0f1512"/>
+  <circle cx="18" cy="15" r="4" fill="#ff5f57" opacity="0.6"/>
+  <circle cx="30" cy="15" r="4" fill="#febc2e" opacity="0.6"/>
+  <circle cx="42" cy="15" r="4" fill="#28c840" opacity="0.6"/>
+  <text x="16" y="50" font-family="'JetBrains Mono', monospace" font-size="10" fill="#34d399" opacity="0.5">~$</text>
+  <g transform="translate(40, 34)">
+    <circle cx="10" cy="10" r="7" fill="none" stroke="#34d399" stroke-width="1.5"/>
+    <line x1="10" y1="6" x2="10" y2="10" stroke="#34d399" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="10" y1="10" x2="14" y2="10" stroke="#34d399" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="17" y1="10" x2="24" y2="10" stroke="#34d399" stroke-width="1.5" stroke-linecap="round"/>
+    <polygon points="22,7 27,10 22,13" fill="#34d399"/>
+  </g>
+  <text x="72" y="50" font-family="'JetBrains Mono', monospace" font-weight="700" font-size="22" fill="#d0ddd4">cronduit</text>
+  <text x="16" y="74" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#555555">cron, modernized for the container era</text>
+  <text x="16" y="98" font-family="'JetBrains Mono', monospace" font-size="10" fill="#34d399" opacity="0.5">~$</text>
+  <rect x="32" y="89" width="2" height="12" rx="1" fill="#34d399" opacity="0.7"/>
+</svg>
