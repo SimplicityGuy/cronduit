@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="40" fill="#f8f8f6"/>
+  <rect width="256" height="256" rx="40" fill="none" stroke="#d4d8d5" stroke-width="2"/>
+  <g transform="translate(56, 72)">
+    <circle cx="40" cy="40" r="32" fill="none" stroke="#059669" stroke-width="5"/>
+    <line x1="40" y1="40" x2="40" y2="18" stroke="#059669" stroke-width="5" stroke-linecap="round"/>
+    <line x1="40" y1="40" x2="56" y2="40" stroke="#059669" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="40" cy="40" r="4" fill="#059669"/>
+    <line x1="72" y1="40" x2="104" y2="40" stroke="#059669" stroke-width="4" stroke-linecap="round"/>
+    <polygon points="98,28 116,40 98,52" fill="#059669"/>
+  </g>
+  <text x="128" y="176" font-family="'JetBrains Mono', monospace" font-weight="700" font-size="28" fill="#1a1f1c" text-anchor="middle" letter-spacing="0.05em">cronduit</text>
+  <text x="128" y="200" font-family="'JetBrains Mono', monospace" font-size="9" fill="#8a9a8e" text-anchor="middle">cron, modernized</text>
+</svg>
