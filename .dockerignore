@@ -1,0 +1,19 @@
+# .dockerignore -- exclude non-build content from the Docker build context.
+
+target/
+.git/
+.github/
+.planning/
+docs/
+design/
+bin/
+.sqlx/tmp/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+Dockerfile
+.dockerignore
+README.md
+THREAT_MODEL.md
