@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     job_type           TEXT     NOT NULL,
     config_json        TEXT     NOT NULL,
     config_hash        TEXT     NOT NULL,
+    -- `enabled` uses BIGINT (not BOOLEAN) to keep the sqlx decode type consistent
+    -- with SQLite's INTEGER. Both backends decode to i64 via sqlx. See schema_parity.rs.
     enabled            BIGINT   NOT NULL DEFAULT 1,
     timeout_secs       BIGINT   NOT NULL,
     created_at         TEXT     NOT NULL,
