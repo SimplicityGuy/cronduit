@@ -285,6 +285,128 @@ impl From<PgDbJobRow> for DbJob {
     }
 }
 
+/// Insert a new job_runs row with status='running'. Returns the new run id.
+pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> anyhow::Result<i64> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            let row = sqlx::query(
+                "INSERT INTO job_runs (job_id, status, trigger, start_time) VALUES (?1, 'running', ?2, ?3) RETURNING id",
+            )
+            .bind(job_id)
+            .bind(trigger)
+            .bind(&now)
+            .fetch_one(p)
+            .await?;
+            Ok(row.get::<i64, _>("id"))
+        }
+        PoolRef::Postgres(p) => {
+            let row = sqlx::query(
+                "INSERT INTO job_runs (job_id, status, trigger, start_time) VALUES ($1, 'running', $2, $3) RETURNING id",
+            )
+            .bind(job_id)
+            .bind(trigger)
+            .bind(&now)
+            .fetch_one(p)
+            .await?;
+            Ok(row.get::<i64, _>("id"))
+        }
+    }
+}
+
+/// Finalize a job run by updating its status, exit_code, end_time, duration_ms, and error_message.
+pub async fn finalize_run(
+    pool: &DbPool,
+    run_id: i64,
+    status: &str,
+    exit_code: Option<i32>,
+    duration: tokio::time::Instant,
+    error_message: Option<&str>,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let duration_ms = duration.elapsed().as_millis() as i64;
+
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            sqlx::query(
+                "UPDATE job_runs SET status = ?1, exit_code = ?2, end_time = ?3, duration_ms = ?4, error_message = ?5 WHERE id = ?6",
+            )
+            .bind(status)
+            .bind(exit_code)
+            .bind(&now)
+            .bind(duration_ms)
+            .bind(error_message)
+            .bind(run_id)
+            .execute(p)
+            .await?;
+        }
+        PoolRef::Postgres(p) => {
+            sqlx::query(
+                "UPDATE job_runs SET status = $1, exit_code = $2, end_time = $3, duration_ms = $4, error_message = $5 WHERE id = $6",
+            )
+            .bind(status)
+            .bind(exit_code)
+            .bind(&now)
+            .bind(duration_ms)
+            .bind(error_message)
+            .bind(run_id)
+            .execute(p)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Insert a batch of log lines into job_logs.
+///
+/// Each tuple is `(stream, ts, line)`.
+pub async fn insert_log_batch(
+    pool: &DbPool,
+    run_id: i64,
+    lines: &[(String, String, String)],
+) -> anyhow::Result<()> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            let mut tx = p.begin().await?;
+            for (stream, ts, line) in lines {
+                sqlx::query(
+                    "INSERT INTO job_logs (run_id, stream, ts, line) VALUES (?1, ?2, ?3, ?4)",
+                )
+                .bind(run_id)
+                .bind(stream)
+                .bind(ts)
+                .bind(line)
+                .execute(&mut *tx)
+                .await?;
+            }
+            tx.commit().await?;
+        }
+        PoolRef::Postgres(p) => {
+            let mut tx = p.begin().await?;
+            for (stream, ts, line) in lines {
+                sqlx::query(
+                    "INSERT INTO job_logs (run_id, stream, ts, line) VALUES ($1, $2, $3, $4)",
+                )
+                .bind(run_id)
+                .bind(stream)
+                .bind(ts)
+                .bind(line)
+                .execute(&mut *tx)
+                .await?;
+            }
+            tx.commit().await?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +585,108 @@ mod tests {
         assert!(names.contains(&"enabled1"));
         assert!(names.contains(&"enabled2"));
         assert!(!names.contains(&"disabled"));
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn insert_running_run_creates_row() {
+        let pool = setup_pool().await;
+        let job_id = upsert_job(&pool, "test", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
+            .await
+            .unwrap();
+
+        let run_id = insert_running_run(&pool, job_id, "scheduled").await.unwrap();
+        assert!(run_id > 0);
+
+        // Verify the row was created with correct fields.
+        match pool.reader() {
+            PoolRef::Sqlite(p) => {
+                let row = sqlx::query("SELECT status, trigger, start_time FROM job_runs WHERE id = ?1")
+                    .bind(run_id)
+                    .fetch_one(p)
+                    .await
+                    .unwrap();
+                let status: String = row.get("status");
+                let trigger: String = row.get("trigger");
+                let start_time: String = row.get("start_time");
+                assert_eq!(status, "running");
+                assert_eq!(trigger, "scheduled");
+                assert!(!start_time.is_empty());
+            }
+            _ => unreachable!(),
+        }
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn finalize_run_updates_row() {
+        let pool = setup_pool().await;
+        let job_id = upsert_job(&pool, "test", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
+            .await
+            .unwrap();
+        let run_id = insert_running_run(&pool, job_id, "scheduled").await.unwrap();
+
+        let start = tokio::time::Instant::now();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        finalize_run(&pool, run_id, "success", Some(0), start, None)
+            .await
+            .unwrap();
+
+        match pool.reader() {
+            PoolRef::Sqlite(p) => {
+                let row = sqlx::query("SELECT status, exit_code, end_time, duration_ms FROM job_runs WHERE id = ?1")
+                    .bind(run_id)
+                    .fetch_one(p)
+                    .await
+                    .unwrap();
+                let status: String = row.get("status");
+                let exit_code: Option<i32> = row.get("exit_code");
+                let end_time: Option<String> = row.get("end_time");
+                let duration_ms: Option<i64> = row.get("duration_ms");
+                assert_eq!(status, "success");
+                assert_eq!(exit_code, Some(0));
+                assert!(end_time.is_some());
+                assert!(duration_ms.unwrap() >= 5);
+            }
+            _ => unreachable!(),
+        }
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn insert_log_batch_inserts_lines() {
+        let pool = setup_pool().await;
+        let job_id = upsert_job(&pool, "test", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
+            .await
+            .unwrap();
+        let run_id = insert_running_run(&pool, job_id, "scheduled").await.unwrap();
+
+        let lines = vec![
+            ("stdout".to_string(), "2026-01-01T00:00:00Z".to_string(), "line1".to_string()),
+            ("stderr".to_string(), "2026-01-01T00:00:01Z".to_string(), "line2".to_string()),
+        ];
+        insert_log_batch(&pool, run_id, &lines).await.unwrap();
+
+        match pool.reader() {
+            PoolRef::Sqlite(p) => {
+                let rows = sqlx::query("SELECT stream, ts, line FROM job_logs WHERE run_id = ?1 ORDER BY id")
+                    .bind(run_id)
+                    .fetch_all(p)
+                    .await
+                    .unwrap();
+                assert_eq!(rows.len(), 2);
+                let s0: String = rows[0].get("stream");
+                let l0: String = rows[0].get("line");
+                assert_eq!(s0, "stdout");
+                assert_eq!(l0, "line1");
+                let s1: String = rows[1].get("stream");
+                let l1: String = rows[1].get("line");
+                assert_eq!(s1, "stderr");
+                assert_eq!(l1, "line2");
+            }
+            _ => unreachable!(),
+        }
         pool.close().await;
     }
 }

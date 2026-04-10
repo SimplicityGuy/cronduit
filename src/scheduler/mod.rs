@@ -7,6 +7,7 @@
 pub mod command;
 pub mod fire;
 pub mod log_pipeline;
+pub mod run;
 pub mod script;
 pub mod sync;
 
