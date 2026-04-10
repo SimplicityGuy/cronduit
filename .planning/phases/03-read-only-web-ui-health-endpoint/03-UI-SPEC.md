@@ -21,7 +21,7 @@ created: 2026-04-10
 | Preset | not applicable |
 | Component library | none (hand-authored HTML components per `design/DESIGN_SYSTEM.md`) |
 | Icon library | none (Cronduit logo mark SVG only; no general icon library in v1) |
-| Font | JetBrains Mono 400/500/700 — self-hosted WOFF2, embedded via `rust-embed` (no Google Fonts CDN) |
+| Font | JetBrains Mono 400/700 — self-hosted WOFF2, embedded via `rust-embed` (no Google Fonts CDN) |
 
 **Stack context:** `askama_web 0.15` with `axum-0.8` feature, `axum-htmx 0.8.1`, `rust-embed 8.11.0`, HTMX 2.0 vendored. Tailwind CSS standalone binary (no Node). All assets embedded in single binary.
 
@@ -29,43 +29,40 @@ created: 2026-04-10
 
 ## Spacing Scale
 
-Declared values from `design/DESIGN_SYSTEM.md` section 4 (4px grid):
+Declared values use a strict 4px grid. Only values from the standard set (4, 8, 16, 24, 32, 48, 64) are used:
 
 | Token | Value | Usage |
 |-------|-------|-------|
 | `--cd-space-1` | 4px | Icon gaps, badge inline padding, tight element spacing |
 | `--cd-space-2` | 8px | Compact element spacing, button inline padding, table cell vertical padding |
-| `--cd-space-3` | 12px | Intermediate padding where 8px is too tight and 16px too loose |
-| `--cd-space-4` | 16px | Default element spacing, card inner padding (horizontal), form input padding |
-| `--cd-space-5` | 20px | Nav item spacing, filter bar gaps |
+| `--cd-space-4` | 16px | Default element spacing, card inner padding (horizontal), form input padding, nav item spacing, filter bar gaps |
 | `--cd-space-6` | 24px | Card/panel padding (all sides), section padding within pages |
 | `--cd-space-8` | 32px | Layout gaps between major sections |
-| `--cd-space-10` | 40px | Page horizontal margin on large viewports |
-| `--cd-space-12` | 48px | Major section breaks (e.g., between filter bar and table) |
+| `--cd-space-12` | 48px | Major section breaks (e.g., between filter bar and table), page horizontal margin on large viewports, touch target minimum height for "Run Now" button and nav links (accessibility) |
 | `--cd-space-16` | 64px | Page-level vertical padding (top/bottom of main content area) |
 
-Exceptions: Touch target minimum 44px height for "Run Now" button and nav links (accessibility). Badge padding is `2px 8px` per DESIGN_SYSTEM.md section 5.1.
+Badge padding is `4px 8px` (`--cd-space-1` vertical, `--cd-space-2` horizontal). Touch target minimum height is 48px (`--cd-space-12`) for "Run Now" button and nav links (accessibility).
 
-Source: `design/DESIGN_SYSTEM.md` section 4
+Source: `design/DESIGN_SYSTEM.md` section 4, adapted to strict standard set
 
 ---
 
 ## Typography
 
-All text uses JetBrains Mono. No sans-serif or serif anywhere. This is the brand identity (DESIGN_SYSTEM.md section 3).
+All text uses JetBrains Mono. No sans-serif or serif anywhere. This is the brand identity (DESIGN_SYSTEM.md section 3). Four font sizes, two font weights.
 
 | Role | Token | Size | Weight | Line Height | Letter Spacing |
 |------|-------|------|--------|-------------|----------------|
 | Caption / Badge | `--cd-text-xs` | 0.65rem (10.4px) | 700 (bold) | 1.5 | 0.1em (uppercase) |
-| Secondary / Metadata | `--cd-text-sm` | 0.8rem (12.8px) | 400 (regular) | 1.5 | 0 |
-| Body | `--cd-text-base` | 0.9rem (14.4px) | 400 (regular) | 1.6 | 0 |
-| Emphasized body | `--cd-text-md` | 1rem (16px) | 500 (medium) | 1.5 | 0 |
+| Body / Secondary / Metadata | `--cd-text-base` | 0.9rem (14.4px) | 400 (regular) | 1.6 | 0 |
 | Section heading | `--cd-text-lg` | 1.25rem (20px) | 700 (bold) | 1.4 | -0.02em |
 | Page title | `--cd-text-xl` | 1.5rem (24px) | 700 (bold) | 1.3 | -0.02em |
 
+Font weights: 400 (regular) for body text, metadata, and secondary content. 700 (bold) for headings, badges, and emphasis. No other weights.
+
 Font fallback stack: `'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'Cascadia Code', 'Consolas', monospace`
 
-Source: `design/DESIGN_SYSTEM.md` section 3
+Source: `design/DESIGN_SYSTEM.md` section 3, consolidated from 6 to 4 sizes and 3 to 2 weights
 
 ---
 
@@ -112,6 +109,10 @@ Source: `design/DESIGN_SYSTEM.md` sections 2.1-2.6, 6
 
 ## Component Inventory
 
+### Primary Focal Point
+
+The status badge column is the primary visual anchor on the Dashboard. It uses bold uppercase text, color-coded background tints, and high contrast to draw the operator's eye to job health at a glance.
+
 ### Pages (askama templates extending `base.html`)
 
 | Page | Route | Template | HTMX Behavior |
@@ -140,17 +141,17 @@ Source: `design/DESIGN_SYSTEM.md` sections 2.1-2.6, 6
 
 | Component | Spec |
 |-----------|------|
-| Status badge | `--cd-text-xs`, bold, uppercase, `letter-spacing: 0.1em`, `padding: 2px 8px`, `border-radius: 4px`, status-specific bg tint + text color |
-| Primary button (Run Now) | `--cd-green` bg, `--cd-text-inverse` text, `--cd-text-sm` bold, `padding: 8px 16px`, `border-radius: 8px`, hover `--cd-green-bright` |
+| Status badge | `--cd-text-xs`, bold, uppercase, `letter-spacing: 0.1em`, `padding: 4px 8px`, `border-radius: 4px`, status-specific bg tint + text color |
+| Primary button (Run Now) | `--cd-green` bg, `--cd-text-inverse` text, `--cd-text-base` bold, `padding: 8px 16px`, `border-radius: 8px`, hover `--cd-green-bright` |
 | Secondary button (Load older, pagination) | Transparent bg, `1px solid --cd-border`, `--cd-text-primary` text, hover `--cd-bg-hover` |
-| Card/Panel | `--cd-bg-surface` bg, `1px solid --cd-border`, `border-radius: 12px`, `padding: 24px` |
+| Card/Panel | `--cd-bg-surface` bg, `1px solid --cd-border`, `border-radius: 8px`, `padding: 24px` |
 | Table | Header: `--cd-bg-surface-raised`, bold, `--cd-text-xs` uppercase. Rows: `--cd-bg-surface`. Hover: `--cd-bg-hover`. Borders: `--cd-border-subtle` horizontal only. |
 | Form input (filter) | `--cd-bg-surface-sunken` bg, `1px solid --cd-border`, `border-radius: 8px`, focus: `--cd-border-focus` + `0 0 0 2px --cd-green-dim` shadow |
 | Toast notification | Inline HTML element positioned top-right, `--cd-bg-surface-raised` bg, `--cd-border` border, `--cd-text-primary` text, auto-dismiss after 3s via CSS animation. Triggered by `HX-Trigger` response header. |
 | Nav bar | `--cd-bg-surface` bg, `--cd-border-subtle` bottom border, logo + "Dashboard" + "Settings" links, theme toggle button. Active link: `--cd-text-accent` + bottom border `--cd-green`. |
-| Theme toggle | Button in nav bar, switches `data-theme` attribute on `<html>`. Persists to `localStorage`. ~10 lines of JS. |
-| Log line (stdout) | `--cd-text-primary` text on `--cd-bg-surface-sunken` bg, monospace, `--cd-text-sm` |
-| Log line (stderr) | Same as stdout but with `2px left border` in `--cd-status-error` and `--cd-status-error-bg` background tint |
+| Theme toggle | Button in nav bar with `aria-label="Toggle dark/light mode"`, switches `data-theme` attribute on `<html>`. Persists to `localStorage`. ~10 lines of JS. |
+| Log line (stdout) | `--cd-text-primary` text on `--cd-bg-surface-sunken` bg, monospace, `--cd-text-base` |
+| Log line (stderr) | Same as stdout but with `4px left border` in `--cd-status-error` and `--cd-status-error-bg` background tint |
 
 ---
 
@@ -197,7 +198,7 @@ Source: `design/DESIGN_SYSTEM.md` sections 2.1-2.6, 6
 ### Dark/Light Mode Toggle
 
 - Default: follow `prefers-color-scheme` media query
-- Toggle button in nav sets `data-theme="dark"` or `data-theme="light"` on `<html>`
+- Toggle button in nav (with `aria-label="Toggle dark/light mode"`) sets `data-theme="dark"` or `data-theme="light"` on `<html>`
 - Choice persisted to `localStorage` key `cronduit-theme`
 - JS snippet (~10 lines) runs on page load to restore preference before first paint (avoid flash)
 
@@ -308,6 +309,7 @@ Phase 3 targets desktop-first (homelab operators use full-width browsers). Minim
 | Log viewer | Stderr lines distinguished by left-border AND background tint (not color alone) |
 | Keyboard navigation | Tab order follows visual order. Run Now button, filter input, sort headers, pagination links all focusable. |
 | Screen reader | Table uses `<th scope="col">` headers. Status badges use visible text (no icon-only indicators). |
+| Theme toggle | Button declares `aria-label="Toggle dark/light mode"` for screen reader users. |
 
 ---
 
