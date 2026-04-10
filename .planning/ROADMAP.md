@@ -99,22 +99,16 @@ Plans:
   2. A `script`-type job declared via `script = """..."""` writes its body to a tempfile with the configured shebang, executes, and its exit code + logs are recorded; a successful run is `status='success' exit_code=0`, a non-zero exit is `status='failed' exit_code=<n>`, and a per-job timeout produces `status='timeout'` with the partial logs preserved (EXEC-02, EXEC-06, SCHED-05).
   3. DST regression tests (spring-forward and fall-back on frozen clocks) pass for at least one representative timezone; wall-clock jumps larger than 2 minutes emit WARN-level log lines and do not silently drop missed fires (SCHED-02, SCHED-03).
   4. Pressing Ctrl+C (SIGINT) stops accepting new fires, waits up to `[server].shutdown_grace = "30s"` for in-flight runs, then closes pools and exits with code 0; a second SIGTERM kills immediately (SCHED-07).
-  5. The log pipeline uses a bounded channel (256 lines) with head-drop policy and inserts a `[truncated N lines]` marker in `job_logs` on overflow; lines longer than 16 KB are truncated with a marker (EXEC-04, EXEC-05).
+  5. The log pipeline uses a bounded channel (256 lines) with tail-sampling drop policy and inserts a `[truncated N lines]` marker in `job_logs` on overflow; lines longer than 16 KB are truncated with a marker (EXEC-04, EXEC-05).
   6. Concurrent runs of the same job are allowed and each writes a separate `job_runs` row; `trigger` is set to `scheduled` for cron fires (SCHED-04, SCHED-06).
 
 **Pitfalls addressed** (from PITFALLS.md):
-- Pitfall 4 (log back-pressure): bounded channel + head-drop + DB-writer decoupled from any future broadcast bus (EXEC-04, EXEC-05).
+- Pitfall 4 (log back-pressure): bounded channel + tail-sampling + DB-writer decoupled from any future broadcast bus (EXEC-04, EXEC-05).
 - Pitfall 5 (DST handling): croner 3.0 + explicit `[server].timezone` + UTC storage + regression tests (SCHED-02, SCHED-03, CONF-08).
 - Pitfall 19 (graceful shutdown timeout): configurable `shutdown_grace`, progress logging, second-SIGTERM immediate kill (SCHED-07).
 - Pitfall 22 (scheduler clock drift): wall-clock scheduling (not monotonic sleep), >2min clock-jump detection (SCHED-03).
 
-**Plans**: 4 plans (3 waves)
-
-Plans:
-- [ ] 02-01-PLAN.md — DB query helpers + sync engine + BinaryHeap fire queue + scheduler select loop + DST/clock-jump tests (Wave 1)
-- [ ] 02-02-PLAN.md — Head-drop bounded log channel + line truncation + command executor (shell-words) + script executor (tempfile) (Wave 1)
-- [ ] 02-03-PLAN.md — Run task lifecycle (insert_running -> dispatch -> log writer -> finalize) + wire scheduler into CLI boot sequence (Wave 2)
-- [ ] 02-04-PLAN.md — Double-signal graceful shutdown + drain state machine + end-to-end integration tests (Wave 3)
+**Plans**: TBD
 
 ---
 
@@ -227,8 +221,8 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation, Security Posture & Persistence Base | 9/9 | Complete | - |
-| 2. Scheduler Core & Command/Script Executor | 0/4 | Planned | - |
+| 1. Foundation, Security Posture & Persistence Base | 0/8 | Planned | - |
+| 2. Scheduler Core & Command/Script Executor | 0/TBD | Not started | - |
 | 3. Read-Only Web UI & Health Endpoint | 0/TBD | Not started | - |
 | 4. Docker Executor & container-network Differentiator | 0/TBD | Not started | - |
 | 5. Config Reload & `@random` Resolver | 0/TBD | Not started | - |
@@ -250,4 +244,4 @@ All 86 v1 requirements mapped to exactly one phase. Breakdown:
 
 ---
 
-*Roadmap created: 2026-04-09 — derived from requirements, reconciled against ARCHITECTURE.md Phase A-F and FEATURES.md build order. No requirements orphaned.*
+*Roadmap created: 2026-04-09 — derived from requirements, reconciled against ARCHITECTURE.md Phase A–F and FEATURES.md build order. No requirements orphaned.*

@@ -6,6 +6,9 @@
 //! D-13: Split migration directories are compile-time required because
 //! `sqlx::migrate!(PATH)` is a macro whose path is baked into the binary.
 
+pub mod queries;
+pub use queries::{DbJob, disable_missing_jobs, get_enabled_jobs, get_job_by_name, upsert_job};
+
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
