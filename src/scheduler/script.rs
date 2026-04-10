@@ -7,7 +7,6 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
-use tempfile::NamedTempFile;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -20,7 +19,8 @@ use super::log_pipeline::LogSender;
 /// written with the shebang + body, made executable (0o755), and executed
 /// directly (no shell `-c` wrapper).
 ///
-/// The `NamedTempFile` handle is kept alive during execution; when it drops,
+/// The tempfile is converted to a `TempPath` (closing the write FD to avoid
+/// ETXTBSY on Linux) and kept alive during execution; when it drops,
 /// the file is automatically deleted (D-16).
 pub async fn execute_script(
     script_body: &str,
@@ -77,6 +77,11 @@ pub async fn execute_script(
         };
     }
 
+    // Close the write file descriptor before executing. Linux returns ETXTBSY
+    // if you try to exec a file that's open for writing. `into_temp_path()`
+    // closes the FD but keeps the auto-delete-on-drop behavior.
+    let temp_path = tmpfile.into_temp_path();
+
     // Spawn the script
     let child = match Command::new(&path)
         .stdout(std::process::Stdio::piped())
@@ -98,9 +103,8 @@ pub async fn execute_script(
     // Execute with timeout/cancel support (reuses command.rs logic)
     let result = execute_child(child, timeout, cancel, sender).await;
 
-    // tmpfile drops here -> file is deleted (D-16)
-    // We verify this in tests by checking !path.exists()
-    drop(tmpfile);
+    // temp_path drops here -> file is deleted (D-16)
+    drop(temp_path);
 
     result
 }
@@ -109,6 +113,7 @@ pub async fn execute_script(
 mod tests {
     use super::*;
     use crate::scheduler::log_pipeline;
+    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn execute_script_captures_stdout() {
