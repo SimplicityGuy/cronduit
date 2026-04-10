@@ -5,7 +5,7 @@
 # also reference this exact path.
 #
 # SECURITY:
-#   * Never commit plaintext secrets. Use ${ENV_VAR} references and set
+#   * Never commit plaintext secrets. Use env-var references ($\{VAR}) and set
 #     the variables at runtime (docker-compose `environment:` block, or
 #     a .env file mounted into the container).
 #   * Mount this file read-only (`:ro`) in docker-compose.
