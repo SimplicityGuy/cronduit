@@ -542,22 +542,19 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 | A4 | `askama` 0.15 template directory defaults to `$CARGO_MANIFEST_DIR/templates` | Pitfalls | LOW -- well-documented default; verify in askama docs |
 | A5 | `ansi-to-html` output is safe to use with `\| safe` in askama because it HTML-escapes input first | Architecture Patterns | MEDIUM -- verified via docs.rs but should be confirmed with XSS test in CI |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **JetBrains Mono font licensing for embedding**
    - What we know: JetBrains Mono is OFL-1.1 licensed (open source). v2.304 is latest.
-   - What's unclear: Whether we need to include the OFL license file alongside the embedded WOFF2 files.
-   - Recommendation: Include `OFL.txt` in `assets/static/fonts/` to comply with OFL-1.1 requirements. [ASSUMED]
+   - **RESOLVED:** OFL-1.1 requires the license notice to accompany redistributed fonts. Include `OFL.txt` in `assets/static/fonts/` with the full OFL-1.1 text from the JetBrains Mono repository. Plan 03-01 Task 1 step 7 already includes this. [DECISION: include OFL.txt]
 
 2. **Tailwind CSS version for standalone binary**
-   - What we know: npm registry shows Tailwind 4.2.2. The standalone binary may lag behind npm releases.
-   - What's unclear: Whether Tailwind v4 standalone binary is available or if we should use v3.4.x.
-   - Recommendation: The existing `just tailwind` recipe downloads `latest` from GitHub. Verify the binary version matches expectations. Tailwind v4 has breaking config changes vs v3 -- if standalone is v4, `tailwind.config.js` format changes. [ASSUMED]
+   - What we know: npm registry shows Tailwind 4.2.2. The standalone binary may lag behind npm releases. Tailwind v4 has breaking config changes (CSS-based config instead of `tailwind.config.js`).
+   - **RESOLVED:** Lock to Tailwind v3.4.17 (latest v3 release). The `tailwind.config.js` format used in Plan 03-01 is v3-specific (`module.exports`, `content`, `theme.extend`). Tailwind v4 uses a completely different CSS-based config and would break the build. The `just tailwind` recipe MUST download from a pinned v3.4.17 release URL, not `latest` (which resolves to v4). [DECISION: lock to v3.4.17 in justfile download URL]
 
-3. **`ansi-to-html` output uses inline styles vs CSS classes**
-   - What we know: docs.rs shows it outputs `<span style='color:var(--red,#a00)'>` with CSS variables.
-   - What's unclear: Whether the CSS variable names (`--red`, `--green`, etc.) conflict with Cronduit's design system variables.
-   - Recommendation: The CSS variables are namespaced differently (`--red` vs `--cd-status-error`). Define the ANSI color CSS variables in `app.css` to match the terminal color palette. [VERIFIED: docs.rs output format]
+3. **`ansi-to-html` CSS variable naming**
+   - What we know: docs.rs shows it outputs `<span style='color:var(--red,#a00)'>` with CSS variables and inline fallback colors.
+   - **RESOLVED:** The CSS variable names (`--red`, `--green`, etc.) do NOT conflict with Cronduit's design system variables (which use `--cd-` prefix). Plan 03-01 Task 1 already defines these ANSI color CSS variables in `app.css` under a separate `:root` block with both dark and light mode values. The fallback colors in `ansi-to-html` output ensure rendering even if CSS vars are missing. [DECISION: define `--red`, `--green`, etc. in app.css; no conflict with `--cd-*` tokens]
 
 ## Environment Availability
 
