@@ -13,7 +13,7 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 
 - [ ] **FOUND-01**: The project compiles as a single Cargo workspace targeting Rust edition 2021 (or 2024 if `bollard`/`sqlx` both compile cleanly), with `tokio` as the async runtime
 - [ ] **FOUND-02**: `cronduit` accepts CLI flags via `clap` for `--config <path>`, `--bind <addr:port>`, `--database-url <url>`, and `--log-format <json|text>`
-- [ ] **FOUND-03**: `cronduit --check <config>` validates a config file (parse + cron expression validation + network mode validation) and exits non-zero on any error without touching the database
+- [ ] **FOUND-03**: `cronduit check <config>` validates a config file (parse + cron expression validation + network mode validation) and exits non-zero on any error without touching the database
 - [ ] **FOUND-04**: Structured JSON logs are written to stdout via `tracing` + `tracing-subscriber` for Docker log collection
 - [ ] **FOUND-05**: A `SecretString` newtype wraps any secret-bearing config field; its `Debug` impl never prints the value
 - [ ] **FOUND-06**: `cargo tree -i openssl-sys` returns empty (rustls-only TLS stack); enforced by a CI check
@@ -22,6 +22,7 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 - [ ] **FOUND-09**: A multi-arch Docker image (`linux/amd64` + `linux/arm64`) is built via `cargo-zigbuild` (no QEMU) and tagged on every push to `main`
 - [ ] **FOUND-10**: `README.md` leads with a SECURITY section explaining the Docker socket threat model, the loopback default, and the no-auth-in-v1 stance; a `THREAT_MODEL.md` document captures the full threat model
 - [ ] **FOUND-11**: All diagrams in repository documentation, READMEs, and PR descriptions are authored as mermaid code blocks (no ASCII art)
+- [ ] **FOUND-12**: A top-level `justfile` defines every build, test, lint, DB, image, and dev-loop command for the project; all GitHub Actions workflows invoke only `just <recipe>` targets, with no inline `cargo` or `docker` commands
 
 ### Configuration (CONF)
 
@@ -188,6 +189,7 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | FOUND-09 | Phase 1 | Pending |
 | FOUND-10 | Phase 1 | Pending |
 | FOUND-11 | Phase 1 | Pending |
+| FOUND-12 | Phase 1 | Pending |
 | CONF-01 | Phase 1 | Pending |
 | CONF-02 | Phase 1 | Pending |
 | CONF-03 | Phase 1 | Pending |
@@ -265,12 +267,12 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | OPS-05 | Phase 6 | Pending |
 
 **Coverage:**
-- v1 requirements: 86 total
-- Mapped to phases: 86
+- v1 requirements: 87 total
+- Mapped to phases: 87
 - Unmapped: 0 ✓
 
 **Distribution by phase:**
-- Phase 1 (Foundation, Security Posture & Persistence Base): 29 requirements
+- Phase 1 (Foundation, Security Posture & Persistence Base): 30 requirements
 - Phase 2 (Scheduler Core & Command/Script Executor): 13 requirements
 - Phase 3 (Read-Only Web UI & Health Endpoint): 15 requirements
 - Phase 4 (Docker Executor & container-network Differentiator): 11 requirements
@@ -279,4 +281,4 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-09 after roadmap creation — traceability table populated with full 86/86 mapping*
+*Last updated: 2026-04-10 — FOUND-03 corrected to subcommand form (`cronduit check <config>`) per D-04; FOUND-12 added for justfile + just-only-CI constraint per D-12; Phase 1 count bumped from 29 to 30*
