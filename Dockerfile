@@ -14,12 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install zig + cargo-zigbuild.
-# ziglang release URL pattern: zig-linux-<arch>-<version>.tar.xz
+# Download to file first (piping curl|tar fails when GitHub returns non-XZ response).
 RUN set -eux; \
     ZIG_VERSION=0.13.0; \
     ARCH="$(uname -m)"; \
-    curl -sSL "https://github.com/ziglang/zig/releases/download/${ZIG_VERSION}/zig-linux-${ARCH}-${ZIG_VERSION}.tar.xz" \
-        | tar -xJ -C /opt; \
+    curl -fsSL --retry 3 --retry-delay 5 \
+        -o /tmp/zig.tar.xz \
+        "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ARCH}-${ZIG_VERSION}.tar.xz"; \
+    tar -xJf /tmp/zig.tar.xz -C /opt; \
+    rm /tmp/zig.tar.xz; \
     ln -s /opt/zig-linux-${ARCH}-${ZIG_VERSION}/zig /usr/local/bin/zig; \
     cargo install --locked cargo-zigbuild --version ^0.22
 
