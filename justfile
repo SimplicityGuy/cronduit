@@ -43,14 +43,21 @@ tailwind:
     fi
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --minify
 
-# Multi-arch Docker image via cargo-zigbuild (no QEMU).
-# On CI PR:    --load (local, no push) — requires buildx 0.12+
-# On CI main:  uses `just image-push` variant below
+# Docker image build. Two variants:
+#   `just image`      — single-platform --load for PR CI smoke test
+#   `just image-push` — multi-arch push for release (see below)
 image:
     docker buildx build \
-        --platform linux/amd64,linux/arm64 \
+        --platform linux/amd64 \
         --tag cronduit:dev \
         --load \
+        .
+
+# Validate multi-arch build without loading (buildx cannot --load a manifest list).
+image-check:
+    docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --output type=cacheonly \
         .
 
 image-push tag:
