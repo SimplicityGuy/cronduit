@@ -4,7 +4,11 @@ pub mod check;
 pub mod run;
 
 #[derive(clap::Parser, Debug)]
-#[command(name = "cronduit", version, about = "Self-hosted Docker-native cron scheduler")]
+#[command(
+    name = "cronduit",
+    version,
+    about = "Self-hosted Docker-native cron scheduler"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
