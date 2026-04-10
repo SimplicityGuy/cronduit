@@ -135,7 +135,15 @@ Plans:
 
 **UI hint**: yes
 
-**Plans**: TBD
+**Plans**: 6 plans (4 waves)
+
+Plans:
+- [ ] 03-01-PLAN.md — Asset pipeline + Cargo deps + design system CSS + base template + rust-embed (Wave 1)
+- [ ] 03-02-PLAN.md — DB read queries (dashboard, run history, log pagination) + SchedulerCmd channel + health endpoint + AppState extension (Wave 1)
+- [ ] 03-03-PLAN.md — Dashboard page handler + HTMX polling table partial + filter/sort + empty state (Wave 2)
+- [ ] 03-04-PLAN.md — Job Detail + Run Detail + Settings pages + ANSI log rendering + pagination partials (Wave 3)
+- [ ] 03-05-PLAN.md — CSRF double-submit cookie + Run Now POST endpoint + toast notification (Wave 3)
+- [ ] 03-06-PLAN.md — XSS log safety CI test + health endpoint integration test (Wave 4)
 
 ---
 
@@ -157,7 +165,7 @@ Plans:
 
 **Pitfalls addressed** (from PITFALLS.md):
 - Pitfall 2 (`container:<name>` silent break): pre-flight inspect + structured failure + distinct metric reason (DOCKER-03).
-- Pitfall 3 (`wait_container` vs `auto_remove` race): explicit `auto_remove=false`, state machine `Creating→Starting→Running→Exited→LogsDrained→Removed`, exit-code persisted before remove (DOCKER-06).
+- Pitfall 3 (`wait_container` vs `auto_remove` race): explicit `auto_remove=false`, state machine `Creating->Starting->Running->Exited->LogsDrained->Removed`, exit-code persisted before remove (DOCKER-06).
 - Pitfall 10 (orphan containers after restart): every container labeled with `run_id`, reconciliation at boot, DB rows resolved (DOCKER-07, SCHED-08).
 - Pitfall 12 (image pull failure handling): exponential backoff + classification + distinct metric reason (DOCKER-05).
 - Pitfall 21 (`type = "command"` means inside-the-container): documented in README + surfaced in `cronduit check` hints.
@@ -177,9 +185,9 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Editing the config file triggers a debounced (500 ms) reload that parses to a staging structure, diffs against the DB by `config_hash`, creates new jobs, updates changed jobs, disables removed jobs (history preserved), and leaves in-flight runs untouched; SIGHUP and `POST /api/reload` share the same `do_reload()` code path; a reload that fails to parse leaves the running config untouched and surfaces the error via API, log, and UI (RELOAD-01..07).
   2. A job with `schedule = "@random 14 * * *"` is resolved once at sync time, the concrete value persisted to `jobs.resolved_schedule`, and remains stable across process restarts and config reloads as long as the raw `schedule` field is unchanged; a schedule-field edit triggers re-randomization (RAND-01, RAND-02, RAND-03).
-  3. `[server].random_min_gap = "90m"` guarantees a minimum spacing between randomized jobs' fire times on the same day via a slot-based algorithm; a mathematically infeasible gap (e.g., 20 jobs × 90 min > 24 h) logs a WARN at startup, relaxes the gap for overflow jobs, and continues booting — Cronduit never fails to start because of an infeasible random config (RAND-04, RAND-05).
+  3. `[server].random_min_gap = "90m"` guarantees a minimum spacing between randomized jobs' fire times on the same day via a slot-based algorithm; a mathematically infeasible gap (e.g., 20 jobs x 90 min > 24 h) logs a WARN at startup, relaxes the gap for overflow jobs, and continues booting — Cronduit never fails to start because of an infeasible random config (RAND-04, RAND-05).
   4. The Job Detail page shows both the raw `schedule` and the `resolved_schedule`, clearly labeled (e.g., "Schedule: `@random` (today resolved to `14 17 * * *`)"); dashboard badges distinguish `@random` jobs from fixed-schedule jobs (RAND-06).
-  5. An integration test exercises: (a) edit config → SIGHUP → new jobs appear, removed jobs go `enabled=false`, (b) reload during an in-flight run does not cancel the run, (c) `resolved_schedule` is retained for unchanged random jobs across a reload.
+  5. An integration test exercises: (a) edit config -> SIGHUP -> new jobs appear, removed jobs go `enabled=false`, (b) reload during an in-flight run does not cancel the run, (c) `resolved_schedule` is retained for unchanged random jobs across a reload.
 
 **Pitfalls addressed** (from PITFALLS.md):
 - Pitfall 6 (`@random` invisible state and infeasible gap): persisted `resolved_schedule`, daily-cadence re-roll, slot algorithm, feasibility check, UI surfacing, structured log events.
@@ -217,13 +225,13 @@ Plans:
 
 ## Progress
 
-**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
+**Execution Order:** Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation, Security Posture & Persistence Base | 0/8 | Planned | - |
 | 2. Scheduler Core & Command/Script Executor | 0/TBD | Not started | - |
-| 3. Read-Only Web UI & Health Endpoint | 0/TBD | Not started | - |
+| 3. Read-Only Web UI & Health Endpoint | 0/6 | Planned | - |
 | 4. Docker Executor & container-network Differentiator | 0/TBD | Not started | - |
 | 5. Config Reload & `@random` Resolver | 0/TBD | Not started | - |
 | 6. Live Events, Metrics, Retention & Release Engineering | 0/TBD | Not started | - |
@@ -244,4 +252,4 @@ All 86 v1 requirements mapped to exactly one phase. Breakdown:
 
 ---
 
-*Roadmap created: 2026-04-09 — derived from requirements, reconciled against ARCHITECTURE.md Phase A–F and FEATURES.md build order. No requirements orphaned.*
+*Roadmap created: 2026-04-09 — derived from requirements, reconciled against ARCHITECTURE.md Phase A-F and FEATURES.md build order. No requirements orphaned.*
