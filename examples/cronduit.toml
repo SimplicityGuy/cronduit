@@ -1,0 +1,68 @@
+# examples/cronduit.toml — canonical example config.
+#
+# This file is copied into the Docker image at /etc/cronduit/config.toml
+# by the multi-stage Dockerfile (Plan 07). `just dev` and `just check-config`
+# also reference this exact path.
+#
+# SECURITY:
+#   * Never commit plaintext secrets. Use ${ENV_VAR} references and set
+#     the variables at runtime (docker-compose `environment:` block, or
+#     a .env file mounted into the container).
+#   * Mount this file read-only (`:ro`) in docker-compose.
+#   * Default bind is loopback. Change ONLY if you put Cronduit behind
+#     a reverse proxy with auth.
+
+[server]
+bind = "127.0.0.1:8080"
+database_url = "sqlite:///data/cronduit.db"
+timezone = "UTC"
+shutdown_grace = "30s"
+log_retention = "90d"
+
+[defaults]
+image = "alpine:latest"
+network = "bridge"
+delete = true
+timeout = "5m"
+random_min_gap = "0s"
+
+# ------------------------------------------------------------
+# Example jobs (Phase 1 parses these; Phase 2 actually runs them)
+# ------------------------------------------------------------
+
+# A local command job. Runs every 15 minutes.
+[[jobs]]
+name = "health-probe"
+schedule = "*/15 * * * *"
+command = "curl -sf https://example.com/health"
+timeout = "30s"
+
+# An inline script job. Runs hourly.
+[[jobs]]
+name = "backup-index"
+schedule = "0 * * * *"
+script = """
+#!/bin/sh
+set -eu
+echo "building backup index at $(date -u +%FT%TZ)"
+find /data -type f -mtime -1 | wc -l
+"""
+timeout = "2m"
+
+# An ephemeral Docker container job. Runs daily at 03:15 in the server tz.
+[[jobs]]
+name = "nightly-backup"
+schedule = "15 3 * * *"
+image = "restic/restic:latest"
+network = "container:vpn"
+volumes = [
+    "/data:/data:ro",
+    "/backup:/backup",
+]
+timeout = "30m"
+
+[jobs.env]
+# Set RESTIC_PASSWORD in the operator environment; cronduit interpolates
+# it at parse time and wraps the value in a SecretString. If the variable
+# is unset, `cronduit check` fails with a clear error.
+RESTIC_PASSWORD = "${RESTIC_PASSWORD}"
