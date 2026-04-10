@@ -71,7 +71,7 @@ flowchart TD
 - Pitfall 18 (secrets leak into errors): `SecretString` newtype from day one (FOUND-05).
 - Pitfall 20 (config format creep): TOML is locked, no YAML/JSON/INI code paths exist.
 
-**Plans**: 8 plans (5 waves)
+**Plans**: 9 plans (5 waves + 1 gap closure)
 
 Plans:
 - [x] 01-01-PLAN.md — Workspace scaffold: Cargo.toml, rust-toolchain.toml, src/ module skeleton, clap CLI stubs, tracing init, graceful shutdown, axum placeholder (Wave 1)
@@ -82,6 +82,7 @@ Plans:
 - [x] 01-06-PLAN.md — justfile with all D-11 recipes + `just openssl-check` Pitfall 14 guard (Wave 2)
 - [x] 01-07-PLAN.md — `.github/workflows/ci.yml` (lint + 4-cell test matrix + image jobs, all steps call `just`) + multi-stage Dockerfile with cargo-zigbuild → distroless/static nonroot (Wave 5)
 - [x] 01-08-PLAN.md — README.md with SECURITY as first H2, THREAT_MODEL.md STRIDE skeleton, examples/cronduit.toml canonical config (Wave 2)
+- [ ] 01-09-PLAN.md — Gap closure: croner dependency + cron schedule validation in validate.rs + invalid-schedule fixture + tests (Wave 1, gap closure)
 
 ---
 
