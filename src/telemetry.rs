@@ -7,8 +7,8 @@ pub enum LogFormat {
 }
 
 pub fn init(format: LogFormat) {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,cronduit=debug"));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,cronduit=debug"));
 
     match format {
         LogFormat::Json => {
