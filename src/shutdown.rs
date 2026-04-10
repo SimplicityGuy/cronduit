@@ -4,7 +4,9 @@ use tokio_util::sync::CancellationToken;
 pub fn install(token: CancellationToken) {
     tokio::spawn(async move {
         let ctrl_c = async {
-            let _ = signal::ctrl_c().await;
+            if let Err(e) = signal::ctrl_c().await {
+                tracing::warn!(error = %e, "failed to listen for ctrl_c; shutdown via SIGTERM only");
+            }
         };
         #[cfg(unix)]
         let term = async {
