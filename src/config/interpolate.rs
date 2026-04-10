@@ -49,10 +49,18 @@ pub fn interpolate(input: &str) -> (String, Vec<InterpolationError>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate the process environment.
+    /// `std::env::set_var` / `remove_var` are unsafe in Rust 1.82+ because
+    /// concurrent env reads from other threads are UB. Holding this mutex
+    /// ensures only one env-mutating test runs at a time.
+    pub(crate) static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn missing_var_collected() {
-        // Ensure the var is not in env
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // SAFETY: ENV_MUTEX guarantees no concurrent env access from tests.
         unsafe {
             std::env::remove_var("CRONDUIT_TEST_MISSING");
         }
@@ -67,6 +75,8 @@ mod tests {
 
     #[test]
     fn present_var_substituted() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // SAFETY: ENV_MUTEX guarantees no concurrent env access from tests.
         unsafe {
             std::env::set_var("CRONDUIT_TEST_PRESENT", "hello");
         }

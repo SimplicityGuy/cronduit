@@ -2,6 +2,11 @@
 
 use cronduit::config::parse_and_validate;
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// Serialize tests that mutate the process environment.
+/// See `src/config/interpolate.rs` tests for rationale.
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -31,6 +36,8 @@ fn valid_everything_parses() {
 
 #[test]
 fn valid_with_secrets_parses_when_env_is_set() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // SAFETY: ENV_MUTEX guarantees no concurrent env access from tests.
     unsafe {
         std::env::set_var("CRONDUIT_TEST_API_KEY", "hunter2");
     }
@@ -64,6 +71,8 @@ fn duplicate_job_names_both_lines_reported() {
 
 #[test]
 fn missing_env_var_reports_name_and_is_not_fatal() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // SAFETY: ENV_MUTEX guarantees no concurrent env access from tests.
     unsafe {
         std::env::remove_var("CRONDUIT_ABSOLUTELY_UNSET_VARIABLE_XYZ");
     }
