@@ -99,10 +99,10 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           REPO_OWNER: ${{ github.repository_owner }}
-        run: just image-push "${REPO_OWNER}/cronduit:latest"
+        run: just image-push "$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')/cronduit:latest"
 
       - name: just image-push (main -- sha)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         env:
           REPO_OWNER: ${{ github.repository_owner }}
-        run: just image-push "${REPO_OWNER}/cronduit:sha-${GITHUB_SHA:0:7}"
+        run: just image-push "$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')/cronduit:sha-${GITHUB_SHA:0:7}"
