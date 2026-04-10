@@ -1,0 +1,7 @@
+[server]
+timezone = "UTC"
+
+[[jobs]]
+name = "bad-cron"
+schedule = "not a valid cron expression"
+command = "echo fail"

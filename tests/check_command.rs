@@ -98,6 +98,17 @@ fn check_does_not_open_db() {
 }
 
 #[test]
+fn check_invalid_schedule_exits_nonzero() {
+    Command::cargo_bin("cronduit")
+        .unwrap()
+        .arg("check")
+        .arg(fixture("invalid-schedule.toml"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid cron expression"));
+}
+
+#[test]
 fn check_does_not_leak_secret_value() {
     // Set a distinctive secret in env and run check on the secrets fixture.
     // Assert the VALUE never appears in stdout or stderr -- only the VAR NAME

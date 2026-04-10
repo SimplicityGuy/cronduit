@@ -115,3 +115,13 @@ fn collects_all_errors_not_fail_fast() {
         errs.len()
     );
 }
+
+#[test]
+fn invalid_schedule_collects_config_error() {
+    let r = parse_and_validate(&fixture("invalid-schedule.toml"));
+    let errs = r.unwrap_err();
+    assert!(
+        errs.iter().any(|e| e.message.contains("invalid cron expression") && e.message.contains("bad-cron")),
+        "expected cron validation error mentioning job name, got: {errs:?}"
+    );
+}
