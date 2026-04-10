@@ -1,4 +1,5 @@
 use super::{Config, ConfigError, JobConfig};
+use croner::Cron;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
@@ -24,6 +25,7 @@ pub fn run_all_checks(
     for job in &cfg.jobs {
         check_one_of_job_type(job, path, errors);
         check_network_mode(job, path, errors);
+        check_schedule(job, path, errors);
     }
 }
 
@@ -78,6 +80,20 @@ fn check_network_mode(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError
                 ),
             });
         }
+    }
+}
+
+fn check_schedule(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if let Err(e) = job.schedule.parse::<Cron>() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: invalid cron expression `{}`: {}",
+                job.name, job.schedule, e
+            ),
+        });
     }
 }
 
@@ -157,5 +173,51 @@ mod tests {
     fn network_mode_whitespace_rejected() {
         assert!(!NETWORK_RE.is_match("container: vpn"));
         assert!(!NETWORK_RE.is_match(""));
+    }
+
+    fn stub_job(schedule: &str) -> JobConfig {
+        JobConfig {
+            name: "test-job".into(),
+            schedule: schedule.into(),
+            command: Some("echo hi".into()),
+            script: None,
+            image: None,
+            use_defaults: None,
+            env: Default::default(),
+            volumes: None,
+            network: None,
+            container_name: None,
+            timeout: None,
+        }
+    }
+
+    #[test]
+    fn schedule_valid_5field_accepted() {
+        let mut e = Vec::new();
+        check_schedule(&stub_job("*/5 * * * *"), Path::new("x"), &mut e);
+        assert!(e.is_empty());
+    }
+
+    #[test]
+    fn schedule_invalid_rejected() {
+        let mut e = Vec::new();
+        check_schedule(&stub_job("foo bar baz"), Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("invalid cron"));
+        assert!(e[0].message.contains("test-job"));
+    }
+
+    #[test]
+    fn schedule_l_modifier_accepted() {
+        let mut e = Vec::new();
+        check_schedule(&stub_job("0 3 L * *"), Path::new("x"), &mut e);
+        assert!(e.is_empty());
+    }
+
+    #[test]
+    fn schedule_empty_rejected() {
+        let mut e = Vec::new();
+        check_schedule(&stub_job(""), Path::new("x"), &mut e);
+        assert!(!e.is_empty());
     }
 }

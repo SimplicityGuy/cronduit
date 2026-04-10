@@ -43,6 +43,9 @@ toml = "1.1.2"
 humantime = "2.3.0"
 humantime-serde = "1.1.1"
 
+# Cron
+croner = "3.0"
+
 # CLI
 clap = { version = "4.6", features = ["derive", "env"] }
 
