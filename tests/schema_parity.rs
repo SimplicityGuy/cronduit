@@ -209,11 +209,7 @@ fn diff_report(sqlite: &Schema, pg: &Schema) -> Option<String> {
         }
     }
 
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 #[tokio::test]

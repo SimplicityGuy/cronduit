@@ -39,10 +39,18 @@ pub struct ServerConfig {
     pub log_retention: Duration,
 }
 
-fn default_bind() -> String { "127.0.0.1:8080".into() }
-fn default_db_url() -> SecretString { SecretString::from("sqlite:///data/cronduit.db") }
-fn default_shutdown_grace() -> Duration { Duration::from_secs(30) }
-fn default_log_retention() -> Duration { Duration::from_secs(60 * 60 * 24 * 90) }
+fn default_bind() -> String {
+    "127.0.0.1:8080".into()
+}
+fn default_db_url() -> SecretString {
+    SecretString::from("sqlite:///data/cronduit.db")
+}
+fn default_shutdown_grace() -> Duration {
+    Duration::from_secs(30)
+}
+fn default_log_retention() -> Duration {
+    Duration::from_secs(60 * 60 * 24 * 90)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct DefaultsConfig {

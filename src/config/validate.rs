@@ -13,12 +13,7 @@ static NETWORK_RE: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// Run every post-parse check; push errors into `errors`. Never fail-fast.
-pub fn run_all_checks(
-    cfg: &Config,
-    path: &Path,
-    raw: &str,
-    errors: &mut Vec<ConfigError>,
-) {
+pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<ConfigError>) {
     check_timezone(&cfg.server.timezone, path, errors);
     check_bind(&cfg.server.bind, path, errors);
     check_duplicate_job_names(&cfg.jobs, path, raw, errors);

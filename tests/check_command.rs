@@ -32,10 +32,7 @@ fn check_missing_timezone_reports_error() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("error:"))
-        .stderr(
-            predicate::str::contains("timezone")
-                .or(predicate::str::contains("missing field")),
-        );
+        .stderr(predicate::str::contains("timezone").or(predicate::str::contains("missing field")));
 }
 
 #[test]

@@ -54,7 +54,8 @@ fn missing_timezone_rejected() {
     let r = parse_and_validate(&fixture("invalid-missing-timezone.toml"));
     let errs = r.unwrap_err();
     assert!(
-        errs.iter().any(|e| e.message.contains("timezone") || e.message.contains("missing field")),
+        errs.iter()
+            .any(|e| e.message.contains("timezone") || e.message.contains("missing field")),
         "expected timezone error, got: {errs:?}"
     );
 }
@@ -63,8 +64,14 @@ fn missing_timezone_rejected() {
 fn duplicate_job_names_both_lines_reported() {
     let r = parse_and_validate(&fixture("invalid-duplicate-job.toml"));
     let errs = r.unwrap_err();
-    let dup_errs: Vec<_> = errs.iter().filter(|e| e.message.contains("duplicate job name")).collect();
-    assert!(!dup_errs.is_empty(), "expected duplicate error, got: {errs:?}");
+    let dup_errs: Vec<_> = errs
+        .iter()
+        .filter(|e| e.message.contains("duplicate job name"))
+        .collect();
+    assert!(
+        !dup_errs.is_empty(),
+        "expected duplicate error, got: {errs:?}"
+    );
     // The reported line should be non-zero (real source line from raw scan).
     assert!(dup_errs[0].line > 0, "duplicate error missing line number");
 }
@@ -79,7 +86,8 @@ fn missing_env_var_reports_name_and_is_not_fatal() {
     let r = parse_and_validate(&fixture("invalid-missing-env-var.toml"));
     let errs = r.unwrap_err();
     assert!(
-        errs.iter().any(|e| e.message.contains("CRONDUIT_ABSOLUTELY_UNSET_VARIABLE_XYZ")),
+        errs.iter()
+            .any(|e| e.message.contains("CRONDUIT_ABSOLUTELY_UNSET_VARIABLE_XYZ")),
         "expected missing-var error, got: {errs:?}"
     );
 }
@@ -99,7 +107,8 @@ fn bad_network_mode_rejected() {
     let r = parse_and_validate(&fixture("invalid-bad-network.toml"));
     let errs = r.unwrap_err();
     assert!(
-        errs.iter().any(|e| e.message.contains("invalid network mode")),
+        errs.iter()
+            .any(|e| e.message.contains("invalid network mode")),
         "expected network-mode error, got: {errs:?}"
     );
 }
@@ -121,7 +130,9 @@ fn invalid_schedule_collects_config_error() {
     let r = parse_and_validate(&fixture("invalid-schedule.toml"));
     let errs = r.unwrap_err();
     assert!(
-        errs.iter().any(|e| e.message.contains("invalid cron expression") && e.message.contains("bad-cron")),
+        errs.iter().any(
+            |e| e.message.contains("invalid cron expression") && e.message.contains("bad-cron")
+        ),
         "expected cron validation error mentioning job name, got: {errs:?}"
     );
 }

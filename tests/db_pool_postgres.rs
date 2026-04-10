@@ -10,9 +10,7 @@ async fn db_pool_connects_and_migrates_against_postgres() {
     let container = Postgres::default().start().await.expect("start postgres");
     let host = container.get_host().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let url = format!(
-        "postgres://postgres:postgres@{host}:{port}/postgres"
-    );
+    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
 
     let pool = DbPool::connect(&url).await.expect("DbPool::connect");
     assert_eq!(pool.backend(), DbBackend::Postgres);

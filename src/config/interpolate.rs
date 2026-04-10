@@ -16,8 +16,7 @@ pub enum ErrorKind {
 /// Expand `${VAR}` references in `input`. Collects all errors (missing vars,
 /// forbidden `${VAR:-default}` syntax) into a Vec; never early-exits.
 pub fn interpolate(input: &str) -> (String, Vec<InterpolationError>) {
-    static VAR_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").unwrap());
+    static VAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").unwrap());
     static DEFAULT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{[^}]*:-").unwrap());
 
     let mut errors = Vec::new();

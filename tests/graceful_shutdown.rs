@@ -60,10 +60,7 @@ mod unix_tests {
                     let ok = status.code() == Some(0)
                         || std::os::unix::process::ExitStatusExt::signal(&status)
                             == Some(libc::SIGTERM);
-                    assert!(
-                        ok,
-                        "cronduit did not exit cleanly on SIGTERM: {status:?}"
-                    );
+                    assert!(ok, "cronduit did not exit cleanly on SIGTERM: {status:?}");
                     return;
                 }
                 None => {
