@@ -1,0 +1,108 @@
+# .github/workflows/ci.yml
+# Single source of truth for Phase 1 CI. Every `run:` step invokes `just <recipe>`
+# exclusively (D-10 / FOUND-12). No inline `cargo` / `docker` / `rustup` / `sqlx` /
+# `npm` / `npx` commands.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Top-level permissions: read-only by default. `packages: write` is scoped
+# per-job to the `image` job only (T-01-13).
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint (fmt + clippy + openssl-sys guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - run: just fmt-check
+      - run: just clippy
+      # `just openssl-check` depends on `just install-targets` and loops over
+      # native + amd64-musl + arm64-musl in a single run. One lint-job invocation
+      # covers every target CI ships (Pitfall 14 -- 01-RESEARCH.md S14).
+      - run: just openssl-check
+
+  # Test matrix: arch dimension only.
+  # Both SQLite and Postgres backends are exercised in every cell via
+  # testcontainers-modules::postgres (integration tests in tests/schema_parity.rs
+  # and tests/db_pool_postgres.rs boot a real Postgres container). A per-cell
+  # `db` dimension would be cosmetic -- see ci.yml design notes in
+  # .planning/phases/01-foundation-security-posture-persistence-base/01-RESEARCH.md S10.
+  test:
+    name: test ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
+      - uses: extractions/setup-just@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,cargo-zigbuild
+      - name: Install cross-compile targets (arm64 cells only)
+        if: matrix.arch == 'arm64'
+        run: just install-targets
+      - run: just nextest
+      - run: just schema-diff
+
+  image:
+    name: multi-arch docker image
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    # Per-job permissions: scoped `packages: write` for GHCR push (T-01-13).
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: extractions/setup-just@v2
+
+      # PR path: build both platforms, load no push
+      - name: just image (PR -- build only)
+        if: github.event_name == 'pull_request'
+        run: just image
+
+      # main path: build and push to GHCR
+      - name: docker login (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: just image-push (main -- latest)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: just image-push "${REPO_OWNER}/cronduit:latest"
+
+      - name: just image-push (main -- sha)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: just image-push "${REPO_OWNER}/cronduit:sha-${GITHUB_SHA:0:7}"
