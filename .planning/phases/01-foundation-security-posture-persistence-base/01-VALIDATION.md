@@ -58,7 +58,7 @@ Every task in every plan has either an automated verify command OR an explicit W
 | 01-05-01 | 05 | 4 | DB-04 | T-01-12 | Schema parity: SQLite vs Postgres identical tables/columns/indexes after migration | integration (testcontainers) | `cargo test --test schema_parity -- --nocapture` | ❌ W0 | ⬜ pending |
 | 01-05-02 | 05 | 4 | DB-02, DB-03 | T-01-12 | DbPool connects to testcontainers Postgres; migrate idempotent | integration (testcontainers) | `cargo test --test db_pool_postgres` | ❌ W0 | ⬜ pending |
 | 01-06-01 | 06 | 2 | FOUND-06, FOUND-12 | T-01-03, T-01-06 | justfile has all D-11 recipes; openssl-check pattern correct; fails on any openssl-sys presence | CLI smoke | `just --list` + `just openssl-check` + `just fmt-check` | ❌ W0 | ⬜ pending |
-| 01-07-01 | 07 | 5 | FOUND-07, FOUND-08 | T-01-06, T-01-13 | ci.yml has lint/test/image jobs; 4-cell matrix; every run step calls `just` | YAML + grep | `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"` AND `grep -E "^\s*run: (cargo|docker buildx)" .github/workflows/ci.yml` (must be empty) | ❌ W0 | ⬜ pending |
+| 01-07-01 | 07 | 5 | FOUND-07, FOUND-08 | T-01-06, T-01-13 | ci.yml has lint/test/image jobs; 2-cell arch matrix (testcontainers covers both backends per cell); every run step calls `just`; `packages: write` scoped per-job to `image` only | YAML + grep | `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"` AND `grep -nE "^\s*run: (cargo\|docker \|rustup \|sqlx \|npm \|npx )" .github/workflows/ci.yml` (must be empty) | ❌ W0 | ⬜ pending |
 | 01-07-02 | 07 | 5 | FOUND-09 | T-01-14, T-01-15 | Dockerfile multi-stage cargo-zigbuild to distroless/static nonroot | build | `test -s Dockerfile && grep -q "cargo zigbuild" Dockerfile && grep -q "nonroot:nonroot" Dockerfile` (full `just image` build is manual on buildx 0.12+) | ❌ W0 | ⬜ pending |
 | 01-08-01 | 08 | 2 | FOUND-10, FOUND-11 | T-01-01, T-01-10 | README first H2 is Security; mermaid diagrams; no ASCII box drawing | grep | `head -50 README.md | grep -q '^## Security' && grep -q 'THREAT_MODEL.md' README.md` | ❌ W0 | ⬜ pending |
 | 01-08-02 | 08 | 2 | FOUND-10, FOUND-11 | T-01-01, T-01-10 | THREAT_MODEL.md STRIDE skeleton covers Docker socket + loopback + no-auth-v1 | grep | `test -s THREAT_MODEL.md && grep -q 'Docker socket' THREAT_MODEL.md && grep -q 'Spoofing' THREAT_MODEL.md && grep -q 'Tampering' THREAT_MODEL.md && grep -q 'Elevation' THREAT_MODEL.md` | ❌ W0 | ⬜ pending |
@@ -101,6 +101,12 @@ Subsequent Wave 0-equivalent scaffolding items created in later plans (required 
 
 ---
 
+
+### Footnote on DB-07 (schema-only in Phase 1)
+
+Phase 1 provides the `jobs.enabled` column only. The runtime behavior — "removed jobs are marked `enabled=0` rather than deleted" — requires the config reload sync engine which is implemented in **Phase 5**. The Phase 1 verifier MUST NOT assert the soft-delete behavior; task `01-04-05` only asserts that the column exists (via the schema parity + migrations idempotency tests). DB-07 remains listed in Plan 04's `requirements` frontmatter because the schema provision is a real Phase 1 contribution — Phase 5 depends on the column existing — but the runtime soft-delete is out of scope for this phase.
+
+---
 ## Validation Sign-Off
 
 - [x] All tasks have `<automated>` verify or Wave 0 dependencies
