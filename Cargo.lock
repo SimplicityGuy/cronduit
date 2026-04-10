@@ -504,6 +504,7 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "hyper",
+ "libc",
  "once_cell",
  "predicates",
  "regex",
