@@ -16,12 +16,11 @@ pub fn run_all_checks(
     cfg: &Config,
     path: &Path,
     raw: &str,
-    raw_doc: Option<&toml::Value>,
     errors: &mut Vec<ConfigError>,
 ) {
     check_timezone(&cfg.server.timezone, path, errors);
     check_bind(&cfg.server.bind, path, errors);
-    check_duplicate_job_names(&cfg.jobs, path, raw, raw_doc, errors);
+    check_duplicate_job_names(&cfg.jobs, path, raw, errors);
     for job in &cfg.jobs {
         check_one_of_job_type(job, path, errors);
         check_network_mode(job, path, errors);
@@ -86,7 +85,6 @@ fn check_duplicate_job_names(
     jobs: &[JobConfig],
     path: &Path,
     raw: &str,
-    _raw_doc: Option<&toml::Value>,
     errors: &mut Vec<ConfigError>,
 ) {
     // Find line numbers by scanning raw source for `name = "..."` matches in order.

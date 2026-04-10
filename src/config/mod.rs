@@ -141,12 +141,8 @@ pub fn parse_and_validate(path: &Path) -> Result<ParsedConfig, Vec<ConfigError>>
         }
     };
 
-    // Also re-parse raw (pre-interpolation) to capture ORIGINAL line numbers
-    // for duplicate-job-name detection. toml::from_str can tell us spans.
-    let raw_doc: Option<toml::Value> = toml::from_str(&raw).ok();
-
     if let Some(cfg) = &parsed {
-        validate::run_all_checks(cfg, path, &raw, raw_doc.as_ref(), &mut errors);
+        validate::run_all_checks(cfg, path, &raw, &mut errors);
     }
 
     if errors.is_empty() {
