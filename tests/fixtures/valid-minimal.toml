@@ -1,0 +1,7 @@
+[server]
+timezone = "UTC"
+
+[[jobs]]
+name = "hello"
+schedule = "*/5 * * * *"
+command = "echo hello"

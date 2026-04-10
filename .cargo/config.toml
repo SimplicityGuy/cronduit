@@ -1,0 +1,5 @@
+[env]
+SQLX_OFFLINE = "true"
+
+[build]
+# Keep default incremental on; release profile handles stripping.

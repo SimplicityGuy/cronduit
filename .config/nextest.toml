@@ -1,0 +1,12 @@
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.ci.retries]
+backoff = "exponential"
+count = 2
+delay = "1s"
+jitter = true
+max-delay = "10s"

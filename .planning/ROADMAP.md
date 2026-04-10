@@ -71,7 +71,18 @@ flowchart TD
 - Pitfall 18 (secrets leak into errors): `SecretString` newtype from day one (FOUND-05).
 - Pitfall 20 (config format creep): TOML is locked, no YAML/JSON/INI code paths exist.
 
-**Plans**: TBD
+**Plans**: 9 plans (5 waves + 1 gap closure)
+
+Plans:
+- [x] 01-01-PLAN.md — Workspace scaffold: Cargo.toml, rust-toolchain.toml, src/ module skeleton, clap CLI stubs, tracing init, graceful shutdown, axum placeholder (Wave 1)
+- [x] 01-02-PLAN.md — TOML config parsing: SecretString wiring, ${VAR} interpolation, GCC-style errors, IANA timezone + network mode validators, SHA-256 config_hash, 9 fixtures + integration tests (Wave 2)
+- [x] 01-03-PLAN.md — `cronduit check` subcommand: wire parse_and_validate, GCC-style error printer, collect-all exit codes, black-box tests (no DB, no secret leak) (Wave 3)
+- [x] 01-04-PLAN.md — DbPool enum: split SQLite read/write pools (WAL + busy_timeout), Postgres pool, initial migrations for both backends, full boot flow + cronduit.startup event + bind warning, pragma/idempotency/startup-event/graceful-shutdown tests (Wave 3)
+- [x] 01-05-PLAN.md — Schema parity test: testcontainers Postgres + introspection + normalization whitelist + structured diff; DbPool Postgres smoke test (Wave 4)
+- [x] 01-06-PLAN.md — justfile with all D-11 recipes + `just openssl-check` Pitfall 14 guard (Wave 2)
+- [x] 01-07-PLAN.md — `.github/workflows/ci.yml` (lint + 4-cell test matrix + image jobs, all steps call `just`) + multi-stage Dockerfile with cargo-zigbuild → distroless/static nonroot (Wave 5)
+- [x] 01-08-PLAN.md — README.md with SECURITY as first H2, THREAT_MODEL.md STRIDE skeleton, examples/cronduit.toml canonical config (Wave 2)
+- [x] 01-09-PLAN.md — Gap closure: croner dependency + cron schedule validation in validate.rs + invalid-schedule fixture + tests (Wave 1, gap closure)
 
 ---
 
@@ -210,7 +221,7 @@ flowchart TD
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation, Security Posture & Persistence Base | 0/TBD | Not started | - |
+| 1. Foundation, Security Posture & Persistence Base | 0/8 | Planned | - |
 | 2. Scheduler Core & Command/Script Executor | 0/TBD | Not started | - |
 | 3. Read-Only Web UI & Health Endpoint | 0/TBD | Not started | - |
 | 4. Docker Executor & container-network Differentiator | 0/TBD | Not started | - |

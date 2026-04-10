@@ -1,0 +1,10 @@
+[server]
+timezone = "UTC"
+
+[[jobs]]
+name = "needs-env"
+schedule = "0 * * * *"
+command = "echo hi"
+
+[jobs.env]
+API_KEY = "${CRONDUIT_ABSOLUTELY_UNSET_VARIABLE_XYZ}"
