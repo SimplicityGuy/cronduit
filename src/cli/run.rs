@@ -62,7 +62,16 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     let pool = DbPool::connect(&resolved_db_url).await?;
     pool.migrate().await?;
 
-    // 5. Emit startup event (D-23) + bind warning (D-24) BEFORE serve.
+    // 5. Sync config to DB and parse timezone.
+    let tz: chrono_tz::Tz = cfg
+        .server
+        .timezone
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid timezone: {}", cfg.server.timezone))?;
+
+    let sync_result = crate::scheduler::sync::sync_config_to_db(&pool, &parsed.config).await?;
+
+    // 6. Emit startup event (D-23) + bind warning (D-24) BEFORE serve.
     let backend = match pool.backend() {
         DbBackend::Sqlite => "sqlite",
         DbBackend::Postgres => "postgres",
@@ -86,13 +95,13 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         database_url = %strip_db_credentials(&resolved_db_url),
         config_path = %config_path.display(),
         timezone = %cfg.server.timezone,
-        job_count = cfg.jobs.len(),
-        disabled_job_count = 0u64, // Phase 1: no sync engine yet
+        job_count = sync_result.jobs.len(),
+        disabled_job_count = sync_result.disabled,
         bind_warning,
         "cronduit starting"
     );
 
-    // 6. Wire graceful shutdown + serve.
+    // 7. Wire graceful shutdown + spawn scheduler + serve.
     let state = AppState {
         started_at: chrono::Utc::now(),
         version: env!("CARGO_PKG_VERSION"),
@@ -100,9 +109,22 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     let cancel = CancellationToken::new();
     shutdown::install(cancel.clone());
 
+    // Spawn the scheduler loop.
+    let scheduler_handle = crate::scheduler::spawn(
+        pool.clone(),
+        sync_result.jobs,
+        tz,
+        cancel.clone(),
+        cfg.server.shutdown_grace,
+    );
+
+    // Serve web (blocks until cancel).
     let serve_result = web::serve(resolved_bind, state, cancel).await;
 
-    // 7. Drain pools before returning.
+    // 8. Wait for scheduler to drain (Plan 04 will add timeout).
+    let _ = scheduler_handle.await;
+
+    // 9. Drain pools before returning.
     pool.close().await;
 
     serve_result?;
