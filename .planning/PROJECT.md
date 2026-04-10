@@ -174,4 +174,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-09 after research synthesis (added resolved crate decisions, locked TOML, tightened security posture, captured workflow + diagram requirements)*
+*Last updated: 2026-04-10 — Phase 1 complete: Foundation, Security Posture & Persistence Base. Rust workspace scaffold, TOML config parsing with env interpolation and SecretString, CLI check/run subcommands, SQLite/Postgres dual persistence with migrations, cron schedule validation via croner, GitHub Actions CI matrix, multi-arch Dockerfile, README with Security-first posture, THREAT_MODEL.md skeleton.*
