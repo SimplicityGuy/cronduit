@@ -80,7 +80,7 @@ Plans:
 - [x] 01-04-PLAN.md — DbPool enum: split SQLite read/write pools (WAL + busy_timeout), Postgres pool, initial migrations for both backends, full boot flow + cronduit.startup event + bind warning, pragma/idempotency/startup-event/graceful-shutdown tests (Wave 3)
 - [x] 01-05-PLAN.md — Schema parity test: testcontainers Postgres + introspection + normalization whitelist + structured diff; DbPool Postgres smoke test (Wave 4)
 - [x] 01-06-PLAN.md — justfile with all D-11 recipes + `just openssl-check` Pitfall 14 guard (Wave 2)
-- [ ] 01-07-PLAN.md — `.github/workflows/ci.yml` (lint + 4-cell test matrix + image jobs, all steps call `just`) + multi-stage Dockerfile with cargo-zigbuild → distroless/static nonroot (Wave 5)
+- [x] 01-07-PLAN.md — `.github/workflows/ci.yml` (lint + 4-cell test matrix + image jobs, all steps call `just`) + multi-stage Dockerfile with cargo-zigbuild → distroless/static nonroot (Wave 5)
 - [x] 01-08-PLAN.md — README.md with SECURITY as first H2, THREAT_MODEL.md STRIDE skeleton, examples/cronduit.toml canonical config (Wave 2)
 
 ---
