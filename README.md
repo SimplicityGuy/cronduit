@@ -1,8 +1,20 @@
-# Cronduit
+<div align="center">
 
-> Self-hosted Docker-native cron scheduler with a web UI. One tool that both runs recurrent jobs reliably AND makes their state observable through a browser.
+<img src="design/banners/cronduit-banner-animated.svg" alt="cronduit" width="400" />
 
-**Status:** Early -- Phase 1 (Foundation, Security and Persistence) in progress. Not yet usable as a scheduler; see the roadmap at `.planning/ROADMAP.md`.
+[![CI](https://github.com/SimplicityGuy/cronduit/actions/workflows/ci.yml/badge.svg)](https://github.com/SimplicityGuy/cronduit/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/github/license/SimplicityGuy/cronduit)
+![Rust](https://img.shields.io/badge/rust-1.94+-orange.svg)
+[![just](https://img.shields.io/badge/just-task%20runner-blue)](https://just.systems)
+[![Clippy](https://img.shields.io/badge/clippy-rust%20linter-green)](https://github.com/rust-lang/rust-clippy)
+[![Docker](https://img.shields.io/badge/docker-multi--arch-blue?logo=docker)](https://www.docker.com/)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-powered-orange?logo=anthropic&logoColor=white)](https://claude.ai/code)
+
+**Self-hosted Docker-native cron scheduler with a web UI. One tool that both runs recurrent jobs reliably AND makes their state observable through a browser.**
+
+</div>
+
+**Status:** Early -- Phase 1 (Foundation, Security and Persistence) complete. Not yet usable as a scheduler; see the roadmap at `.planning/ROADMAP.md`.
 
 ---
 
@@ -121,7 +133,7 @@ See `CLAUDE.md` for the full project constraints.
 
 ## License
 
-MIT OR Apache-2.0. See `LICENSE` (forthcoming).
+MIT. See [LICENSE](./LICENSE).
 
 ---
 
