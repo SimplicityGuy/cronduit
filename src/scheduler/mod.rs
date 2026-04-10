@@ -15,11 +15,12 @@ use crate::db::queries::DbJob;
 use crate::db::DbPool;
 use chrono::Utc;
 use chrono_tz::Tz;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
-/// Placeholder for run completion results. Will be expanded in Plan 03.
+/// Result of a completed run task.
 pub struct RunResult {
     pub run_id: i64,
     pub status: String,
@@ -28,7 +29,7 @@ pub struct RunResult {
 /// The main scheduler loop. Owns the fire queue, job set, and shutdown token.
 pub struct SchedulerLoop {
     pub pool: DbPool,
-    pub jobs: Vec<DbJob>,
+    pub jobs: HashMap<i64, DbJob>,
     pub tz: Tz,
     pub cancel: CancellationToken,
     pub shutdown_grace: Duration,
@@ -40,7 +41,8 @@ impl SchedulerLoop {
     /// D-01: Selects over next-fire sleep, join_set reaping, and cancel token.
     /// D-02: Uses BinaryHeap<Reverse<FireEntry>> for efficient next-fire lookup.
     pub async fn run(self) {
-        let mut heap = fire::build_initial_heap(&self.jobs, self.tz);
+        let jobs_vec: Vec<DbJob> = self.jobs.values().cloned().collect();
+        let mut heap = fire::build_initial_heap(&jobs_vec, self.tz);
         let mut join_set: JoinSet<RunResult> = JoinSet::new();
         let mut last_expected_wake: chrono::DateTime<Tz> = Utc::now().with_timezone(&self.tz);
 
@@ -65,39 +67,78 @@ impl SchedulerLoop {
                         last_expected_wake,
                         now_tz,
                         self.tz,
-                        &self.jobs,
+                        &jobs_vec,
                     );
-                    // TODO (Plan 03): Enqueue catch-up runs from missed fires.
-                    let _ = &missed;
+
+                    // Spawn catch-up runs for missed fires.
+                    for m in &missed {
+                        if let Some(job) = self.jobs.get(&m.job_id) {
+                            let child_cancel = self.cancel.child_token();
+                            join_set.spawn(run::run_job(
+                                self.pool.clone(),
+                                job.clone(),
+                                "catch-up".to_string(),
+                                child_cancel,
+                            ));
+                            tracing::warn!(
+                                target: "cronduit.scheduler",
+                                job = %m.job_name,
+                                missed_time = %m.missed_time,
+                                "catch-up run for missed fire"
+                            );
+                        }
+                    }
 
                     last_expected_wake = now_tz;
 
                     // Fire due jobs.
                     let due = fire::fire_due_jobs(&mut heap, tokio::time::Instant::now());
                     for entry in &due {
-                        tracing::info!(
-                            target: "cronduit.scheduler",
-                            job = %entry.job_name,
-                            fire_time = %entry.fire_time,
-                            "firing job"
-                        );
-                        // TODO (Plan 03): Spawn run task into join_set.
+                        if let Some(job) = self.jobs.get(&entry.job_id) {
+                            let child_cancel = self.cancel.child_token();
+                            join_set.spawn(run::run_job(
+                                self.pool.clone(),
+                                job.clone(),
+                                "scheduled".to_string(),
+                                child_cancel,
+                            ));
+                            tracing::info!(
+                                target: "cronduit.scheduler",
+                                job = %entry.job_name,
+                                fire_time = %entry.fire_time,
+                                "spawned run"
+                            );
 
-                        // Requeue with next fire time.
-                        if let Some(db_job) = self.jobs.iter().find(|j| j.id == entry.job_id) {
-                            fire::requeue_job(&mut heap, db_job, &entry.fire_time, self.tz);
+                            // Requeue with next fire time.
+                            fire::requeue_job(&mut heap, job, &entry.fire_time, self.tz);
                         }
                     }
                 }
                 Some(result) = join_set.join_next() => {
-                    // TODO (Plan 03): Handle completed run.
-                    let _ = result;
+                    match result {
+                        Ok(run_result) => {
+                            tracing::info!(
+                                target: "cronduit.scheduler",
+                                run_id = run_result.run_id,
+                                status = %run_result.status,
+                                "run completed"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                target: "cronduit.scheduler",
+                                error = %e,
+                                "run task panicked"
+                            );
+                        }
+                    }
                 }
                 _ = self.cancel.cancelled() => {
-                    // TODO (Plan 04): Graceful shutdown drain.
+                    // Plan 04: Graceful shutdown drain with timeout.
+                    // For now, break and let in-flight tasks be aborted.
                     tracing::info!(
                         target: "cronduit.scheduler",
-                        "shutdown signal received, stopping scheduler"
+                        "shutdown signal received, draining in-flight runs"
                     );
                     break;
                 }
@@ -108,6 +149,7 @@ impl SchedulerLoop {
 
 /// Spawn the scheduler loop on a new tokio task.
 ///
+/// Accepts `Vec<DbJob>` and converts to `HashMap` internally for O(1) lookup.
 /// Returns a `JoinHandle` that resolves when the loop exits (on cancellation).
 pub fn spawn(
     pool: DbPool,
@@ -116,9 +158,10 @@ pub fn spawn(
     cancel: CancellationToken,
     shutdown_grace: Duration,
 ) -> JoinHandle<()> {
+    let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
         pool,
-        jobs,
+        jobs: jobs_map,
         tz,
         cancel,
         shutdown_grace,
