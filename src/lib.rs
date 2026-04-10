@@ -1,2 +1,7 @@
-//! cronduit library crate root — placeholder for Task 1 build verification.
-//! Task 2 replaces this with the full module re-exports.
+//! cronduit library crate root. Re-exports modules for integration tests.
+pub mod cli;
+pub mod config;
+pub mod db;
+pub mod shutdown;
+pub mod telemetry;
+pub mod web;
