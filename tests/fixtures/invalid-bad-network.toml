@@ -1,0 +1,8 @@
+[server]
+timezone = "UTC"
+
+[[jobs]]
+name = "bad-net"
+schedule = "0 * * * *"
+image = "alpine"
+network = "container: with spaces"

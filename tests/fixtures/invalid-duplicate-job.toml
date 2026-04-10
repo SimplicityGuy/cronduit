@@ -1,0 +1,12 @@
+[server]
+timezone = "UTC"
+
+[[jobs]]
+name = "dup"
+schedule = "0 * * * *"
+command = "echo 1"
+
+[[jobs]]
+name = "dup"
+schedule = "30 * * * *"
+command = "echo 2"

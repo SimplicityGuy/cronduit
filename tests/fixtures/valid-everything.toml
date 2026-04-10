@@ -1,0 +1,35 @@
+[server]
+bind = "127.0.0.1:9090"
+database_url = "sqlite:///tmp/test.db"
+timezone = "America/Los_Angeles"
+shutdown_grace = "45s"
+log_retention = "30d"
+
+[defaults]
+image = "alpine:latest"
+network = "bridge"
+volumes = ["/data:/data"]
+delete = true
+timeout = "5m"
+random_min_gap = "90m"
+
+[[jobs]]
+name = "backup"
+schedule = "0 3 * * *"
+image = "restic/restic:latest"
+network = "container:vpn"
+volumes = ["/backup:/backup"]
+timeout = "30m"
+
+[[jobs]]
+name = "script-job"
+schedule = "*/15 * * * *"
+script = """
+#!/bin/sh
+echo hello
+"""
+
+[[jobs]]
+name = "cmd-job"
+schedule = "0 * * * *"
+command = "curl -sf https://example.com"
