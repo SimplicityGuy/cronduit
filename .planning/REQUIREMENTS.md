@@ -107,7 +107,7 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 - [ ] **UI-04**: HTMX is vendored into `assets/vendor/htmx.min.js` and embedded; the UI never loads JS or CSS from a CDN
 - [ ] **UI-05**: All UI pages match the `design/DESIGN_SYSTEM.md` terminal-green palette, monospace typography, and dark/light token system
 - [ ] **UI-06**: A Dashboard page lists all enabled jobs with: name, raw schedule, resolved schedule, next fire time, last run status badge, and last run timestamp
-- [ ] **UI-07**: The Dashboard refreshes via HTMX polling (`hx-trigger="every 3s"`) on the table partial; next-fire countdowns are computed client-side
+- [ ] **UI-07**: The Dashboard refreshes via HTMX polling (`hx-trigger="every 3s"`) on the table partial; next-fire countdowns are computed server-side (superseded by D-03 in Phase 3 context session — original text said client-side)
 - [ ] **UI-08**: A Job Detail page shows the full resolved config, the cron expression's human-readable description (via croner), and a paginated run history table
 - [ ] **UI-09**: A Run Detail page shows run metadata (start/end/duration/exit_code/status/container_id) and the captured logs with stdout/stderr distinction and ANSI color codes parsed server-side into sanitized HTML spans
 - [ ] **UI-10**: All log content rendered in the UI is HTML-escaped by default; ANSI parsing is the only allowed transformation
