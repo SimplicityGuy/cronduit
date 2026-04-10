@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     job_type           TEXT     NOT NULL,
     config_json        TEXT     NOT NULL,
     config_hash        TEXT     NOT NULL,
-    enabled            SMALLINT NOT NULL DEFAULT 1,
+    enabled            BIGINT   NOT NULL DEFAULT 1,
     timeout_secs       BIGINT   NOT NULL,
     created_at         TEXT     NOT NULL,
     updated_at         TEXT     NOT NULL
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS job_runs (
     start_time     TEXT     NOT NULL,
     end_time       TEXT,
     duration_ms    BIGINT,
-    exit_code      INTEGER,
+    exit_code      BIGINT,
     container_id   TEXT,
     error_message  TEXT
 );
