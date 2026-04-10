@@ -9,11 +9,11 @@ use std::time::Duration;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use super::command::{self, RunStatus};
-use super::log_pipeline::{self, LogReceiver, DEFAULT_BATCH_SIZE, DEFAULT_CHANNEL_CAPACITY};
 use super::RunResult;
-use crate::db::queries::{DbJob, finalize_run, insert_log_batch, insert_running_run};
+use super::command::{self, RunStatus};
+use super::log_pipeline::{self, DEFAULT_BATCH_SIZE, DEFAULT_CHANNEL_CAPACITY, LogReceiver};
 use crate::db::DbPool;
+use crate::db::queries::{DbJob, finalize_run, insert_log_batch, insert_running_run};
 
 /// Config fields extracted from `config_json` for dispatch.
 #[derive(Deserialize)]
@@ -87,15 +87,15 @@ pub async fn run_job(
                     script: None,
                 });
             match config.command {
-                Some(cmd) => {
-                    command::execute_command(&cmd, timeout, cancel, sender.clone()).await
-                }
+                Some(cmd) => command::execute_command(&cmd, timeout, cancel, sender.clone()).await,
                 None => {
                     sender.close();
                     command::ExecResult {
                         exit_code: None,
                         status: RunStatus::Error,
-                        error_message: Some("command job missing 'command' field in config_json".to_string()),
+                        error_message: Some(
+                            "command job missing 'command' field in config_json".to_string(),
+                        ),
                     }
                 }
             }
@@ -109,14 +109,23 @@ pub async fn run_job(
             match config.script {
                 Some(body) => {
                     // D-15: Default shebang is #!/bin/sh
-                    super::script::execute_script(&body, "#!/bin/sh", timeout, cancel, sender.clone()).await
+                    super::script::execute_script(
+                        &body,
+                        "#!/bin/sh",
+                        timeout,
+                        cancel,
+                        sender.clone(),
+                    )
+                    .await
                 }
                 None => {
                     sender.close();
                     command::ExecResult {
                         exit_code: None,
                         status: RunStatus::Error,
-                        error_message: Some("script job missing 'script' field in config_json".to_string()),
+                        error_message: Some(
+                            "script job missing 'script' field in config_json".to_string(),
+                        ),
                     }
                 }
             }
@@ -232,7 +241,12 @@ mod tests {
         pool
     }
 
-    async fn insert_test_job(pool: &DbPool, name: &str, job_type: &str, config_json: &str) -> DbJob {
+    async fn insert_test_job(
+        pool: &DbPool,
+        name: &str,
+        job_type: &str,
+        config_json: &str,
+    ) -> DbJob {
         let id = crate::db::queries::upsert_job(
             pool,
             name,
@@ -264,13 +278,8 @@ mod tests {
     #[tokio::test]
     async fn run_job_command_success() {
         let pool = setup_pool().await;
-        let job = insert_test_job(
-            &pool,
-            "echo-job",
-            "command",
-            r#"{"command":"echo hello"}"#,
-        )
-        .await;
+        let job =
+            insert_test_job(&pool, "echo-job", "command", r#"{"command":"echo hello"}"#).await;
 
         let cancel = CancellationToken::new();
         let result = run_job(pool.clone(), job, "scheduled".to_string(), cancel).await;
@@ -436,7 +445,10 @@ mod tests {
             run_job(pool2, job2, "scheduled".to_string(), cancel2),
         );
 
-        assert_ne!(r1.run_id, r2.run_id, "concurrent runs must have different run IDs");
+        assert_ne!(
+            r1.run_id, r2.run_id,
+            "concurrent runs must have different run IDs"
+        );
         assert_eq!(r1.status, "success");
         assert_eq!(r2.status, "success");
 

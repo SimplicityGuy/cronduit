@@ -130,16 +130,14 @@ pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> any
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             if active_names.is_empty() {
-                let result =
-                    sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1")
-                        .execute(p)
-                        .await?;
+                let result = sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1")
+                    .execute(p)
+                    .await?;
                 return Ok(result.rows_affected());
             }
             // SQLite doesn't support array binds; build a parameterized IN list.
-            let placeholders: Vec<String> = (1..=active_names.len())
-                .map(|i| format!("?{i}"))
-                .collect();
+            let placeholders: Vec<String> =
+                (1..=active_names.len()).map(|i| format!("?{i}")).collect();
             let sql = format!(
                 "UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND name NOT IN ({})",
                 placeholders.join(", ")
@@ -153,19 +151,17 @@ pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> any
         }
         PoolRef::Postgres(p) => {
             if active_names.is_empty() {
-                let result =
-                    sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1")
-                        .execute(p)
-                        .await?;
+                let result = sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1")
+                    .execute(p)
+                    .await?;
                 return Ok(result.rows_affected());
             }
             // Postgres supports ANY($1) with array bind.
-            let result = sqlx::query(
-                "UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND name != ALL($1)",
-            )
-            .bind(active_names)
-            .execute(p)
-            .await?;
+            let result =
+                sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND name != ALL($1)")
+                    .bind(active_names)
+                    .execute(p)
+                    .await?;
             Ok(result.rows_affected())
         }
     }
@@ -527,12 +523,30 @@ mod tests {
     #[tokio::test]
     async fn disable_missing_jobs_disables_removed() {
         let pool = setup_pool().await;
-        upsert_job(&pool, "keep", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
-            .await
-            .unwrap();
-        upsert_job(&pool, "remove", "* * * * *", "* * * * *", "command", "{}", "h2", 60)
-            .await
-            .unwrap();
+        upsert_job(
+            &pool,
+            "keep",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h1",
+            60,
+        )
+        .await
+        .unwrap();
+        upsert_job(
+            &pool,
+            "remove",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h2",
+            60,
+        )
+        .await
+        .unwrap();
 
         let disabled = disable_missing_jobs(&pool, &["keep".to_string()])
             .await
@@ -550,12 +564,30 @@ mod tests {
     #[tokio::test]
     async fn disable_missing_jobs_empty_disables_all() {
         let pool = setup_pool().await;
-        upsert_job(&pool, "a", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
-            .await
-            .unwrap();
-        upsert_job(&pool, "b", "* * * * *", "* * * * *", "command", "{}", "h2", 60)
-            .await
-            .unwrap();
+        upsert_job(
+            &pool,
+            "a",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h1",
+            60,
+        )
+        .await
+        .unwrap();
+        upsert_job(
+            &pool,
+            "b",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h2",
+            60,
+        )
+        .await
+        .unwrap();
 
         let disabled = disable_missing_jobs(&pool, &[]).await.unwrap();
         assert_eq!(disabled, 2);
@@ -565,15 +597,42 @@ mod tests {
     #[tokio::test]
     async fn get_enabled_jobs_filters_disabled() {
         let pool = setup_pool().await;
-        upsert_job(&pool, "enabled1", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
-            .await
-            .unwrap();
-        upsert_job(&pool, "enabled2", "* * * * *", "* * * * *", "command", "{}", "h2", 60)
-            .await
-            .unwrap();
-        upsert_job(&pool, "disabled", "* * * * *", "* * * * *", "command", "{}", "h3", 60)
-            .await
-            .unwrap();
+        upsert_job(
+            &pool,
+            "enabled1",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h1",
+            60,
+        )
+        .await
+        .unwrap();
+        upsert_job(
+            &pool,
+            "enabled2",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h2",
+            60,
+        )
+        .await
+        .unwrap();
+        upsert_job(
+            &pool,
+            "disabled",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h3",
+            60,
+        )
+        .await
+        .unwrap();
 
         disable_missing_jobs(&pool, &["enabled1".to_string(), "enabled2".to_string()])
             .await
@@ -591,21 +650,33 @@ mod tests {
     #[tokio::test]
     async fn insert_running_run_creates_row() {
         let pool = setup_pool().await;
-        let job_id = upsert_job(&pool, "test", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
+        let job_id = upsert_job(
+            &pool,
+            "test",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h1",
+            60,
+        )
+        .await
+        .unwrap();
+
+        let run_id = insert_running_run(&pool, job_id, "scheduled")
             .await
             .unwrap();
-
-        let run_id = insert_running_run(&pool, job_id, "scheduled").await.unwrap();
         assert!(run_id > 0);
 
         // Verify the row was created with correct fields.
         match pool.reader() {
             PoolRef::Sqlite(p) => {
-                let row = sqlx::query("SELECT status, trigger, start_time FROM job_runs WHERE id = ?1")
-                    .bind(run_id)
-                    .fetch_one(p)
-                    .await
-                    .unwrap();
+                let row =
+                    sqlx::query("SELECT status, trigger, start_time FROM job_runs WHERE id = ?1")
+                        .bind(run_id)
+                        .fetch_one(p)
+                        .await
+                        .unwrap();
                 let status: String = row.get("status");
                 let trigger: String = row.get("trigger");
                 let start_time: String = row.get("start_time");
@@ -621,10 +692,21 @@ mod tests {
     #[tokio::test]
     async fn finalize_run_updates_row() {
         let pool = setup_pool().await;
-        let job_id = upsert_job(&pool, "test", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
+        let job_id = upsert_job(
+            &pool,
+            "test",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h1",
+            60,
+        )
+        .await
+        .unwrap();
+        let run_id = insert_running_run(&pool, job_id, "scheduled")
             .await
             .unwrap();
-        let run_id = insert_running_run(&pool, job_id, "scheduled").await.unwrap();
 
         let start = tokio::time::Instant::now();
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -635,11 +717,13 @@ mod tests {
 
         match pool.reader() {
             PoolRef::Sqlite(p) => {
-                let row = sqlx::query("SELECT status, exit_code, end_time, duration_ms FROM job_runs WHERE id = ?1")
-                    .bind(run_id)
-                    .fetch_one(p)
-                    .await
-                    .unwrap();
+                let row = sqlx::query(
+                    "SELECT status, exit_code, end_time, duration_ms FROM job_runs WHERE id = ?1",
+                )
+                .bind(run_id)
+                .fetch_one(p)
+                .await
+                .unwrap();
                 let status: String = row.get("status");
                 let exit_code: Option<i32> = row.get("exit_code");
                 let end_time: Option<String> = row.get("end_time");
@@ -657,24 +741,45 @@ mod tests {
     #[tokio::test]
     async fn insert_log_batch_inserts_lines() {
         let pool = setup_pool().await;
-        let job_id = upsert_job(&pool, "test", "* * * * *", "* * * * *", "command", "{}", "h1", 60)
+        let job_id = upsert_job(
+            &pool,
+            "test",
+            "* * * * *",
+            "* * * * *",
+            "command",
+            "{}",
+            "h1",
+            60,
+        )
+        .await
+        .unwrap();
+        let run_id = insert_running_run(&pool, job_id, "scheduled")
             .await
             .unwrap();
-        let run_id = insert_running_run(&pool, job_id, "scheduled").await.unwrap();
 
         let lines = vec![
-            ("stdout".to_string(), "2026-01-01T00:00:00Z".to_string(), "line1".to_string()),
-            ("stderr".to_string(), "2026-01-01T00:00:01Z".to_string(), "line2".to_string()),
+            (
+                "stdout".to_string(),
+                "2026-01-01T00:00:00Z".to_string(),
+                "line1".to_string(),
+            ),
+            (
+                "stderr".to_string(),
+                "2026-01-01T00:00:01Z".to_string(),
+                "line2".to_string(),
+            ),
         ];
         insert_log_batch(&pool, run_id, &lines).await.unwrap();
 
         match pool.reader() {
             PoolRef::Sqlite(p) => {
-                let rows = sqlx::query("SELECT stream, ts, line FROM job_logs WHERE run_id = ?1 ORDER BY id")
-                    .bind(run_id)
-                    .fetch_all(p)
-                    .await
-                    .unwrap();
+                let rows = sqlx::query(
+                    "SELECT stream, ts, line FROM job_logs WHERE run_id = ?1 ORDER BY id",
+                )
+                .bind(run_id)
+                .fetch_all(p)
+                .await
+                .unwrap();
                 assert_eq!(rows.len(), 2);
                 let s0: String = rows[0].get("stream");
                 let l0: String = rows[0].get("line");

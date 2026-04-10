@@ -61,39 +61,37 @@ pub fn build_initial_heap(jobs: &[DbJob], tz: Tz) -> BinaryHeap<Reverse<FireEntr
 
     for job in jobs {
         match Cron::from_str(&job.resolved_schedule) {
-            Ok(cron) => {
-                match cron.find_next_occurrence(&now_tz, false) {
-                    Ok(next) => {
-                        let until_fire = (next.with_timezone(&Utc) - Utc::now())
-                            .to_std()
-                            .unwrap_or(Duration::ZERO);
-                        let instant = tokio::time::Instant::now() + until_fire;
+            Ok(cron) => match cron.find_next_occurrence(&now_tz, false) {
+                Ok(next) => {
+                    let until_fire = (next.with_timezone(&Utc) - Utc::now())
+                        .to_std()
+                        .unwrap_or(Duration::ZERO);
+                    let instant = tokio::time::Instant::now() + until_fire;
 
-                        tracing::debug!(
-                            target: "cronduit.scheduler",
-                            job = %job.name,
-                            next_fire = %next,
-                            "scheduled next fire"
-                        );
+                    tracing::debug!(
+                        target: "cronduit.scheduler",
+                        job = %job.name,
+                        next_fire = %next,
+                        "scheduled next fire"
+                    );
 
-                        heap.push(Reverse(FireEntry {
-                            job_id: job.id,
-                            job_name: job.name.clone(),
-                            fire_time: next,
-                            instant,
-                            resolved_schedule: job.resolved_schedule.clone(),
-                        }));
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "cronduit.scheduler",
-                            job = %job.name,
-                            error = %e,
-                            "failed to find next occurrence, skipping job"
-                        );
-                    }
+                    heap.push(Reverse(FireEntry {
+                        job_id: job.id,
+                        job_name: job.name.clone(),
+                        fire_time: next,
+                        instant,
+                        resolved_schedule: job.resolved_schedule.clone(),
+                    }));
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "cronduit.scheduler",
+                        job = %job.name,
+                        error = %e,
+                        "failed to find next occurrence, skipping job"
+                    );
+                }
+            },
             Err(e) => {
                 tracing::warn!(
                     target: "cronduit.scheduler",
@@ -280,7 +278,10 @@ mod tests {
         // croner returns a valid time on March 8 (DST-shifted).
         // The fire is on March 8, and it's after the reference time.
         assert_eq!(next.day(), 8);
-        assert!(next > before_spring, "next fire must be after reference time");
+        assert!(
+            next > before_spring,
+            "next fire must be after reference time"
+        );
 
         // The next occurrence after that should be March 9 at 02:30 EST.
         let after = cron.find_next_occurrence(&next, false).unwrap();

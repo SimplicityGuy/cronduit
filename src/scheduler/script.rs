@@ -11,7 +11,7 @@ use tempfile::NamedTempFile;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use super::command::{execute_child, ExecResult, RunStatus};
+use super::command::{ExecResult, RunStatus, execute_child};
 use super::log_pipeline::LogSender;
 
 /// Execute a script body by writing it to a tempfile and running it.
@@ -36,7 +36,7 @@ pub async fn execute_script(
     };
 
     // Create tempfile and write script content
-    let mut tmpfile = match NamedTempFile::new() {
+    let mut tmpfile = match tempfile::Builder::new().suffix(".sh").tempfile() {
         Ok(f) => f,
         Err(e) => {
             sender.close();
@@ -122,7 +122,12 @@ mod tests {
             tx,
         )
         .await;
-        assert_eq!(result.status, RunStatus::Success);
+        assert!(
+            result.status == RunStatus::Success,
+            "expected Success, got {:?}: {:?}",
+            result.status,
+            result.error_message
+        );
         assert_eq!(result.exit_code, Some(0));
         let batch = rx.drain_batch(256);
         let stdout_lines: Vec<_> = batch.iter().filter(|l| l.stream == "stdout").collect();
@@ -134,14 +139,8 @@ mod tests {
     async fn execute_script_nonzero_exit() {
         let (tx, _rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
-        let result = execute_script(
-            "exit 42",
-            "#!/bin/sh",
-            Duration::from_secs(5),
-            cancel,
-            tx,
-        )
-        .await;
+        let result =
+            execute_script("exit 42", "#!/bin/sh", Duration::from_secs(5), cancel, tx).await;
         assert_eq!(result.status, RunStatus::Failed);
         assert_eq!(result.exit_code, Some(42));
     }
@@ -153,15 +152,14 @@ mod tests {
 
         // We need to capture the tempfile path. We'll run a script that
         // prints its own path via /proc/self or $0.
-        let result = execute_script(
-            "echo $0",
-            "#!/bin/sh",
-            Duration::from_secs(5),
-            cancel,
-            tx,
-        )
-        .await;
-        assert_eq!(result.status, RunStatus::Success);
+        let result =
+            execute_script("echo $0", "#!/bin/sh", Duration::from_secs(5), cancel, tx).await;
+        assert!(
+            result.status == RunStatus::Success,
+            "expected Success, got {:?}: {:?}",
+            result.status,
+            result.error_message
+        );
         // After execute_script returns, the tempfile should be deleted.
         // We can't easily get the path from outside, so let's test by
         // creating our own tempfile and verifying the pattern works.
@@ -181,15 +179,14 @@ mod tests {
         assert!(!path.exists(), "NamedTempFile should delete on drop");
 
         // Now verify via execute_script (we trust NamedTempFile's drop behavior)
-        let result = execute_script(
-            "echo done",
-            "#!/bin/sh",
-            Duration::from_secs(5),
-            cancel,
-            tx,
-        )
-        .await;
-        assert_eq!(result.status, RunStatus::Success);
+        let result =
+            execute_script("echo done", "#!/bin/sh", Duration::from_secs(5), cancel, tx).await;
+        assert!(
+            result.status == RunStatus::Success,
+            "expected Success, got {:?}: {:?}",
+            result.status,
+            result.error_message
+        );
     }
 
     #[tokio::test]
@@ -197,15 +194,14 @@ mod tests {
         let (tx, rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
         // Empty shebang should default to #!/bin/sh
-        let result = execute_script(
-            "echo default-shell",
-            "",
-            Duration::from_secs(5),
-            cancel,
-            tx,
-        )
-        .await;
-        assert_eq!(result.status, RunStatus::Success);
+        let result =
+            execute_script("echo default-shell", "", Duration::from_secs(5), cancel, tx).await;
+        assert!(
+            result.status == RunStatus::Success,
+            "expected Success, got {:?}: {:?}",
+            result.status,
+            result.error_message
+        );
         let batch = rx.drain_batch(256);
         let stdout_lines: Vec<_> = batch.iter().filter(|l| l.stream == "stdout").collect();
         assert!(!stdout_lines.is_empty());

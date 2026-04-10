@@ -11,8 +11,8 @@ pub mod run;
 pub mod script;
 pub mod sync;
 
-use crate::db::queries::DbJob;
 use crate::db::DbPool;
+use crate::db::queries::DbJob;
 use chrono::Utc;
 use chrono_tz::Tz;
 use std::collections::HashMap;
@@ -54,7 +54,8 @@ impl SchedulerLoop {
             };
 
             // Track expected wake for clock-jump detection (D-03).
-            let sleep_duration = sleep_target.saturating_duration_since(tokio::time::Instant::now());
+            let sleep_duration =
+                sleep_target.saturating_duration_since(tokio::time::Instant::now());
             let _expected_wake_dt = Utc::now().with_timezone(&self.tz)
                 + chrono::Duration::from_std(sleep_duration).unwrap_or(chrono::Duration::zero());
 
@@ -281,9 +282,17 @@ mod tests {
         let pool = setup_pool().await;
         // Insert a job in DB so run_job can find it.
         let job_id = queries::upsert_job(
-            &pool, "fast-job", "0 0 31 2 *", "0 0 31 2 *",
-            "command", r#"{"command":"echo done"}"#, "h1", 3600,
-        ).await.unwrap();
+            &pool,
+            "fast-job",
+            "0 0 31 2 *",
+            "0 0 31 2 *",
+            "command",
+            r#"{"command":"echo done"}"#,
+            "h1",
+            3600,
+        )
+        .await
+        .unwrap();
 
         let cancel = CancellationToken::new();
         let child_cancel = cancel.child_token();
@@ -294,7 +303,12 @@ mod tests {
             id: job_id,
             ..make_test_job(job_id, "fast-job", "echo done")
         };
-        join_set.spawn(run::run_job(pool.clone(), job, "test".to_string(), child_cancel));
+        join_set.spawn(run::run_job(
+            pool.clone(),
+            job,
+            "test".to_string(),
+            child_cancel,
+        ));
 
         // Cancel after a small delay to let the run start.
         cancel.cancel();
@@ -318,7 +332,10 @@ mod tests {
         }
 
         assert_eq!(drained, 1, "should have drained 1 run");
-        assert!(drain_start.elapsed() < Duration::from_secs(4), "should drain quickly");
+        assert!(
+            drain_start.elapsed() < Duration::from_secs(4),
+            "should drain quickly"
+        );
         pool.close().await;
     }
 
@@ -327,9 +344,17 @@ mod tests {
     async fn shutdown_grace_expiry_force_kills() {
         let pool = setup_pool().await;
         let job_id = queries::upsert_job(
-            &pool, "slow-job", "0 0 31 2 *", "0 0 31 2 *",
-            "command", r#"{"command":"sleep 60"}"#, "h1", 3600,
-        ).await.unwrap();
+            &pool,
+            "slow-job",
+            "0 0 31 2 *",
+            "0 0 31 2 *",
+            "command",
+            r#"{"command":"sleep 60"}"#,
+            "h1",
+            3600,
+        )
+        .await
+        .unwrap();
 
         let cancel = CancellationToken::new();
         let child_cancel = cancel.child_token();
@@ -339,7 +364,12 @@ mod tests {
             id: job_id,
             ..make_test_job(job_id, "slow-job", "sleep 60")
         };
-        join_set.spawn(run::run_job(pool.clone(), job, "test".to_string(), child_cancel));
+        join_set.spawn(run::run_job(
+            pool.clone(),
+            job,
+            "test".to_string(),
+            child_cancel,
+        ));
 
         // Cancel immediately.
         cancel.cancel();

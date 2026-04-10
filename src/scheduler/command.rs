@@ -9,7 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use super::log_pipeline::{make_log_line, LogSender};
+use super::log_pipeline::{LogSender, make_log_line};
 
 /// Status of a completed job run.
 #[derive(Debug, Clone, PartialEq)]
@@ -241,8 +241,7 @@ mod tests {
     async fn execute_nonzero_exit() {
         let (tx, _rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
-        let result =
-            execute_command("sh -c 'exit 42'", Duration::from_secs(5), cancel, tx).await;
+        let result = execute_command("sh -c 'exit 42'", Duration::from_secs(5), cancel, tx).await;
         assert_eq!(result.status, RunStatus::Failed);
         assert_eq!(result.exit_code, Some(42));
     }
@@ -273,8 +272,7 @@ mod tests {
         let (tx, _rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
         cancel.cancel(); // cancel immediately
-        let result =
-            execute_command("sleep 30", Duration::from_secs(30), cancel, tx).await;
+        let result = execute_command("sleep 30", Duration::from_secs(30), cancel, tx).await;
         assert_eq!(result.status, RunStatus::Shutdown);
     }
 

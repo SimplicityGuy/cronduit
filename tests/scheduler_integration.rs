@@ -8,11 +8,11 @@
 
 use std::time::Duration;
 
-use cronduit::db::queries::{self, DbJob, PoolRef};
+use cronduit::config::{Config, JobConfig, ServerConfig};
 use cronduit::db::DbPool;
+use cronduit::db::queries::{self, DbJob, PoolRef};
 use cronduit::scheduler::run::run_job;
 use cronduit::scheduler::sync::sync_config_to_db;
-use cronduit::config::{Config, JobConfig, ServerConfig};
 use secrecy::SecretString;
 use sqlx::Row;
 use std::collections::BTreeMap;
@@ -77,9 +77,13 @@ async fn sync_and_get_job(pool: &DbPool, config: &Config, name: &str) -> DbJob {
 async fn test_command_job_fires_and_captures_logs() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let pool = setup_test_db().await;
-        let config = test_config_with_jobs(vec![
-            make_job("test-echo", "* * * * *", Some("echo integration-test-output"), None, None),
-        ]);
+        let config = test_config_with_jobs(vec![make_job(
+            "test-echo",
+            "* * * * *",
+            Some("echo integration-test-output"),
+            None,
+            None,
+        )]);
 
         let job = sync_and_get_job(&pool, &config, "test-echo").await;
 
@@ -97,11 +101,12 @@ async fn test_command_job_fires_and_captures_logs() {
         // Verify job_runs row.
         match pool.reader() {
             PoolRef::Sqlite(p) => {
-                let row = sqlx::query("SELECT status, trigger, exit_code FROM job_runs WHERE id = ?1")
-                    .bind(result.run_id)
-                    .fetch_one(p)
-                    .await
-                    .unwrap();
+                let row =
+                    sqlx::query("SELECT status, trigger, exit_code FROM job_runs WHERE id = ?1")
+                        .bind(result.run_id)
+                        .fetch_one(p)
+                        .await
+                        .unwrap();
                 assert_eq!(row.get::<String, _>("status"), "success");
                 assert_eq!(row.get::<String, _>("trigger"), "scheduled");
                 assert_eq!(row.get::<Option<i32>, _>("exit_code"), Some(0));
@@ -123,7 +128,10 @@ async fn test_command_job_fires_and_captures_logs() {
                     let line: String = r.get("line");
                     stream == "stdout" && line == "integration-test-output"
                 });
-                assert!(has_output, "should have captured 'integration-test-output' on stdout");
+                assert!(
+                    has_output,
+                    "should have captured 'integration-test-output' on stdout"
+                );
             }
             _ => unreachable!(),
         }
@@ -138,15 +146,13 @@ async fn test_command_job_fires_and_captures_logs() {
 async fn test_script_job_fires_and_captures_logs() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let pool = setup_test_db().await;
-        let config = test_config_with_jobs(vec![
-            make_job(
-                "test-script",
-                "* * * * *",
-                None,
-                Some("echo script-output\necho err-output >&2"),
-                None,
-            ),
-        ]);
+        let config = test_config_with_jobs(vec![make_job(
+            "test-script",
+            "* * * * *",
+            None,
+            Some("echo script-output\necho err-output >&2"),
+            None,
+        )]);
 
         let job = sync_and_get_job(&pool, &config, "test-script").await;
         assert_eq!(job.job_type, "script");
@@ -192,9 +198,13 @@ async fn test_script_job_fires_and_captures_logs() {
 async fn test_failed_command_records_exit_code() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let pool = setup_test_db().await;
-        let config = test_config_with_jobs(vec![
-            make_job("test-fail", "* * * * *", Some("sh -c 'exit 42'"), None, None),
-        ]);
+        let config = test_config_with_jobs(vec![make_job(
+            "test-fail",
+            "* * * * *",
+            Some("sh -c 'exit 42'"),
+            None,
+            None,
+        )]);
 
         let job = sync_and_get_job(&pool, &config, "test-fail").await;
 
@@ -227,15 +237,13 @@ async fn test_failed_command_records_exit_code() {
 async fn test_timeout_preserves_partial_logs() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let pool = setup_test_db().await;
-        let config = test_config_with_jobs(vec![
-            make_job(
-                "test-timeout",
-                "* * * * *",
-                Some("sh -c 'echo before-timeout; sleep 60'"),
-                None,
-                Some(Duration::from_secs(1)),
-            ),
-        ]);
+        let config = test_config_with_jobs(vec![make_job(
+            "test-timeout",
+            "* * * * *",
+            Some("sh -c 'echo before-timeout; sleep 60'"),
+            None,
+            Some(Duration::from_secs(1)),
+        )]);
 
         let job = sync_and_get_job(&pool, &config, "test-timeout").await;
 
@@ -288,20 +296,30 @@ async fn test_sync_disables_removed_jobs() {
         assert_eq!(result1.jobs.len(), 2);
 
         // Run job-b so it has run history.
-        let job_b = queries::get_job_by_name(&pool, "job-b").await.unwrap().unwrap();
+        let job_b = queries::get_job_by_name(&pool, "job-b")
+            .await
+            .unwrap()
+            .unwrap();
         let cancel = CancellationToken::new();
         let run_result = run_job(pool.clone(), job_b, "scheduled".to_string(), cancel).await;
         assert_eq!(run_result.status, "success");
 
         // Second sync with only job-a (job-b removed).
-        let config2 = test_config_with_jobs(vec![
-            make_job("job-a", "* * * * *", Some("echo a"), None, None),
-        ]);
+        let config2 = test_config_with_jobs(vec![make_job(
+            "job-a",
+            "* * * * *",
+            Some("echo a"),
+            None,
+            None,
+        )]);
         let result2 = sync_config_to_db(&pool, &config2).await.unwrap();
         assert_eq!(result2.disabled, 1);
 
         // Verify job-b is disabled.
-        let disabled_b = queries::get_job_by_name(&pool, "job-b").await.unwrap().unwrap();
+        let disabled_b = queries::get_job_by_name(&pool, "job-b")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!disabled_b.enabled);
 
         // Verify job-b's run history is still queryable.
@@ -312,14 +330,21 @@ async fn test_sync_disables_removed_jobs() {
                     .fetch_all(p)
                     .await
                     .unwrap();
-                assert_eq!(runs.len(), 1, "run history should be preserved for disabled job");
+                assert_eq!(
+                    runs.len(),
+                    1,
+                    "run history should be preserved for disabled job"
+                );
                 assert_eq!(runs[0].get::<String, _>("status"), "success");
             }
             _ => unreachable!(),
         }
 
         // Verify job-a still enabled.
-        let kept_a = queries::get_job_by_name(&pool, "job-a").await.unwrap().unwrap();
+        let kept_a = queries::get_job_by_name(&pool, "job-a")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(kept_a.enabled);
 
         pool.close().await;
@@ -332,9 +357,13 @@ async fn test_sync_disables_removed_jobs() {
 async fn test_concurrent_runs_same_job() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let pool = setup_test_db().await;
-        let config = test_config_with_jobs(vec![
-            make_job("concurrent-job", "* * * * *", Some("echo concurrent"), None, None),
-        ]);
+        let config = test_config_with_jobs(vec![make_job(
+            "concurrent-job",
+            "* * * * *",
+            Some("echo concurrent"),
+            None,
+            None,
+        )]);
 
         let job = sync_and_get_job(&pool, &config, "concurrent-job").await;
 
@@ -351,7 +380,10 @@ async fn test_concurrent_runs_same_job() {
             run_job(pool2, job2, "scheduled".to_string(), cancel2),
         );
 
-        assert_ne!(r1.run_id, r2.run_id, "concurrent runs must have different run IDs");
+        assert_ne!(
+            r1.run_id, r2.run_id,
+            "concurrent runs must have different run IDs"
+        );
         assert_eq!(r1.status, "success");
         assert_eq!(r2.status, "success");
 

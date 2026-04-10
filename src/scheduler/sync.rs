@@ -9,10 +9,10 @@
 
 use crate::config::hash::compute_config_hash;
 use crate::config::{Config, JobConfig};
+use crate::db::DbPool;
 use crate::db::queries::{
     DbJob, disable_missing_jobs, get_enabled_jobs, get_job_by_name, upsert_job,
 };
-use crate::db::DbPool;
 
 /// Result of a config sync operation.
 #[derive(Debug)]
@@ -183,7 +183,12 @@ mod tests {
         }
     }
 
-    fn make_job(name: &str, schedule: &str, command: Option<&str>, script: Option<&str>) -> JobConfig {
+    fn make_job(
+        name: &str,
+        schedule: &str,
+        command: Option<&str>,
+        script: Option<&str>,
+    ) -> JobConfig {
         JobConfig {
             name: name.into(),
             schedule: schedule.into(),
@@ -328,7 +333,10 @@ mod tests {
         // T-02-03: Verify env values are NOT in config_json.
         let pool = setup_pool().await;
         let mut env = BTreeMap::new();
-        env.insert("SECRET_KEY".to_string(), SecretString::from("super-secret-value"));
+        env.insert(
+            "SECRET_KEY".to_string(),
+            SecretString::from("super-secret-value"),
+        );
 
         let config = Config {
             server: make_server_config(),
