@@ -63,18 +63,18 @@ fn check_one_of_job_type(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigEr
 }
 
 fn check_network_mode(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
-    if let Some(net) = &job.network {
-        if !NETWORK_RE.is_match(net) {
-            errors.push(ConfigError {
-                file: path.into(),
-                line: 0,
-                col: 0,
-                message: format!(
-                    "[[jobs]] `{}`: invalid network mode `{net}` (expected bridge|host|none|container:<name>|<named-network>)",
-                    job.name
-                ),
-            });
-        }
+    if let Some(net) = &job.network
+        && !NETWORK_RE.is_match(net)
+    {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: invalid network mode `{net}` (expected bridge|host|none|container:<name>|<named-network>)",
+                job.name
+            ),
+        });
     }
 }
 
