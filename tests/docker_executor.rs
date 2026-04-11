@@ -1,7 +1,12 @@
 //! Docker executor integration tests.
 //!
 //! These tests require a running Docker daemon and are gated with `#[ignore]`.
-//! Run with: `cargo test --test docker_executor -- --ignored --nocapture`
+//! Run with: `cargo test --test docker_executor -- --ignored --nocapture --test-threads=1`
+//!
+//! IMPORTANT: These tests MUST run serially (`--test-threads=1`). Parallel execution
+//! causes Docker resource contention on some runtimes (e.g. Rancher Desktop) where
+//! `wait_container` falls back to inspect polling, and concurrent container operations
+//! interfere with each other.
 //!
 //! Tests cover:
 //! - Basic container lifecycle (create, start, wait, log drain, remove)

@@ -199,6 +199,7 @@ pub async fn execute_docker(
         image = %config.image,
         job_name = %job_name,
         run_id,
+        cmd = ?config.cmd,
         "container created"
     );
 
