@@ -33,11 +33,12 @@ fn classify_pull_error(err: &bollard::errors::Error) -> PullError {
     let msg = err.to_string();
     let lower = msg.to_lowercase();
 
-    if lower.contains("unauthorized") || lower.contains("authentication required") {
-        PullError::Terminal(msg)
-    } else if lower.contains("manifest unknown") || lower.contains("not found") {
-        PullError::Terminal(msg)
-    } else if lower.contains("invalid reference") {
+    if lower.contains("unauthorized")
+        || lower.contains("authentication required")
+        || lower.contains("manifest unknown")
+        || lower.contains("not found")
+        || lower.contains("invalid reference")
+    {
         PullError::Terminal(msg)
     } else {
         // Connection refused, timeout, 5xx, etc. -- transient.
@@ -78,16 +79,16 @@ pub async fn pull_image_with_retry(
             match chunk {
                 Ok(info) => {
                     // Extract digest from status field: "Digest: sha256:..."
-                    if let Some(ref status) = info.status {
-                        if let Some(sha) = status.strip_prefix("Digest: ") {
-                            digest = Some(sha.to_string());
-                        }
+                    if let Some(ref status) = info.status
+                        && let Some(sha) = status.strip_prefix("Digest: ")
+                    {
+                        digest = Some(sha.to_string());
                     }
                     // Also check the id field for digest.
-                    if let Some(ref id) = info.id {
-                        if id.starts_with("sha256:") {
-                            digest = Some(id.clone());
-                        }
+                    if let Some(ref id) = info.id
+                        && id.starts_with("sha256:")
+                    {
+                        digest = Some(id.clone());
                     }
                 }
                 Err(e) => {

@@ -91,23 +91,23 @@ pub async fn execute_docker(
     };
 
     // Pre-flight network validation (D-10, D-11, D-12).
-    if let Some(ref network) = config.network {
-        if let Err(e) = super::docker_preflight::preflight_network(docker, network).await {
-            let err_msg = e.to_error_message();
-            sender.send(make_log_line(
-                "system",
-                format!("[pre-flight failed: {err_msg}]"),
-            ));
-            sender.close();
-            return DockerExecResult {
-                exec: ExecResult {
-                    exit_code: None,
-                    status: RunStatus::Error,
-                    error_message: Some(err_msg),
-                },
-                image_digest: None,
-            };
-        }
+    if let Some(ref network) = config.network
+        && let Err(e) = super::docker_preflight::preflight_network(docker, network).await
+    {
+        let err_msg = e.to_error_message();
+        sender.send(make_log_line(
+            "system",
+            format!("[pre-flight failed: {err_msg}]"),
+        ));
+        sender.close();
+        return DockerExecResult {
+            exec: ExecResult {
+                exit_code: None,
+                status: RunStatus::Error,
+                error_message: Some(err_msg),
+            },
+            image_digest: None,
+        };
     }
 
     // Ensure image is available locally, pulling if necessary.
