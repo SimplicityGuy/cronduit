@@ -68,7 +68,7 @@ impl SchedulerLoop {
             // Track expected wake for clock-jump detection (D-03).
             let sleep_duration =
                 sleep_target.saturating_duration_since(tokio::time::Instant::now());
-            let _expected_wake_dt = Utc::now().with_timezone(&self.tz)
+            let expected_wake_dt = Utc::now().with_timezone(&self.tz)
                 + chrono::Duration::from_std(sleep_duration).unwrap_or(chrono::Duration::zero());
 
             tokio::select! {
@@ -103,7 +103,7 @@ impl SchedulerLoop {
                         }
                     }
 
-                    last_expected_wake = now_tz;
+                    last_expected_wake = expected_wake_dt;
 
                     // Fire due jobs.
                     let due = fire::fire_due_jobs(&mut heap, tokio::time::Instant::now());
