@@ -50,6 +50,9 @@ impl SchedulerLoop {
     /// D-01: Selects over next-fire sleep, join_set reaping, and cancel token.
     /// D-02: Uses BinaryHeap<Reverse<FireEntry>> for efficient next-fire lookup.
     pub async fn run(mut self) {
+        // TODO(Phase 5): Config reload. Currently the job set is immutable for the
+        // scheduler's lifetime. Hot-reload will require rebuilding the heap and
+        // updating self.jobs via a channel or watch.
         let jobs_vec: Vec<DbJob> = self.jobs.values().cloned().collect();
         let mut heap = fire::build_initial_heap(&jobs_vec, self.tz);
         let mut join_set: JoinSet<RunResult> = JoinSet::new();
