@@ -20,6 +20,7 @@ async fn test_app() -> axum::Router {
         pool,
         cmd_tx,
         config_path: std::path::PathBuf::from("/test/config.toml"),
+        tz: chrono_tz::Tz::UTC,
     };
 
     router(state)
