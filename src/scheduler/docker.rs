@@ -263,15 +263,23 @@ pub async fn execute_docker(
                     // Wait failed or stream closed — fall back to inspect polling.
                     // This handles Docker runtimes where wait returns an error immediately
                     // (e.g. Rancher Desktop).
+                    //
+                    // IMPORTANT: Check for status == "exited" specifically, not just
+                    // !running. During container creation, running=false but the container
+                    // hasn't started yet — we must wait until it exits, not catch it
+                    // in the "created" state.
                     loop {
                         tokio::time::sleep(Duration::from_millis(250)).await;
                         match docker.inspect_container(&container_id, None).await {
                             Ok(info) => {
                                 if let Some(state) = &info.state {
-                                    if let Some(running) = state.running {
-                                        if !running {
+                                    use bollard::models::ContainerStateStatusEnum;
+                                    match state.status {
+                                        Some(ContainerStateStatusEnum::EXITED)
+                                        | Some(ContainerStateStatusEnum::DEAD) => {
                                             return state.exit_code.unwrap_or(-1) as i32;
                                         }
+                                        _ => {} // Still running or starting — keep polling.
                                     }
                                 }
                             }
