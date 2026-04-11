@@ -34,6 +34,9 @@ pub struct DockerJobConfig {
     /// Volume bind mounts (e.g. `["/host:/container:ro"]`).
     #[serde(default)]
     pub volumes: Option<Vec<String>>,
+    /// Command to run inside the container (overrides image CMD).
+    #[serde(default)]
+    pub cmd: Option<Vec<String>>,
     /// Network mode (e.g. `"host"`, `"container:<name>"`, `"bridge"`).
     #[serde(default)]
     pub network: Option<String>,
@@ -148,6 +151,7 @@ pub async fn execute_docker(
     // Build ContainerCreateBody (bollard 0.20 API).
     let container_body = ContainerCreateBody {
         image: Some(config.image.clone()),
+        cmd: config.cmd.clone(),
         env: if env_vec.is_empty() {
             None
         } else {
@@ -377,9 +381,17 @@ mod tests {
         let config: DockerJobConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.image, "nginx:1.25");
         assert!(config.env.is_empty());
+        assert!(config.cmd.is_none());
         assert!(config.volumes.is_none());
         assert!(config.network.is_none());
         assert!(config.container_name.is_none());
+    }
+
+    #[test]
+    fn test_docker_job_config_with_cmd() {
+        let json = r#"{"image": "alpine:latest", "cmd": ["echo", "hello"]}"#;
+        let config: DockerJobConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.cmd.as_ref().unwrap(), &vec!["echo".to_string(), "hello".to_string()]);
     }
 
     #[test]
