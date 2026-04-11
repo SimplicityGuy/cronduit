@@ -174,4 +174,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-10 — Phase 1 complete: Foundation, Security Posture & Persistence Base. Rust workspace scaffold, TOML config parsing with env interpolation and SecretString, CLI check/run subcommands, SQLite/Postgres dual persistence with migrations, cron schedule validation via croner, GitHub Actions CI matrix, multi-arch Dockerfile, README with Security-first posture, THREAT_MODEL.md skeleton.*
+*Last updated: 2026-04-10 — Phase 3 complete: Read-Only Web UI & Health Endpoint. Terminal-green askama_web dashboard with HTMX polling, job/run detail pages with ANSI log viewer, Run Now via CSRF-protected API, /health endpoint, dark/light mode toggle, rust-embed asset serving, 9 integration tests including XSS safety hardening.*
