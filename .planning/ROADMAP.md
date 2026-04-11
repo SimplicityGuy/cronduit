@@ -138,12 +138,12 @@ Plans:
 **Plans**: 6 plans (4 waves)
 
 Plans:
-- [ ] 03-01-PLAN.md — Asset pipeline + Cargo deps + design system CSS + base template + rust-embed (Wave 1)
-- [ ] 03-02-PLAN.md — DB read queries (dashboard, run history, log pagination) + SchedulerCmd channel + health endpoint + AppState extension (Wave 1)
-- [ ] 03-03-PLAN.md — Dashboard page handler + HTMX polling table partial + filter/sort + empty state (Wave 2)
-- [ ] 03-04-PLAN.md — Job Detail + Run Detail + Settings pages + ANSI log rendering + pagination partials (Wave 3)
-- [ ] 03-05-PLAN.md — CSRF double-submit cookie + Run Now POST endpoint + toast notification (Wave 3)
-- [ ] 03-06-PLAN.md — XSS log safety CI test + health endpoint integration test (Wave 4)
+- [x] 03-01-PLAN.md — Asset pipeline + Cargo deps + design system CSS + base template + rust-embed (Wave 1)
+- [x] 03-02-PLAN.md — DB read queries (dashboard, run history, log pagination) + SchedulerCmd channel + health endpoint + AppState extension (Wave 1)
+- [x] 03-03-PLAN.md — Dashboard page handler + HTMX polling table partial + filter/sort + empty state (Wave 2)
+- [x] 03-04-PLAN.md — Job Detail + Run Detail + Settings pages + ANSI log rendering + pagination partials (Wave 3)
+- [x] 03-05-PLAN.md — CSRF double-submit cookie + Run Now POST endpoint + toast notification (Wave 3)
+- [x] 03-06-PLAN.md — XSS log safety CI test + health endpoint integration test (Wave 4)
 
 ---
 
