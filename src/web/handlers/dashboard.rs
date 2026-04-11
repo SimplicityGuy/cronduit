@@ -11,6 +11,7 @@ use serde::Deserialize;
 use std::str::FromStr;
 
 use crate::db::queries::{self, DashboardJob};
+use crate::web::csrf;
 use crate::web::AppState;
 
 // ---------------------------------------------------------------------------
@@ -180,6 +181,7 @@ pub async fn dashboard(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     Query(params): Query<DashboardParams>,
+    cookies: axum_extra::extract::CookieJar,
 ) -> impl IntoResponse {
     let filter = if params.filter.is_empty() {
         None
@@ -194,8 +196,7 @@ pub async fn dashboard(
     let tz: Tz = chrono_tz::UTC;
     let job_views: Vec<DashboardJobView> = jobs.into_iter().map(|j| to_view(j, tz)).collect();
 
-    // Placeholder CSRF token until Plan 05 wires the full CSRF middleware
-    let csrf_token = hex::encode(rand::random::<[u8; 16]>());
+    let csrf_token = csrf::get_token_from_cookies(&cookies);
 
     if is_htmx {
         JobTablePartial {

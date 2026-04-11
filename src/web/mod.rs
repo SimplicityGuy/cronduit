@@ -1,8 +1,9 @@
 pub mod ansi;
 pub mod assets;
+pub mod csrf;
 pub mod handlers;
 
-use axum::{Router, routing::get};
+use axum::{Router, middleware, routing::{get, post}};
 use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
@@ -29,9 +30,11 @@ pub fn router(state: AppState) -> Router {
         .route("/partials/log-viewer/{run_id}", get(handlers::run_detail::log_viewer_partial))
         .route("/settings", get(handlers::settings::settings))
         .route("/health", get(handlers::health::health))
+        .route("/api/jobs/{id}/run", post(handlers::api::run_now))
         .route("/static/{*path}", get(assets::static_handler))
         .route("/vendor/{*path}", get(assets::vendor_handler))
         .with_state(state)
+        .layer(middleware::from_fn(csrf::ensure_csrf_cookie))
         .layer(TraceLayer::new_for_http())
 }
 

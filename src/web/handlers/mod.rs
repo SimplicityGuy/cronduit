@@ -1,3 +1,4 @@
+pub mod api;
 pub mod dashboard;
 pub mod health;
 pub mod job_detail;

@@ -22,7 +22,7 @@ tokio = { version = "1.51", features = ["full"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
 
 # HTTP / web placeholder
-axum = { version = "0.8.8", default-features = false, features = ["tokio", "http1", "http2", "json", "query"] }
+axum = { version = "0.8.8", default-features = false, features = ["tokio", "http1", "http2", "json", "query", "form"] }
 tower-http = { version = "0.6.8", default-features = false, features = ["trace"] }
 hyper = { version = "1", default-features = false }
 
@@ -90,7 +90,7 @@ askama_web = { version = "0.15", features = ["axum-0.8"] }
 rust-embed = "8.11"
 
 # HTMX helpers (D-10)
-axum-htmx = "0.8"
+axum-htmx = { version = "0.8", features = ["serde"] }
 
 # Extra extractors — cookies for CSRF, query for filter/sort (D-11, D-02)
 axum-extra = { version = "0.12", features = ["cookie", "query"] }

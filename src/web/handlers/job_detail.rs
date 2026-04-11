@@ -10,6 +10,7 @@ use serde::Deserialize;
 use std::str::FromStr;
 
 use crate::db::queries;
+use crate::web::csrf;
 use crate::web::AppState;
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,7 @@ pub async fn job_detail(
     State(state): State<AppState>,
     Path(job_id): Path<i64>,
     Query(params): Query<PaginationParams>,
+    cookies: axum_extra::extract::CookieJar,
 ) -> impl IntoResponse {
     let job = match queries::get_job_by_id(&state.pool, job_id).await {
         Ok(Some(job)) => job,
@@ -209,7 +211,7 @@ pub async fn job_detail(
             timeout_display: format_timeout(job.timeout_secs),
         };
 
-        let csrf_token = hex::encode(rand::random::<[u8; 16]>());
+        let csrf_token = csrf::get_token_from_cookies(&cookies);
 
         JobDetailPage {
             job: job_view,

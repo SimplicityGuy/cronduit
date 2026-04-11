@@ -261,6 +261,7 @@ checksum = "8b52af3cb4058c895d37317bb27508dccc8e5f2d39454016b297bf4a400597b8"
 dependencies = [
  "axum-core",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
@@ -276,6 +277,7 @@ dependencies = [
  "serde_core",
  "serde_json",
  "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tower",
@@ -337,6 +339,8 @@ checksum = "a2d4a162b7621482903309c0e8a990a866728b6312350147181230f840252314"
 dependencies = [
  "axum-core",
  "http",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
