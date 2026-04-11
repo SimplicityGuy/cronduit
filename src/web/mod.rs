@@ -1,3 +1,4 @@
+pub mod ansi;
 pub mod assets;
 pub mod handlers;
 
@@ -22,6 +23,11 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(handlers::dashboard::dashboard))
         .route("/partials/job-table", get(handlers::dashboard::dashboard))
+        .route("/jobs/{id}", get(handlers::job_detail::job_detail))
+        .route("/partials/run-history/{id}", get(handlers::job_detail::job_detail))
+        .route("/jobs/{job_id}/runs/{run_id}", get(handlers::run_detail::run_detail))
+        .route("/partials/log-viewer/{run_id}", get(handlers::run_detail::log_viewer_partial))
+        .route("/settings", get(handlers::settings::settings))
         .route("/health", get(handlers::health::health))
         .route("/static/{*path}", get(assets::static_handler))
         .route("/vendor/{*path}", get(assets::vendor_handler))
