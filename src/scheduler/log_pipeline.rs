@@ -115,13 +115,15 @@ impl LogReceiver {
     /// Returns an empty vec only when the channel is closed and fully drained.
     pub async fn drain_batch_async(&self, max: usize) -> Vec<LogLine> {
         loop {
-            let batch = self.drain_batch(max);
-            if !batch.is_empty() {
-                return batch;
-            }
-            let is_closed = self.state.lock().unwrap().closed;
-            if is_closed {
-                return vec![];
+            {
+                let state = self.state.lock().unwrap();
+                if !state.buf.is_empty() || state.dropped_count > 0 {
+                    drop(state);
+                    return self.drain_batch(max);
+                }
+                if state.closed {
+                    return vec![];
+                }
             }
             self.notify.notified().await;
         }
