@@ -188,8 +188,7 @@ pub async fn dashboard(
         .await
         .unwrap_or_default();
 
-    // TODO: pass tz through AppState when config timezone is wired
-    let tz: Tz = chrono_tz::UTC;
+    let tz: Tz = state.tz;
     let job_views: Vec<DashboardJobView> = jobs.into_iter().map(|j| to_view(j, tz)).collect();
 
     let csrf_token = csrf::get_token_from_cookies(&cookies);

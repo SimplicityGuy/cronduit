@@ -21,6 +21,7 @@ pub struct AppState {
     pub pool: DbPool,
     pub cmd_tx: tokio::sync::mpsc::Sender<SchedulerCmd>,
     pub config_path: std::path::PathBuf,
+    pub tz: chrono_tz::Tz,
 }
 
 pub fn router(state: AppState) -> Router {
