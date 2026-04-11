@@ -75,8 +75,9 @@ async fn test_docker_basic_echo() {
         "no error expected on success"
     );
 
-    // Verify logs were captured.
-    let batch = receiver.drain_batch(256);
+    // Verify logs were captured. Use drain_batch_async to wait for buffered data
+    // (drain_batch is non-blocking and may return empty if called before logs arrive).
+    let batch = receiver.drain_batch_async(256).await;
     let stdout_lines: Vec<_> = batch.iter().filter(|l| l.stream == "stdout").collect();
     assert!(
         stdout_lines.iter().any(|l| l.line.contains("hello-cronduit")),

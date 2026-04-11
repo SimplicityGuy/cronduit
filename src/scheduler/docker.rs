@@ -245,28 +245,42 @@ pub async fn execute_docker(
         log_sender,
     ));
 
+    // Track whether timeout or cancel fired (used to disambiguate wait errors).
+    let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let timed_out_clone = timed_out.clone();
+    let cancelled_clone = cancelled.clone();
+
     // Concurrent wait + timeout + cancel via tokio::select!
     let exec_result = tokio::select! {
         wait_result = async {
             let mut stream = docker.wait_container(&container_id, None);
             stream.next().await
         } => {
-            // Container exited naturally.
-            let (exit_code, status, error_message) = match wait_result {
-                Some(Ok(response)) => {
-                    let code = response.status_code as i32;
-                    let run_status = if code == 0 {
-                        RunStatus::Success
-                    } else {
-                        RunStatus::Failed
-                    };
-                    (Some(code), run_status, None)
-                }
-                Some(Err(e)) => {
-                    (None, RunStatus::Error, Some(format!("wait error: {e}")))
-                }
-                None => {
-                    (None, RunStatus::Error, Some("wait stream ended unexpectedly".to_string()))
+            // Container exited — could be natural, or caused by stop_container from
+            // timeout/cancel. Check flags to disambiguate.
+            let (exit_code, status, error_message) = if timed_out_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                // Timeout triggered stop_container, which caused wait to return.
+                (None, RunStatus::Timeout, Some(format!("timed out after {timeout:?}")))
+            } else if cancelled_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                (None, RunStatus::Shutdown, Some("cancelled due to shutdown".to_string()))
+            } else {
+                match wait_result {
+                    Some(Ok(response)) => {
+                        let code = response.status_code as i32;
+                        let run_status = if code == 0 {
+                            RunStatus::Success
+                        } else {
+                            RunStatus::Failed
+                        };
+                        (Some(code), run_status, None)
+                    }
+                    Some(Err(e)) => {
+                        (None, RunStatus::Error, Some(format!("wait error: {e}")))
+                    }
+                    None => {
+                        (None, RunStatus::Error, Some("wait stream ended unexpectedly".to_string()))
+                    }
                 }
             };
 
@@ -278,6 +292,7 @@ pub async fn execute_docker(
         }
 
         _ = tokio::time::sleep(timeout) => {
+            timed_out.store(true, std::sync::atomic::Ordering::Relaxed);
             // Timeout: send SIGTERM via stop_container with 10s grace (D-04).
             sender.send(make_log_line("system", format!("[timeout after {timeout:?}, stopping container]")));
             let _ = docker.stop_container(
@@ -301,6 +316,7 @@ pub async fn execute_docker(
 
         _ = cancel.cancelled() => {
             // Shutdown cancellation: stop with 10s grace (D-06).
+            cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
             sender.send(make_log_line("system", "[shutdown signal received, stopping container]".to_string()));
             let _ = docker.stop_container(
                 &container_id,
