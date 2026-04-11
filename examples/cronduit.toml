@@ -61,8 +61,11 @@ volumes = [
 ]
 timeout = "30m"
 
-[jobs.env]
-# Set RESTIC_PASSWORD in the operator environment; cronduit interpolates
-# it at parse time and wraps the value in a SecretString. If the variable
-# is unset, `cronduit check` fails with a clear error.
-RESTIC_PASSWORD = "${RESTIC_PASSWORD}"
+# [jobs.env]
+# To pass secrets to Docker container jobs, set environment variables in
+# the operator environment and reference them with ${VAR} syntax. Cronduit
+# interpolates at parse time and wraps values in SecretString. If the
+# variable is unset, `cronduit check` fails with a clear error.
+#
+# Example (uncomment and set RESTIC_PASSWORD at runtime):
+# RESTIC_PASSWORD = "${RESTIC_PASSWORD}"
