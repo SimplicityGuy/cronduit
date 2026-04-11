@@ -59,7 +59,7 @@ flowchart TD
   1. An operator can run `cronduit --config test.toml` against a fresh SQLite or Postgres URL and the process loads the config, runs migrations, upserts jobs, emits a structured JSON startup summary, and exits cleanly (FOUND-01..04, DB-01..04, CONF-01..10).
   2. `cronduit check config.toml` validates parse + cron expressions + network-mode syntax + env-var expansion and exits non-zero with line-numbered errors on any failure, without touching the database (FOUND-03, CONF-05, CONF-10).
   3. On startup, a non-loopback `[server].bind` produces a loud WARN log explaining the no-auth-in-v1 stance; the default bind is `127.0.0.1:8080`; `SecretString` fields render `[redacted]` in any Debug output (OPS-03, FOUND-05).
-  4. Every PR runs the CI matrix (`linux/amd64` + `linux/arm64` × SQLite + Postgres) with `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `cargo tree -i openssl-sys` (must return empty), and a multi-arch Docker image built via `cargo-zigbuild`; every check is green before merge (FOUND-06, FOUND-07, FOUND-08, FOUND-09).
+  4. Every PR runs the CI matrix (`linux/amd64` + `linux/arm64` x SQLite + Postgres) with `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `cargo tree -i openssl-sys` (must return empty), and a multi-arch Docker image built via `cargo-zigbuild`; every check is green before merge (FOUND-06, FOUND-07, FOUND-08, FOUND-09).
   5. `README.md` leads with a SECURITY section and `THREAT_MODEL.md` exists as at least a skeleton document; every diagram in repository docs is authored as a mermaid code block (FOUND-10, FOUND-11).
 
 **Pitfalls addressed** (from `.planning/research/PITFALLS.md`):
@@ -80,7 +80,7 @@ Plans:
 - [x] 01-04-PLAN.md — DbPool enum: split SQLite read/write pools (WAL + busy_timeout), Postgres pool, initial migrations for both backends, full boot flow + cronduit.startup event + bind warning, pragma/idempotency/startup-event/graceful-shutdown tests (Wave 3)
 - [x] 01-05-PLAN.md — Schema parity test: testcontainers Postgres + introspection + normalization whitelist + structured diff; DbPool Postgres smoke test (Wave 4)
 - [x] 01-06-PLAN.md — justfile with all D-11 recipes + `just openssl-check` Pitfall 14 guard (Wave 2)
-- [x] 01-07-PLAN.md — `.github/workflows/ci.yml` (lint + 4-cell test matrix + image jobs, all steps call `just`) + multi-stage Dockerfile with cargo-zigbuild → distroless/static nonroot (Wave 5)
+- [x] 01-07-PLAN.md — `.github/workflows/ci.yml` (lint + 4-cell test matrix + image jobs, all steps call `just`) + multi-stage Dockerfile with cargo-zigbuild -> distroless/static nonroot (Wave 5)
 - [x] 01-08-PLAN.md — README.md with SECURITY as first H2, THREAT_MODEL.md STRIDE skeleton, examples/cronduit.toml canonical config (Wave 2)
 - [x] 01-09-PLAN.md — Gap closure: croner dependency + cron schedule validation in validate.rs + invalid-schedule fixture + tests (Wave 1, gap closure)
 
@@ -170,7 +170,13 @@ Plans:
 - Pitfall 12 (image pull failure handling): exponential backoff + classification + distinct metric reason (DOCKER-05).
 - Pitfall 21 (`type = "command"` means inside-the-container): documented in README + surfaced in `cronduit check` hints.
 
-**Plans**: TBD
+**Plans**: 4 plans (3 waves)
+
+Plans:
+- [ ] 04-01-PLAN.md — Docker executor core: bollard dep, container create/start/wait/log/remove lifecycle, DockerExecResult (Wave 1)
+- [ ] 04-02-PLAN.md — Image pull with retry + error classification, network pre-flight validation (Wave 1)
+- [ ] 04-03-PLAN.md — Orphan reconciliation, finalize_run container_id, run.rs dispatch wiring, startup integration (Wave 2)
+- [ ] 04-04-PLAN.md — Integration tests: container:\<name\> marquee test, lifecycle, orphan reconciliation (Wave 3)
 
 ---
 
@@ -232,7 +238,7 @@ Plans:
 | 1. Foundation, Security Posture & Persistence Base | 0/8 | Planned | - |
 | 2. Scheduler Core & Command/Script Executor | 0/TBD | Not started | - |
 | 3. Read-Only Web UI & Health Endpoint | 0/6 | Planned | - |
-| 4. Docker Executor & container-network Differentiator | 0/TBD | Not started | - |
+| 4. Docker Executor & container-network Differentiator | 0/4 | Planned | - |
 | 5. Config Reload & `@random` Resolver | 0/TBD | Not started | - |
 | 6. Live Events, Metrics, Retention & Release Engineering | 0/TBD | Not started | - |
 
