@@ -317,12 +317,12 @@ pub async fn finalize_run(
     run_id: i64,
     status: &str,
     exit_code: Option<i32>,
-    duration: tokio::time::Instant,
+    start_instant: tokio::time::Instant,
     error_message: Option<&str>,
     container_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
-    let duration_ms = duration.elapsed().as_millis() as i64;
+    let duration_ms = start_instant.elapsed().as_millis() as i64;
 
     match pool.writer() {
         PoolRef::Sqlite(p) => {
