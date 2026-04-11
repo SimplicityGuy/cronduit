@@ -245,70 +245,73 @@ pub async fn execute_docker(
         log_sender,
     ));
 
-    // Concurrent wait (with timeout) + cancel via tokio::select!
+    // Wait for container exit with timeout and cancel support.
     //
-    // We use tokio::timeout around wait_container so that timeout is unambiguous —
-    // if wait returns Err(Elapsed), it's a timeout regardless of Docker implementation
-    // differences (some runtimes like Rancher Desktop return wait errors immediately).
+    // Strategy: try `wait_container` first (efficient, long-poll). If it errors
+    // immediately (some Docker runtimes like Rancher Desktop don't support wait),
+    // fall back to polling `inspect_container` every 250ms.
     let exec_result = tokio::select! {
-        wait_result = tokio::time::timeout(timeout, async {
+        exit_code = async {
+            // Try the wait API first (efficient long-poll).
             let mut stream = docker.wait_container(&container_id, None);
-            stream.next().await
-        }) => {
-            match wait_result {
-                Ok(Some(Ok(response))) => {
-                    // Container exited naturally.
-                    let code = response.status_code as i32;
-                    let status = if code == 0 { RunStatus::Success } else { RunStatus::Failed };
-
-                    let _ = log_handle.await;
-                    sender.close();
-
-                    ExecResult { exit_code: Some(code), status, error_message: None }
+            match stream.next().await {
+                Some(Ok(response)) => {
+                    // Wait succeeded — container exited.
+                    response.status_code as i32
                 }
-                Ok(Some(Err(e))) => {
-                    // Wait returned an error. Could be a real error or a Docker
-                    // runtime quirk. Log it and report.
-                    let _ = log_handle.await;
-                    sender.close();
-
-                    ExecResult {
-                        exit_code: None,
-                        status: RunStatus::Error,
-                        error_message: Some(format!("wait error: {e}")),
+                Some(Err(_)) | None => {
+                    // Wait failed or stream closed — fall back to inspect polling.
+                    // This handles Docker runtimes where wait returns an error immediately
+                    // (e.g. Rancher Desktop).
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        match docker.inspect_container(&container_id, None).await {
+                            Ok(info) => {
+                                if let Some(state) = &info.state {
+                                    if let Some(running) = state.running {
+                                        if !running {
+                                            return state.exit_code.unwrap_or(-1) as i32;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Container gone (already removed?) — treat as exit 0.
+                                return 0;
+                            }
+                        }
                     }
                 }
-                Ok(None) => {
-                    let _ = log_handle.await;
-                    sender.close();
+            }
+        } => {
+            let code = exit_code;
+            let status = if code == 0 { RunStatus::Success } else { RunStatus::Failed };
 
-                    ExecResult {
-                        exit_code: None,
-                        status: RunStatus::Error,
-                        error_message: Some("wait stream ended unexpectedly".to_string()),
-                    }
-                }
-                Err(_elapsed) => {
-                    // Timeout: send SIGTERM via stop_container with 10s grace (D-04).
-                    sender.send(make_log_line("system", format!("[timeout after {timeout:?}, stopping container]")));
-                    let _ = docker.stop_container(
-                        &container_id,
-                        Some(StopContainerOptions {
-                            t: Some(10),
-                            ..Default::default()
-                        }),
-                    ).await;
+            let _ = log_handle.await;
+            sender.close();
 
-                    // D-05: Drain logs to EOF.
-                    let _ = log_handle.await;
-                    sender.close();
+            ExecResult { exit_code: Some(code), status, error_message: None }
+        }
 
-                    ExecResult {
-                        exit_code: None,
-                        status: RunStatus::Timeout,
-                        error_message: Some(format!("timed out after {timeout:?}")),
-                    }
-                }
+        _ = tokio::time::sleep(timeout) => {
+            // Timeout: send SIGTERM via stop_container with 10s grace (D-04).
+            sender.send(make_log_line("system", format!("[timeout after {timeout:?}, stopping container]")));
+            let _ = docker.stop_container(
+                &container_id,
+                Some(StopContainerOptions {
+                    t: Some(10),
+                    ..Default::default()
+                }),
+            ).await;
+
+            // D-05: Drain logs to EOF.
+            let _ = log_handle.await;
+            sender.close();
+
+            ExecResult {
+                exit_code: None,
+                status: RunStatus::Timeout,
+                error_message: Some(format!("timed out after {timeout:?}")),
             }
         }
 

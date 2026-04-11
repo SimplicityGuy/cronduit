@@ -49,6 +49,21 @@ async fn test_docker_basic_echo() {
     let (sender, receiver) = log_pipeline::channel(256);
     let cancel = CancellationToken::new();
 
+    // Spawn a collector task that drains logs as they arrive. execute_docker
+    // closes the sender when done, so drain_batch_async will eventually return
+    // empty and the loop exits.
+    let collector = tokio::spawn(async move {
+        let mut all_lines = Vec::new();
+        loop {
+            let batch = receiver.drain_batch_async(256).await;
+            if batch.is_empty() {
+                break; // Channel closed and buffer empty.
+            }
+            all_lines.extend(batch);
+        }
+        all_lines
+    });
+
     // Config with explicit cmd to echo a known string.
     let config_json = r#"{"image": "alpine:latest", "cmd": ["echo", "hello-cronduit"]}"#;
 
@@ -75,10 +90,9 @@ async fn test_docker_basic_echo() {
         "no error expected on success"
     );
 
-    // Verify logs were captured. Use drain_batch_async to wait for buffered data
-    // (drain_batch is non-blocking and may return empty if called before logs arrive).
-    let batch = receiver.drain_batch_async(256).await;
-    let stdout_lines: Vec<_> = batch.iter().filter(|l| l.stream == "stdout").collect();
+    // Collect all captured logs.
+    let all_lines = collector.await.unwrap();
+    let stdout_lines: Vec<_> = all_lines.iter().filter(|l| l.stream == "stdout").collect();
     assert!(
         stdout_lines.iter().any(|l| l.line.contains("hello-cronduit")),
         "expected echo output in logs, got: {:?}",
@@ -86,7 +100,7 @@ async fn test_docker_basic_echo() {
     );
 
     // Container should be removed (execute_docker cleans up).
-    // container_id field holds the image digest, not the actual container ID,
+    // image_digest field holds the image digest, not the actual container ID,
     // so we verify cleanup indirectly: a second run with the same name should work.
 }
 
