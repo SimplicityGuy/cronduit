@@ -1,6 +1,7 @@
 pub mod ansi;
 pub mod assets;
 pub mod csrf;
+pub mod format;
 pub mod handlers;
 
 use axum::{
@@ -21,6 +22,7 @@ pub struct AppState {
     pub pool: DbPool,
     pub cmd_tx: tokio::sync::mpsc::Sender<SchedulerCmd>,
     pub config_path: std::path::PathBuf,
+    pub tz: chrono_tz::Tz,
 }
 
 pub fn router(state: AppState) -> Router {

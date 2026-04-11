@@ -60,7 +60,7 @@ pub async fn ensure_csrf_cookie(
     if !has_cookie {
         let token = generate_csrf_token();
         let cookie = format!(
-            "{}={}; HttpOnly; SameSite=Strict; Path=/",
+            "{}={}; HttpOnly; SameSite=Strict; Path=/; Secure",
             CSRF_COOKIE_NAME, token
         );
         response

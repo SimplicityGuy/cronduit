@@ -6,6 +6,11 @@
 
 pub mod cmd;
 pub mod command;
+pub mod docker;
+pub mod docker_log;
+pub mod docker_orphan;
+pub mod docker_preflight;
+pub mod docker_pull;
 pub mod fire;
 pub mod log_pipeline;
 pub mod run;
@@ -14,6 +19,7 @@ pub mod sync;
 
 use crate::db::DbPool;
 use crate::db::queries::DbJob;
+use bollard::Docker;
 use chrono::Utc;
 use chrono_tz::Tz;
 use std::collections::HashMap;
@@ -30,6 +36,7 @@ pub struct RunResult {
 /// The main scheduler loop. Owns the fire queue, job set, and shutdown token.
 pub struct SchedulerLoop {
     pub pool: DbPool,
+    pub docker: Option<Docker>,
     pub jobs: HashMap<i64, DbJob>,
     pub tz: Tz,
     pub cancel: CancellationToken,
@@ -43,6 +50,9 @@ impl SchedulerLoop {
     /// D-01: Selects over next-fire sleep, join_set reaping, and cancel token.
     /// D-02: Uses BinaryHeap<Reverse<FireEntry>> for efficient next-fire lookup.
     pub async fn run(mut self) {
+        // TODO(Phase 5): Config reload. Currently the job set is immutable for the
+        // scheduler's lifetime. Hot-reload will require rebuilding the heap and
+        // updating self.jobs via a channel or watch.
         let jobs_vec: Vec<DbJob> = self.jobs.values().cloned().collect();
         let mut heap = fire::build_initial_heap(&jobs_vec, self.tz);
         let mut join_set: JoinSet<RunResult> = JoinSet::new();
@@ -58,7 +68,7 @@ impl SchedulerLoop {
             // Track expected wake for clock-jump detection (D-03).
             let sleep_duration =
                 sleep_target.saturating_duration_since(tokio::time::Instant::now());
-            let _expected_wake_dt = Utc::now().with_timezone(&self.tz)
+            let expected_wake_dt = Utc::now().with_timezone(&self.tz)
                 + chrono::Duration::from_std(sleep_duration).unwrap_or(chrono::Duration::zero());
 
             tokio::select! {
@@ -79,6 +89,7 @@ impl SchedulerLoop {
                             let child_cancel = self.cancel.child_token();
                             join_set.spawn(run::run_job(
                                 self.pool.clone(),
+                                self.docker.clone(),
                                 job.clone(),
                                 "catch-up".to_string(),
                                 child_cancel,
@@ -92,7 +103,7 @@ impl SchedulerLoop {
                         }
                     }
 
-                    last_expected_wake = now_tz;
+                    last_expected_wake = expected_wake_dt;
 
                     // Fire due jobs.
                     let due = fire::fire_due_jobs(&mut heap, tokio::time::Instant::now());
@@ -101,6 +112,7 @@ impl SchedulerLoop {
                             let child_cancel = self.cancel.child_token();
                             join_set.spawn(run::run_job(
                                 self.pool.clone(),
+                                self.docker.clone(),
                                 job.clone(),
                                 "scheduled".to_string(),
                                 child_cancel,
@@ -143,6 +155,7 @@ impl SchedulerLoop {
                                 let child_cancel = self.cancel.child_token();
                                 join_set.spawn(run::run_job(
                                     self.pool.clone(),
+                                    self.docker.clone(),
                                     job.clone(),
                                     "manual".to_string(),
                                     child_cancel,
@@ -265,6 +278,7 @@ impl SchedulerLoop {
 /// Returns a `JoinHandle` that resolves when the loop exits (on cancellation).
 pub fn spawn(
     pool: DbPool,
+    docker: Option<Docker>,
     jobs: Vec<DbJob>,
     tz: Tz,
     cancel: CancellationToken,
@@ -274,6 +288,7 @@ pub fn spawn(
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
         pool,
+        docker,
         jobs: jobs_map,
         tz,
         cancel,
@@ -340,6 +355,7 @@ mod tests {
         };
         join_set.spawn(run::run_job(
             pool.clone(),
+            None,
             job,
             "test".to_string(),
             child_cancel,
@@ -401,6 +417,7 @@ mod tests {
         };
         join_set.spawn(run::run_job(
             pool.clone(),
+            None,
             job,
             "test".to_string(),
             child_cancel,

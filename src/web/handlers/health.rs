@@ -2,23 +2,29 @@
 
 use axum::Json;
 use axum::extract::State;
-use serde_json::{Value, json};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use serde_json::json;
 
 use crate::db::queries::PoolRef;
 use crate::web::AppState;
 
-pub async fn health(State(state): State<AppState>) -> Json<Value> {
+pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
     // Attempt a simple query to verify DB is reachable.
-    let db_status = match check_db(&state).await {
-        true => "ok",
-        false => "error",
+    let db_ok = check_db(&state).await;
+    let status_code = if db_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
     };
 
-    Json(json!({
-        "status": "ok",
-        "db": db_status,
+    let body = Json(json!({
+        "status": if db_ok { "ok" } else { "degraded" },
+        "db": if db_ok { "ok" } else { "error" },
         "scheduler": "running"
-    }))
+    }));
+
+    (status_code, body)
 }
 
 async fn check_db(state: &AppState) -> bool {

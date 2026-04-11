@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use bollard::Docker;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -34,6 +35,7 @@ struct JobExecConfig {
 /// 8. Return RunResult
 pub async fn run_job(
     pool: DbPool,
+    docker: Option<Docker>,
     job: DbJob,
     trigger: String,
     cancel: CancellationToken,
@@ -73,11 +75,22 @@ pub async fn run_job(
     let writer_handle = tokio::spawn(log_writer_task(writer_pool, run_id, receiver));
 
     // 4. Dispatch to executor based on job type.
+    // Negative or zero timeout_secs (e.g. from corrupted DB) is treated as "no timeout".
+    // The `<= 0` guard ensures negative i64 values never reach the `as u64` cast,
+    // which would silently wrap to a very large duration.
     let timeout = if job.timeout_secs <= 0 {
+        tracing::debug!(
+            target: "cronduit.run",
+            job = %job.name,
+            timeout_secs = job.timeout_secs,
+            "timeout_secs <= 0, using effectively-infinite timeout (1 year)"
+        );
         Duration::from_secs(86400 * 365) // effectively no timeout
     } else {
         Duration::from_secs(job.timeout_secs as u64)
     };
+
+    let mut container_id_for_finalize: Option<String> = None;
 
     let exec_result = match job.job_type.as_str() {
         "command" => {
@@ -130,14 +143,32 @@ pub async fn run_job(
                 }
             }
         }
-        "docker" => {
-            sender.close();
-            command::ExecResult {
-                exit_code: None,
-                status: RunStatus::Error,
-                error_message: Some("docker executor not implemented until Phase 4".to_string()),
+        "docker" => match &docker {
+            Some(docker_client) => {
+                let docker_result = super::docker::execute_docker(
+                    docker_client,
+                    &job.config_json,
+                    &job.name,
+                    run_id,
+                    timeout,
+                    cancel,
+                    sender.clone(),
+                )
+                .await;
+                container_id_for_finalize = docker_result.image_digest.clone();
+                docker_result.exec
             }
-        }
+            None => {
+                sender.close();
+                command::ExecResult {
+                    exit_code: None,
+                    status: RunStatus::Error,
+                    error_message: Some(
+                        "docker executor unavailable (no Docker client)".to_string(),
+                    ),
+                }
+            }
+        },
         other => {
             sender.close();
             command::ExecResult {
@@ -177,6 +208,7 @@ pub async fn run_job(
         exec_result.exit_code,
         start,
         exec_result.error_message.as_deref(),
+        container_id_for_finalize.as_deref(),
     )
     .await
     {
@@ -282,7 +314,7 @@ mod tests {
             insert_test_job(&pool, "echo-job", "command", r#"{"command":"echo hello"}"#).await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), job, "scheduled".to_string(), cancel).await;
+        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
 
         assert_eq!(result.status, "success");
         assert!(result.run_id > 0);
@@ -340,7 +372,7 @@ mod tests {
         .await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), job, "scheduled".to_string(), cancel).await;
+        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
 
         assert_eq!(result.status, "success");
         assert!(result.run_id > 0);
@@ -386,6 +418,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let result = run_job(
             pool.clone(),
+            None,
             job_with_short_timeout,
             "scheduled".to_string(),
             cancel,
@@ -441,8 +474,8 @@ mod tests {
         let job2 = job.clone();
 
         let (r1, r2) = tokio::join!(
-            run_job(pool1, job1, "scheduled".to_string(), cancel1),
-            run_job(pool2, job2, "scheduled".to_string(), cancel2),
+            run_job(pool1, None, job1, "scheduled".to_string(), cancel1),
+            run_job(pool2, None, job2, "scheduled".to_string(), cancel2),
         );
 
         assert_ne!(
