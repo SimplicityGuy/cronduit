@@ -149,8 +149,19 @@ pub(crate) async fn execute_child(
 /// group leader, so `kill(-pid, SIGKILL)` kills the entire group.
 fn kill_process_group(child: &tokio::process::Child) {
     if let Some(pid) = child.id() {
+        let pid_i32: i32 = match pid.try_into() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::error!(
+                    target: "cronduit.executor",
+                    pid,
+                    "PID exceeds i32::MAX, cannot kill process group"
+                );
+                return;
+            }
+        };
         unsafe {
-            libc::kill(-(pid as i32), libc::SIGKILL);
+            libc::kill(-pid_i32, libc::SIGKILL);
         }
     }
 }
