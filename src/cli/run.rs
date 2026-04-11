@@ -3,7 +3,7 @@ use crate::config;
 use crate::db::{DbBackend, DbPool, strip_db_credentials};
 use crate::shutdown;
 use crate::web::{self, AppState};
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -31,7 +31,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     let cfg = &parsed.config;
 
     // 3. Apply CLI overrides with info-level tracing.
-    let resolved_db_url: String = match &cli.database_url {
+    let resolved_db_url: SecretString = match &cli.database_url {
         Some(flag) => {
             tracing::info!(
                 field = "database_url",
@@ -39,9 +39,9 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
                 from_cli = "<redacted>",
                 "CLI flag overrides config file"
             );
-            flag.clone()
+            SecretString::from(flag.clone())
         }
-        None => cfg.server.database_url.expose_secret().to_string(),
+        None => cfg.server.database_url.clone(),
     };
 
     let resolved_bind_str: String = match &cli.bind {
@@ -59,7 +59,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     let resolved_bind: SocketAddr = SocketAddr::from_str(&resolved_bind_str)?;
 
     // 4. Open DB pool and run migrations (idempotent per DB-03).
-    let pool = DbPool::connect(&resolved_db_url).await?;
+    let pool = DbPool::connect(resolved_db_url.expose_secret()).await?;
     pool.migrate().await?;
 
     // 5. Sync config to DB and parse timezone.
@@ -92,7 +92,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         version = env!("CARGO_PKG_VERSION"),
         bind = %resolved_bind,
         database_backend = backend,
-        database_url = %strip_db_credentials(&resolved_db_url),
+        database_url = %strip_db_credentials(resolved_db_url.expose_secret()),
         config_path = %config_path.display(),
         timezone = %cfg.server.timezone,
         job_count = sync_result.jobs.len(),
@@ -110,6 +110,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         pool: pool.clone(),
         cmd_tx,
         config_path: config_path.clone(),
+        tz,
     };
     let cancel = CancellationToken::new();
     shutdown::install(cancel.clone());
