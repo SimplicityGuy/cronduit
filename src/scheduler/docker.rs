@@ -245,78 +245,75 @@ pub async fn execute_docker(
         log_sender,
     ));
 
-    // Track whether timeout or cancel fired (used to disambiguate wait errors).
-    let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let timed_out_clone = timed_out.clone();
-    let cancelled_clone = cancelled.clone();
-
-    // Concurrent wait + timeout + cancel via tokio::select!
+    // Concurrent wait (with timeout) + cancel via tokio::select!
+    //
+    // We use tokio::timeout around wait_container so that timeout is unambiguous —
+    // if wait returns Err(Elapsed), it's a timeout regardless of Docker implementation
+    // differences (some runtimes like Rancher Desktop return wait errors immediately).
     let exec_result = tokio::select! {
-        wait_result = async {
+        wait_result = tokio::time::timeout(timeout, async {
             let mut stream = docker.wait_container(&container_id, None);
             stream.next().await
-        } => {
-            // Container exited — could be natural, or caused by stop_container from
-            // timeout/cancel. Check flags to disambiguate.
-            let (exit_code, status, error_message) = if timed_out_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                // Timeout triggered stop_container, which caused wait to return.
-                (None, RunStatus::Timeout, Some(format!("timed out after {timeout:?}")))
-            } else if cancelled_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                (None, RunStatus::Shutdown, Some("cancelled due to shutdown".to_string()))
-            } else {
-                match wait_result {
-                    Some(Ok(response)) => {
-                        let code = response.status_code as i32;
-                        let run_status = if code == 0 {
-                            RunStatus::Success
-                        } else {
-                            RunStatus::Failed
-                        };
-                        (Some(code), run_status, None)
-                    }
-                    Some(Err(e)) => {
-                        (None, RunStatus::Error, Some(format!("wait error: {e}")))
-                    }
-                    None => {
-                        (None, RunStatus::Error, Some("wait stream ended unexpectedly".to_string()))
+        }) => {
+            match wait_result {
+                Ok(Some(Ok(response))) => {
+                    // Container exited naturally.
+                    let code = response.status_code as i32;
+                    let status = if code == 0 { RunStatus::Success } else { RunStatus::Failed };
+
+                    let _ = log_handle.await;
+                    sender.close();
+
+                    ExecResult { exit_code: Some(code), status, error_message: None }
+                }
+                Ok(Some(Err(e))) => {
+                    // Wait returned an error. Could be a real error or a Docker
+                    // runtime quirk. Log it and report.
+                    let _ = log_handle.await;
+                    sender.close();
+
+                    ExecResult {
+                        exit_code: None,
+                        status: RunStatus::Error,
+                        error_message: Some(format!("wait error: {e}")),
                     }
                 }
-            };
+                Ok(None) => {
+                    let _ = log_handle.await;
+                    sender.close();
 
-            // D-05: Drain logs to EOF before closing.
-            let _ = log_handle.await;
-            sender.close();
+                    ExecResult {
+                        exit_code: None,
+                        status: RunStatus::Error,
+                        error_message: Some("wait stream ended unexpectedly".to_string()),
+                    }
+                }
+                Err(_elapsed) => {
+                    // Timeout: send SIGTERM via stop_container with 10s grace (D-04).
+                    sender.send(make_log_line("system", format!("[timeout after {timeout:?}, stopping container]")));
+                    let _ = docker.stop_container(
+                        &container_id,
+                        Some(StopContainerOptions {
+                            t: Some(10),
+                            ..Default::default()
+                        }),
+                    ).await;
 
-            ExecResult { exit_code, status, error_message }
-        }
+                    // D-05: Drain logs to EOF.
+                    let _ = log_handle.await;
+                    sender.close();
 
-        _ = tokio::time::sleep(timeout) => {
-            timed_out.store(true, std::sync::atomic::Ordering::Relaxed);
-            // Timeout: send SIGTERM via stop_container with 10s grace (D-04).
-            sender.send(make_log_line("system", format!("[timeout after {timeout:?}, stopping container]")));
-            let _ = docker.stop_container(
-                &container_id,
-                Some(StopContainerOptions {
-                    t: Some(10),
-                    ..Default::default()
-                }),
-            ).await;
-
-            // D-05: Drain logs to EOF.
-            let _ = log_handle.await;
-            sender.close();
-
-            ExecResult {
-                exit_code: None,
-                status: RunStatus::Timeout,
-                error_message: Some(format!("timed out after {timeout:?}")),
+                    ExecResult {
+                        exit_code: None,
+                        status: RunStatus::Timeout,
+                        error_message: Some(format!("timed out after {timeout:?}")),
+                    }
+                }
             }
         }
 
         _ = cancel.cancelled() => {
             // Shutdown cancellation: stop with 10s grace (D-06).
-            cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
             sender.send(make_log_line("system", "[shutdown signal received, stopping container]".to_string()));
             let _ = docker.stop_container(
                 &container_id,
