@@ -4,6 +4,7 @@
 //! D-02: BinaryHeap (min-heap via Reverse) for O(log n) next-fire tracking.
 //! D-08: Lives in `src/scheduler/` with sub-modules for fire logic and sync.
 
+pub mod cmd;
 pub mod command;
 pub mod fire;
 pub mod log_pipeline;
@@ -33,6 +34,7 @@ pub struct SchedulerLoop {
     pub tz: Tz,
     pub cancel: CancellationToken,
     pub shutdown_grace: Duration,
+    pub cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
 }
 
 impl SchedulerLoop {
@@ -40,7 +42,7 @@ impl SchedulerLoop {
     ///
     /// D-01: Selects over next-fire sleep, join_set reaping, and cancel token.
     /// D-02: Uses BinaryHeap<Reverse<FireEntry>> for efficient next-fire lookup.
-    pub async fn run(self) {
+    pub async fn run(mut self) {
         let jobs_vec: Vec<DbJob> = self.jobs.values().cloned().collect();
         let mut heap = fire::build_initial_heap(&jobs_vec, self.tz);
         let mut join_set: JoinSet<RunResult> = JoinSet::new();
@@ -131,6 +133,37 @@ impl SchedulerLoop {
                                 error = %e,
                                 "run task panicked"
                             );
+                        }
+                    }
+                }
+                cmd = self.cmd_rx.recv() => {
+                    match cmd {
+                        Some(cmd::SchedulerCmd::RunNow { job_id }) => {
+                            if let Some(job) = self.jobs.get(&job_id) {
+                                let child_cancel = self.cancel.child_token();
+                                join_set.spawn(run::run_job(
+                                    self.pool.clone(),
+                                    job.clone(),
+                                    "manual".to_string(),
+                                    child_cancel,
+                                ));
+                                tracing::info!(
+                                    target: "cronduit.scheduler",
+                                    job_id,
+                                    job_name = %job.name,
+                                    "manual run triggered via command channel"
+                                );
+                            } else {
+                                tracing::warn!(
+                                    target: "cronduit.scheduler",
+                                    job_id,
+                                    "RunNow requested for unknown job_id"
+                                );
+                            }
+                        }
+                        None => {
+                            tracing::info!(target: "cronduit.scheduler", "command channel closed");
+                            break;
                         }
                     }
                 }
@@ -236,6 +269,7 @@ pub fn spawn(
     tz: Tz,
     cancel: CancellationToken,
     shutdown_grace: Duration,
+    cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
 ) -> JoinHandle<()> {
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
@@ -244,6 +278,7 @@ pub fn spawn(
         tz,
         cancel,
         shutdown_grace,
+        cmd_rx,
     };
     tokio::spawn(scheduler.run())
 }

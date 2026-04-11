@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ job.name }} - Cronduit{% endblock %}
+{% block nav_dashboard_active %}border-b-2 border-[var(--cd-text-accent)] text-[var(--cd-text-primary)]{% endblock %}
+{% block content %}
+
+<!-- Breadcrumb -->
+<div class="flex items-center gap-2 mb-4" style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary)">
+  <a href="/" class="text-[var(--cd-text-accent)] hover:underline no-underline">Dashboard</a>
+  <span>&gt;</span>
+  <span class="text-[var(--cd-text-primary)]">{{ job.name }}</span>
+</div>
+
+<!-- Page title and Run Now -->
+<div class="flex items-center justify-between mb-6">
+  <h1 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em">{{ job.name }}</h1>
+  <form hx-post="/api/jobs/{{ job.id }}/run" hx-swap="none">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="cd-btn-primary" style="min-height:36px">Run Now</button>
+  </form>
+</div>
+
+<!-- Config card -->
+<div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)" class="mb-6">
+  <h2 style="font-size:var(--cd-text-lg);font-weight:700;margin-bottom:var(--cd-space-4)">Configuration</h2>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Type</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">{{ job.job_type }}</div>
+    </div>
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Timeout</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">{{ job.timeout_display }}</div>
+    </div>
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Schedule</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">
+        <code>{{ job.schedule }}</code>
+      </div>
+      <div style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:2px">{{ job.cron_description }}</div>
+    </div>
+    {% if job.resolved_schedule != job.schedule %}
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Resolved Schedule</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">
+        <code>{{ job.resolved_schedule }}</code>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div>
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Config</span>
+    <pre style="background:var(--cd-bg-surface-sunken);border-radius:8px;padding:var(--cd-space-4);margin-top:var(--cd-space-2);font-size:var(--cd-text-base);color:var(--cd-text-primary);overflow-x:auto;white-space:pre-wrap">{{ job.config_json }}</pre>
+  </div>
+</div>
+
+<!-- Run History -->
+<div class="mb-6">
+  <h2 style="font-size:var(--cd-text-lg);font-weight:700;margin-bottom:var(--cd-space-4)">Run History</h2>
+  <div id="run-history">
+    {% include "partials/run_history.html" %}
+  </div>
+</div>
+
+{% endblock %}

@@ -29,16 +29,16 @@ clean:
     cargo clean
     rm -rf .sqlx/tmp assets/static/app.css cronduit.dev.db cronduit.dev.db-wal cronduit.dev.db-shm
 
-# Standalone Tailwind binary — NO Node. Phase 1 scaffolds the pipeline;
-# the design system doesn't actually ship until Phase 3.
+# Standalone Tailwind binary — NO Node.
+# Pinned to v3.4.17 -- v4 breaks tailwind.config.js format
 tailwind:
     @mkdir -p assets/static bin
     @if [ ! -x ./bin/tailwindcss ]; then \
-        echo "Downloading standalone Tailwind binary..."; \
-        OS=$(uname -s | tr '[:upper:]' '[:lower:]'); \
+        echo "Downloading standalone Tailwind binary (v3.4.17)..."; \
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/macos/'); \
         ARCH=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/'); \
         curl -sSLo ./bin/tailwindcss \
-            "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-${OS}-${ARCH}"; \
+            "https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-${OS}-${ARCH}"; \
         chmod +x ./bin/tailwindcss; \
     fi
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --minify
@@ -143,6 +143,17 @@ dev:
     RUST_LOG=debug,cronduit=trace cargo run -- run \
         --config examples/cronduit.toml \
         --log-format text
+
+# Dev loop with Tailwind watch + cargo watch (D-15)
+dev-ui:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just tailwind  # ensure binary is downloaded
+    echo "Starting Tailwind watch + cargo watch..."
+    ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --watch &
+    TAILWIND_PID=$!
+    trap "kill $TAILWIND_PID 2>/dev/null" EXIT
+    RUST_LOG=debug,cronduit=trace cargo watch -x 'run -- run --config examples/cronduit.toml --log-format text'
 
 check-config PATH:
     cargo run --quiet -- check {{PATH}}

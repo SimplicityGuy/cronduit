@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Settings - Cronduit{% endblock %}
+{% block nav_settings_active %}border-b-2 border-[var(--cd-text-accent)] text-[var(--cd-text-primary)]{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+  <h1 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em">Settings</h1>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+  <!-- Uptime -->
+  <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Uptime</span>
+    <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);font-weight:700;margin-top:4px">{{ uptime }}</div>
+  </div>
+
+  <!-- Database -->
+  <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Database</span>
+    <div style="margin-top:4px">
+      {% if db_status == "ok" %}
+      <span class="cd-badge cd-badge--success">OK</span>
+      {% else %}
+      <span class="cd-badge cd-badge--error">ERROR</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Config File -->
+  <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Config File</span>
+    <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:4px;font-family:monospace">{{ config_path }}</div>
+  </div>
+
+  <!-- Last Reload -->
+  <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Last Reload</span>
+    <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:4px">{{ last_reload }}</div>
+  </div>
+
+  <!-- Version -->
+  <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Version</span>
+    <div style="font-size:var(--cd-text-base);color:var(--cd-text-accent);margin-top:4px">{{ version }}</div>
+  </div>
+</div>
+
+{% endblock %}

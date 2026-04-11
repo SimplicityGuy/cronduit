@@ -102,9 +102,14 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     );
 
     // 7. Wire graceful shutdown + spawn scheduler + serve.
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<crate::scheduler::cmd::SchedulerCmd>(32);
+
     let state = AppState {
         started_at: chrono::Utc::now(),
         version: env!("CARGO_PKG_VERSION"),
+        pool: pool.clone(),
+        cmd_tx,
+        config_path: config_path.clone(),
     };
     let cancel = CancellationToken::new();
     shutdown::install(cancel.clone());
@@ -116,6 +121,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         tz,
         cancel.clone(),
         cfg.server.shutdown_grace,
+        cmd_rx,
     );
 
     // Serve web (blocks until cancel).
