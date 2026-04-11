@@ -51,7 +51,7 @@ pub struct DockerExecResult {
     /// Standard execution result (exit code, status, error message).
     pub exec: ExecResult,
     /// Image digest from `inspect_container` after start (DOCKER-09).
-    pub container_id: Option<String>,
+    pub image_digest: Option<String>,
 }
 
 /// Execute a Docker job: create -> start -> inspect -> wait/timeout/cancel -> drain logs -> remove.
@@ -85,7 +85,7 @@ pub async fn execute_docker(
                     status: RunStatus::Error,
                     error_message: Some(format!("failed to parse docker config: {e}")),
                 },
-                container_id: None,
+                image_digest: None,
             };
         }
     };
@@ -105,7 +105,7 @@ pub async fn execute_docker(
                     status: RunStatus::Error,
                     error_message: Some(err_msg),
                 },
-                container_id: None,
+                image_digest: None,
             };
         }
     }
@@ -123,7 +123,7 @@ pub async fn execute_docker(
                     status: RunStatus::Error,
                     error_message: Some(err_msg),
                 },
-                container_id: None,
+                image_digest: None,
             };
         }
     };
@@ -188,7 +188,7 @@ pub async fn execute_docker(
                     status: RunStatus::Error,
                     error_message: Some(format!("failed to create container: {e}")),
                 },
-                container_id: None,
+                image_digest: None,
             };
         }
     };
@@ -217,7 +217,7 @@ pub async fn execute_docker(
                 status: RunStatus::Error,
                 error_message: Some(format!("failed to start container: {e}")),
             },
-            container_id: Some(container_id),
+            image_digest: None,
         };
     }
 
@@ -327,7 +327,7 @@ pub async fn execute_docker(
 
     DockerExecResult {
         exec: exec_result,
-        container_id: Some(image_digest),
+        image_digest: Some(image_digest),
     }
 }
 
@@ -409,7 +409,7 @@ mod tests {
                 status: RunStatus::Success,
                 error_message: None,
             },
-            container_id: Some("sha256:abc123".to_string()),
+            image_digest: Some("sha256:abc123".to_string()),
         };
         // Verify Debug trait works
         let debug_str = format!("{result:?}");

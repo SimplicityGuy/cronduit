@@ -75,6 +75,9 @@ pub async fn run_job(
     let writer_handle = tokio::spawn(log_writer_task(writer_pool, run_id, receiver));
 
     // 4. Dispatch to executor based on job type.
+    // Negative or zero timeout_secs (e.g. from corrupted DB) is treated as "no timeout".
+    // The `<= 0` guard ensures negative i64 values never reach the `as u64` cast,
+    // which would silently wrap to a very large duration.
     let timeout = if job.timeout_secs <= 0 {
         Duration::from_secs(86400 * 365) // effectively no timeout
     } else {
@@ -146,7 +149,7 @@ pub async fn run_job(
                     sender.clone(),
                 )
                 .await;
-                container_id_for_finalize = docker_result.container_id.clone();
+                container_id_for_finalize = docker_result.image_digest.clone();
                 docker_result.exec
             }
             None => {
