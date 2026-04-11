@@ -1,4 +1,16 @@
-<!-- stub: will be fleshed out in Task 2 -->
+{% if has_older %}
+<div class="mb-2">
+  <button class="cd-btn-secondary text-sm py-1 px-3"
+          hx-get="/partials/log-viewer/{{ run_id }}?offset={{ next_offset }}"
+          hx-target="#log-lines"
+          hx-swap="afterbegin">
+    Load older lines
+  </button>
+</div>
+{% endif %}
 {% for log in logs %}
-<div>{{ log.html|safe }}</div>
+<div class="{% if log.is_stderr %}border-l-4 border-[var(--cd-status-error)] bg-[var(--cd-status-error-bg)]{% endif %} py-[2px] px-[var(--cd-space-2)]" style="font-size:var(--cd-text-base);line-height:1.6">
+  <span class="text-[var(--cd-text-secondary)] select-none" style="font-size:var(--cd-text-xs)">{{ log.stream }}</span>
+  {{ log.html|safe }}
+</div>
 {% endfor %}

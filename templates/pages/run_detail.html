@@ -1,8 +1,88 @@
 {% extends "base.html" %}
 {% block title %}Run #{{ run.id }} - Cronduit{% endblock %}
+{% block nav_dashboard_active %}border-b-2 border-[var(--cd-text-accent)] text-[var(--cd-text-primary)]{% endblock %}
 {% block content %}
-<div><!-- stub: will be fleshed out in Task 2 --></div>
-<div id="log-lines">
-  {% include "partials/log_viewer.html" %}
+
+<!-- Breadcrumb -->
+<div class="flex items-center gap-2 mb-4" style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary)">
+  <a href="/" class="text-[var(--cd-text-accent)] hover:underline no-underline">Dashboard</a>
+  <span>&gt;</span>
+  <a href="/jobs/{{ run.job_id }}" class="text-[var(--cd-text-accent)] hover:underline no-underline">{{ run.job_name }}</a>
+  <span>&gt;</span>
+  <span class="text-[var(--cd-text-primary)]">Run #{{ run.id }}</span>
 </div>
+
+<!-- Page title -->
+<div class="flex items-center justify-between mb-6">
+  <h1 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em">Run #{{ run.id }}</h1>
+</div>
+
+<!-- Metadata card -->
+<div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)" class="mb-6">
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Status</span>
+      <div style="margin-top:2px">
+        <span class="cd-badge cd-badge--{{ run.status }}">{{ run.status_label }}</span>
+      </div>
+    </div>
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Trigger</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">{{ run.trigger }}</div>
+    </div>
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Duration</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">{{ run.duration_display }}</div>
+    </div>
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Started</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">{{ run.start_time }}</div>
+    </div>
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Ended</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">{{ run.end_time }}</div>
+    </div>
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Exit Code</span>
+      <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">
+        {% match run.exit_code %}
+          {% when Some with (code) %}{{ code }}{% when None %}N/A{% endmatch %}
+      </div>
+    </div>
+  </div>
+  {% match run.error_message %}
+    {% when Some with (err) %}
+  <div class="mt-4" style="padding:var(--cd-space-4);background:var(--cd-status-error-bg);border:1px solid var(--cd-status-error);border-radius:8px">
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-status-error);text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Error</span>
+    <div style="font-size:var(--cd-text-base);color:var(--cd-status-error);margin-top:2px">{{ err }}</div>
+  </div>
+    {% when None %}
+  {% endmatch %}
+</div>
+
+<!-- Log Viewer -->
+<div class="mb-6">
+  <h2 style="font-size:var(--cd-text-lg);font-weight:700;margin-bottom:var(--cd-space-4)">Log Output</h2>
+
+  {% if total_logs == 0 %}
+  <div style="padding:var(--cd-space-6);text-align:center;color:var(--cd-text-secondary);font-size:var(--cd-text-base)">
+    No log output captured for this run.
+  </div>
+  {% else %}
+  {% if has_older %}
+  <div class="mb-2">
+    <button class="cd-btn-secondary text-sm py-1 px-3"
+            hx-get="/partials/log-viewer/{{ run.id }}?offset={{ next_offset }}"
+            hx-target="#log-lines"
+            hx-swap="afterbegin">
+      Load older lines
+    </button>
+  </div>
+  {% endif %}
+  <div id="log-lines" style="background:var(--cd-bg-surface-sunken);padding:var(--cd-space-4);border-radius:8px;overflow-x:auto">
+    {% include "partials/log_viewer.html" %}
+  </div>
+  {% endif %}
+</div>
+
 {% endblock %}

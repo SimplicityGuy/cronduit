@@ -1,2 +1,68 @@
-<!-- stub: will be fleshed out in Task 2 -->
-<div>runs: {{ total_runs }}, page {{ page }}/{{ total_pages }}</div>
+{% if runs.is_empty() %}
+<div style="padding:var(--cd-space-6);text-align:center;color:var(--cd-text-secondary);font-size:var(--cd-text-base)">
+  No runs yet.
+</div>
+{% else %}
+<div class="overflow-x-auto">
+  <table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr style="background:var(--cd-bg-surface-raised)">
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Status</th>
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Trigger</th>
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Started</th>
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Duration</th>
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Exit Code</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr class="hover:bg-[var(--cd-bg-hover)] border-b border-[var(--cd-border-subtle)]">
+        <td class="py-2 px-4">
+          <a href="/jobs/{{ job_id }}/runs/{{ run.id }}" class="no-underline">
+            <span class="cd-badge cd-badge--{{ run.status }}">{{ run.status_label }}</span>
+          </a>
+        </td>
+        <td class="py-2 px-4" style="font-size:var(--cd-text-base);color:var(--cd-text-secondary)">
+          {% if run.trigger == "manual" %}
+          <span style="color:var(--cd-status-running)">{{ run.trigger }}</span>
+          {% else %}
+          {{ run.trigger }}
+          {% endif %}
+        </td>
+        <td class="py-2 px-4" style="font-size:var(--cd-text-base);color:var(--cd-text-secondary)">{{ run.start_time }}</td>
+        <td class="py-2 px-4" style="font-size:var(--cd-text-base);color:var(--cd-text-secondary)">{{ run.duration_display }}</td>
+        <td class="py-2 px-4" style="font-size:var(--cd-text-base);color:var(--cd-text-secondary)">
+          {% match run.exit_code %}
+            {% when Some with (code) %}{{ code }}{% when None %}—{% endmatch %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Pagination -->
+<div class="flex items-center justify-between mt-4" style="font-size:var(--cd-text-sm)">
+  <div style="color:var(--cd-text-secondary)">
+    Page {{ page }} of {{ total_pages }} ({{ total_runs }} runs)
+  </div>
+  <div class="flex items-center gap-2">
+    {% if page > 1 %}
+    <button class="cd-btn-secondary text-sm py-1 px-3"
+            hx-get="/partials/run-history/{{ job_id }}?page={{ page - 1 }}"
+            hx-target="#run-history"
+            hx-swap="innerHTML">
+      Previous
+    </button>
+    {% endif %}
+    {% if page < total_pages %}
+    <button class="cd-btn-secondary text-sm py-1 px-3"
+            hx-get="/partials/run-history/{{ job_id }}?page={{ page + 1 }}"
+            hx-target="#run-history"
+            hx-swap="innerHTML">
+      Next
+    </button>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

@@ -32,6 +32,7 @@ const LOG_PAGE_SIZE: i64 = 500;
 #[template(path = "pages/run_detail.html")]
 struct RunDetailPage {
     run: RunDetailView,
+    run_id: i64,
     logs: Vec<LogLineView>,
     total_logs: i64,
     has_older: bool,
@@ -178,6 +179,7 @@ pub async fn run_detail(
 
         RunDetailPage {
             run: run_view,
+            run_id,
             logs,
             total_logs,
             has_older,
