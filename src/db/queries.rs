@@ -486,7 +486,7 @@ pub async fn get_dashboard_jobs(
         _ => "ORDER BY j.name ASC",
     };
 
-    let has_filter = filter.map_or(false, |f| !f.is_empty());
+    let has_filter = filter.is_some_and(|f| !f.is_empty());
 
     let base_sql = if has_filter {
         format!(

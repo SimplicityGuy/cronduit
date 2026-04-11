@@ -112,6 +112,7 @@ testcontainers = "0.27.2"
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
 assert_cmd = "2"
 predicates = "3"
+tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 lto = "thin"

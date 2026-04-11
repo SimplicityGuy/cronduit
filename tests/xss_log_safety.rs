@@ -126,12 +126,12 @@ fn walk_templates(dir: &std::path::Path, results: &mut Vec<(String, String)>) {
             let path = entry.path();
             if path.is_dir() {
                 walk_templates(&path, results);
-            } else if path.extension().map_or(false, |e| e == "html") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    for line in content.lines() {
-                        if line.contains("|safe") || line.contains("| safe") {
-                            results.push((path.display().to_string(), line.trim().to_string()));
-                        }
+            } else if path.extension().is_some_and(|e| e == "html")
+                && let Ok(content) = std::fs::read_to_string(&path)
+            {
+                for line in content.lines() {
+                    if line.contains("|safe") || line.contains("| safe") {
+                        results.push((path.display().to_string(), line.trim().to_string()));
                     }
                 }
             }
