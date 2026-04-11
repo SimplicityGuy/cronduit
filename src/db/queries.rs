@@ -1212,7 +1212,7 @@ mod tests {
     // ── Helper for dashboard/UI query tests ──────────────────────────────
 
     async fn create_job_with_runs(pool: &DbPool, name: &str, schedule: &str) -> i64 {
-        let job_id = upsert_job(
+        upsert_job(
             pool,
             name,
             schedule,
@@ -1223,8 +1223,7 @@ mod tests {
             3600,
         )
         .await
-        .unwrap();
-        job_id
+        .unwrap()
     }
 
     async fn insert_run(pool: &DbPool, job_id: i64, status: &str, trigger: &str) -> i64 {
