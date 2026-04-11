@@ -43,7 +43,7 @@ Declared values (multiples of 4, from existing design system):
 | `--cd-space-12` | 48px | Major section breaks |
 | `--cd-space-16` | 64px | Page-level spacing |
 
-Exceptions: none. Phase 5 introduces no new spacing values beyond the established scale.
+Exceptions: none. Phase 5 introduces no new spacing values beyond the established scale. All padding values in component markup use only tokens from this scale.
 
 Source: `design/DESIGN_SYSTEM.md` section 4
 
@@ -78,7 +78,7 @@ Phase 5 uses the established Cronduit terminal-green palette. No new colors intr
 Accent reserved for (Phase 5 scope):
 1. `@random` badge pill on dashboard schedule column
 2. Successful reload toast border and text
-3. "Re-roll" button on job detail page (primary button style)
+3. "Re-roll Schedule" button on job detail page (primary button style)
 4. "Reload Config" button on settings page (primary button style)
 
 Destructive reserved for:
@@ -90,6 +90,14 @@ Source: `design/DESIGN_SYSTEM.md` sections 2.1-2.5, `assets/src/app.css`
 ---
 
 ## Component Inventory
+
+### Focal Points
+
+| Page | Primary Visual Anchor | Rationale |
+|------|-----------------------|-----------|
+| Settings page | Reload Card (Component 5) | The reload card is the primary new UI surface in Phase 5; it communicates system state (last reload time, diff summary, error status) and is the visual anchor operators scan first when checking reload health |
+| Dashboard | `@random` badge pill (Component 1) | The green accent pill draws the eye to jobs with randomized schedules within the table scan |
+| Job Detail | Resolved Schedule Display (Component 2) | Shows the raw-to-resolved mapping that is the core user-facing output of the `@random` resolver |
 
 ### New Components (Phase 5)
 
@@ -107,7 +115,7 @@ Markup pattern:
 | Background | `--cd-green-dim` (rgba(52, 211, 153, 0.15) dark / rgba(5, 150, 105, 0.1) light) |
 | Text color | `--cd-green` (#34d399 dark / #059669 light) |
 | Font | `--cd-text-xs` (0.65rem), weight 700, uppercase, letter-spacing 0.1em |
-| Padding | 2px 8px |
+| Padding | 4px 8px (`--cd-space-1` vertical, `--cd-space-2` horizontal) |
 | Border radius | `--cd-radius-sm` (4px) |
 | Visibility condition | Only shown when `job.schedule` contains `@random` |
 
@@ -123,7 +131,7 @@ Placement: Job Detail page, Schedule config field, below the raw schedule line.
 | Raw label | "Schedule" (existing uppercase label pattern) |
 | Resolved text | `(resolved to 14 17 * * *)` in `--cd-text-sm`, color `--cd-text-secondary` |
 | Resolved code | `<code>` element inside the parenthetical |
-| Re-roll button | Inline after resolved text, secondary button style, label "Re-roll" |
+| Re-roll button | Inline after resolved text, secondary button style, label "Re-roll Schedule" |
 
 Exact markup pattern:
 ```html
@@ -132,11 +140,11 @@ Exact markup pattern:
   <code>@random 14 * * *</code>
   <span class="cd-badge cd-badge--random">@random</span>
 </div>
-<div style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:2px">
+<div style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:var(--cd-space-1)">
   Resolved to <code>14 17 * * *</code>
   <form style="display:inline" hx-post="/api/jobs/{id}/reroll" hx-swap="none">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button type="submit" class="cd-btn-secondary" style="margin-left:var(--cd-space-2);padding:2px 8px;font-size:var(--cd-text-xs)">Re-roll</button>
+    <button type="submit" class="cd-btn-secondary" style="margin-left:var(--cd-space-2);padding:var(--cd-space-1) var(--cd-space-2);font-size:var(--cd-text-xs)">Re-roll Schedule</button>
   </form>
 </div>
 ```
@@ -190,6 +198,7 @@ The existing "Last Reload" card (`templates/pages/settings.html` line 35-39) is 
 | Success detail | Diff summary below timestamp: "2 added, 1 updated, 1 disabled" in `--cd-text-sm`, color `--cd-text-secondary` |
 | Never-reloaded value | "Never" in `--cd-text-base`, color `--cd-text-muted` |
 | Failed value | Timestamp in `--cd-text-base`, color `--cd-status-error`, with error summary below in `--cd-text-sm` |
+| Focal point | This card is the primary visual anchor on the settings page; it occupies the first position in the settings card grid |
 
 Source: D-01, D-02 (CONTEXT.md), existing `settings.html`
 
@@ -251,10 +260,11 @@ Source: D-01 (5s auto-dismiss), D-02 (persist error toasts)
 | Element | Copy |
 |---------|------|
 | Primary CTA (settings) | "Reload Config" |
-| Primary CTA (job detail) | "Re-roll" |
+| Primary CTA (job detail) | "Re-roll Schedule" |
 | Reload success toast | "Config reloaded: {N} added, {N} updated, {N} disabled" |
 | Reload error toast | "Reload failed: {error_summary}" |
 | Re-roll success toast | "Schedule re-rolled for {job_name}" |
+| Re-roll failure toast | "This job has no @random schedule" |
 | Settings -- never reloaded | "Never" |
 | Settings -- watcher enabled | "WATCHING" (badge) |
 | Settings -- watcher disabled | "DISABLED" (badge) |
@@ -295,7 +305,7 @@ Source: D-01, D-02, D-06, D-07, D-08 (CONTEXT.md)
 ### Re-roll via Job Detail
 
 ```
-1. Operator clicks "Re-roll" button on job detail page
+1. Operator clicks "Re-roll Schedule" button on job detail page
 2. HTMX sends POST /api/jobs/{id}/reroll with CSRF token
 3. Server re-resolves @random fields for this job, updates resolved_schedule in DB
 4. On success: HX-Trigger fires showToast "Schedule re-rolled for {job_name}", level "success", duration 5000
