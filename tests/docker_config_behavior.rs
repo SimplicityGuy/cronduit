@@ -45,7 +45,10 @@ fn docker_config_env_vars_parse_to_map() {
 
     let config: DockerJobConfig = serde_json::from_str(json).unwrap();
 
-    assert_eq!(config.env.get("DATABASE_URL").unwrap(), "postgres://localhost/db");
+    assert_eq!(
+        config.env.get("DATABASE_URL").unwrap(),
+        "postgres://localhost/db"
+    );
     assert_eq!(config.env.get("SECRET_KEY").unwrap(), "s3cr3t");
     assert_eq!(config.env.len(), 2);
 }
@@ -69,7 +72,11 @@ fn docker_config_env_vars_format_as_key_value_strings() {
     for entry in &env_vec {
         assert!(entry.contains('='), "env entry must be KEY=VALUE: {entry}");
         let parts: Vec<&str> = entry.splitn(2, '=').collect();
-        assert_eq!(parts.len(), 2, "env entry must split into exactly key and value");
+        assert_eq!(
+            parts.len(),
+            2,
+            "env entry must split into exactly key and value"
+        );
     }
 
     // Verify specific values are present.

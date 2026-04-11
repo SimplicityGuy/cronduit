@@ -11,7 +11,7 @@ use std::time::Duration;
 use bollard::Docker;
 use cronduit::scheduler::command::RunStatus;
 use cronduit::scheduler::docker::execute_docker;
-use cronduit::scheduler::docker_preflight::{preflight_network, PreflightError};
+use cronduit::scheduler::docker_preflight::{PreflightError, preflight_network};
 use cronduit::scheduler::log_pipeline;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{GenericImage, ImageExt};
@@ -131,25 +131,18 @@ async fn test_container_network_target_stopped() {
 
     // Pre-flight should now fail because the target is stopped.
     let result = preflight_network(&docker, &format!("container:{target_id}")).await;
-    assert!(
-        result.is_err(),
-        "pre-flight should fail for stopped target"
-    );
+    assert!(result.is_err(), "pre-flight should fail for stopped target");
 
     match result.unwrap_err() {
         PreflightError::NetworkTargetUnavailable(name) => {
             assert_eq!(name, target_id, "error should reference the target ID");
         }
-        other => panic!(
-            "expected NetworkTargetUnavailable, got: {:?}",
-            other
-        ),
+        other => panic!("expected NetworkTargetUnavailable, got: {:?}", other),
     }
 
     // Also verify that execute_docker returns Error status through the full path.
-    let config_json = format!(
-        r#"{{"image": "alpine:latest", "network": "container:{target_id}"}}"#
-    );
+    let config_json =
+        format!(r#"{{"image": "alpine:latest", "network": "container:{target_id}"}}"#);
 
     let (sender, _receiver) = log_pipeline::channel(256);
     let cancel = CancellationToken::new();

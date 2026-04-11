@@ -17,9 +17,9 @@ pub mod run;
 pub mod script;
 pub mod sync;
 
-use bollard::Docker;
 use crate::db::DbPool;
 use crate::db::queries::DbJob;
+use bollard::Docker;
 use chrono::Utc;
 use chrono_tz::Tz;
 use std::collections::HashMap;

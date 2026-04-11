@@ -61,10 +61,7 @@ fn is_builtin_network(network_mode: &str) -> bool {
 /// - `DockerUnavailable`: Docker daemon unreachable
 /// - `NetworkTargetUnavailable`: target container not running
 /// - `NetworkNotFound`: named network does not exist
-pub async fn preflight_network(
-    docker: &Docker,
-    network_mode: &str,
-) -> Result<(), PreflightError> {
+pub async fn preflight_network(docker: &Docker, network_mode: &str) -> Result<(), PreflightError> {
     if let Some(target) = network_mode.strip_prefix("container:") {
         // container:<name> mode -- inspect target and verify running (D-10).
         validate_container_target(docker, target).await
@@ -78,17 +75,11 @@ pub async fn preflight_network(
 }
 
 /// Validate that a target container exists and is running.
-async fn validate_container_target(
-    docker: &Docker,
-    target: &str,
-) -> Result<(), PreflightError> {
+async fn validate_container_target(docker: &Docker, target: &str) -> Result<(), PreflightError> {
     match docker.inspect_container(target, None).await {
         Ok(response) => {
             // Check container state.
-            let status = response
-                .state
-                .as_ref()
-                .and_then(|s| s.status);
+            let status = response.state.as_ref().and_then(|s| s.status);
 
             match status {
                 Some(ContainerStateStatusEnum::RUNNING) => Ok(()),
@@ -99,9 +90,7 @@ async fn validate_container_target(
                         status = ?other,
                         "target container is not running"
                     );
-                    Err(PreflightError::NetworkTargetUnavailable(
-                        target.to_string(),
-                    ))
+                    Err(PreflightError::NetworkTargetUnavailable(target.to_string()))
                 }
                 None => {
                     tracing::warn!(
@@ -109,20 +98,15 @@ async fn validate_container_target(
                         container = target,
                         "target container has no status"
                     );
-                    Err(PreflightError::NetworkTargetUnavailable(
-                        target.to_string(),
-                    ))
+                    Err(PreflightError::NetworkTargetUnavailable(target.to_string()))
                 }
             }
         }
         Err(bollard::errors::Error::DockerResponseServerError {
-            status_code: 404,
-            ..
+            status_code: 404, ..
         }) => {
             // Container does not exist.
-            Err(PreflightError::NetworkTargetUnavailable(
-                target.to_string(),
-            ))
+            Err(PreflightError::NetworkTargetUnavailable(target.to_string()))
         }
         Err(e) => {
             // Docker daemon error -- classify as unavailable.
@@ -132,20 +116,14 @@ async fn validate_container_target(
 }
 
 /// Validate that a named network exists.
-async fn validate_named_network(
-    docker: &Docker,
-    network_name: &str,
-) -> Result<(), PreflightError> {
+async fn validate_named_network(docker: &Docker, network_name: &str) -> Result<(), PreflightError> {
     match docker.inspect_network(network_name, None).await {
         Ok(_) => Ok(()),
         Err(bollard::errors::Error::DockerResponseServerError {
-            status_code: 404,
-            ..
+            status_code: 404, ..
         }) => {
             // Network does not exist.
-            Err(PreflightError::NetworkNotFound(
-                network_name.to_string(),
-            ))
+            Err(PreflightError::NetworkNotFound(network_name.to_string()))
         }
         Err(e) => {
             // Docker daemon error.
@@ -164,10 +142,7 @@ mod tests {
         assert_eq!(err.to_error_message(), "docker_unavailable: socket error");
 
         let err = PreflightError::NetworkTargetUnavailable("vpn".to_string());
-        assert_eq!(
-            err.to_error_message(),
-            "network_target_unavailable: vpn"
-        );
+        assert_eq!(err.to_error_message(), "network_target_unavailable: vpn");
 
         let err = PreflightError::NetworkNotFound("mynet".to_string());
         assert_eq!(err.to_error_message(), "network_not_found: mynet");

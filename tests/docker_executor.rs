@@ -17,15 +17,15 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use bollard::Docker;
 use bollard::models::ContainerCreateBody;
 use bollard::query_parameters::CreateContainerOptions;
-use bollard::Docker;
 use cronduit::db::DbPool;
 use cronduit::db::queries;
 use cronduit::scheduler::command::RunStatus;
 use cronduit::scheduler::docker::execute_docker;
 use cronduit::scheduler::docker_orphan::reconcile_orphans;
-use cronduit::scheduler::docker_preflight::{preflight_network, PreflightError};
+use cronduit::scheduler::docker_preflight::{PreflightError, preflight_network};
 use cronduit::scheduler::log_pipeline;
 use sqlx::Row;
 use tokio_util::sync::CancellationToken;
@@ -99,7 +99,9 @@ async fn test_docker_basic_echo() {
     let all_lines = collector.await.unwrap();
     let stdout_lines: Vec<_> = all_lines.iter().filter(|l| l.stream == "stdout").collect();
     assert!(
-        stdout_lines.iter().any(|l| l.line.contains("hello-cronduit")),
+        stdout_lines
+            .iter()
+            .any(|l| l.line.contains("hello-cronduit")),
         "expected echo output in logs, got: {:?}",
         stdout_lines
     );
@@ -155,18 +157,17 @@ async fn test_docker_timeout_stops_container() {
 async fn test_docker_preflight_nonexistent_target() {
     let docker = docker_client().await;
 
-    let result =
-        preflight_network(&docker, "container:nonexistent_container_xyz_12345").await;
+    let result = preflight_network(&docker, "container:nonexistent_container_xyz_12345").await;
 
-    assert!(result.is_err(), "pre-flight should fail for nonexistent target");
+    assert!(
+        result.is_err(),
+        "pre-flight should fail for nonexistent target"
+    );
     match result.unwrap_err() {
         PreflightError::NetworkTargetUnavailable(name) => {
             assert_eq!(name, "nonexistent_container_xyz_12345");
         }
-        other => panic!(
-            "expected NetworkTargetUnavailable, got: {:?}",
-            other
-        ),
+        other => panic!("expected NetworkTargetUnavailable, got: {:?}", other),
     }
 }
 
@@ -193,7 +194,9 @@ async fn test_docker_orphan_reconciliation() {
     .unwrap();
 
     // Insert a running run row with a known ID.
-    let run_id = queries::insert_running_run(&pool, job_id, "test").await.unwrap();
+    let run_id = queries::insert_running_run(&pool, job_id, "test")
+        .await
+        .unwrap();
 
     // Manually create a container with cronduit labels.
     let mut labels = HashMap::new();
@@ -228,7 +231,10 @@ async fn test_docker_orphan_reconciliation() {
 
     // Run orphan reconciliation.
     let count = reconcile_orphans(&docker, &pool).await.unwrap();
-    assert!(count >= 1, "should reconcile at least 1 orphan, got {count}");
+    assert!(
+        count >= 1,
+        "should reconcile at least 1 orphan, got {count}"
+    );
 
     // Verify the container is removed.
     let inspect_result = docker.inspect_container(&container_id, None).await;

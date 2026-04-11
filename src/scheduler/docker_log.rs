@@ -3,9 +3,9 @@
 //! Streams stdout/stderr from a running container into the log pipeline.
 //! Does NOT close the sender -- the caller manages channel lifecycle.
 
+use bollard::Docker;
 use bollard::container::LogOutput;
 use bollard::query_parameters::LogsOptions;
-use bollard::Docker;
 use futures_util::StreamExt;
 
 use super::log_pipeline::{LogSender, make_log_line};
@@ -62,10 +62,7 @@ pub async fn stream_docker_logs(docker: Docker, container_id: String, sender: Lo
                             "log follow failed, retrying without follow"
                         );
                     } else {
-                        sender.send(make_log_line(
-                            "system",
-                            format!("[docker log error: {e}]"),
-                        ));
+                        sender.send(make_log_line("system", format!("[docker log error: {e}]")));
                     }
                     break;
                 }

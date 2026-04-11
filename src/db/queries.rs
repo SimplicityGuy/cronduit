@@ -157,11 +157,12 @@ pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> any
                 return Ok(result.rows_affected());
             }
             // Postgres supports ANY($1) with array bind.
-            let result =
-                sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND NOT (name = ANY($1))")
-                    .bind(active_names)
-                    .execute(p)
-                    .await?;
+            let result = sqlx::query(
+                "UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND NOT (name = ANY($1))",
+            )
+            .bind(active_names)
+            .execute(p)
+            .await?;
             Ok(result.rows_affected())
         }
     }

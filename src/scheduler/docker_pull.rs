@@ -151,11 +151,9 @@ pub async fn image_exists_locally(
         Ok(info) => {
             // Extract digest from repo_digests (first sha256 portion).
             let digest = info.repo_digests.and_then(|digests| {
-                digests.iter().find_map(|d| {
-                    d.split('@')
-                        .nth(1)
-                        .map(|sha| sha.to_string())
-                })
+                digests
+                    .iter()
+                    .find_map(|d| d.split('@').nth(1).map(|sha| sha.to_string()))
             });
             Ok(digest)
         }
@@ -170,10 +168,7 @@ pub async fn image_exists_locally(
 ///
 /// Returns `Ok(Some(digest))` if the digest was found (locally or after pull),
 /// `Ok(None)` if available but digest could not be determined.
-pub async fn ensure_image(
-    docker: &Docker,
-    image: &str,
-) -> Result<Option<String>, PullError> {
+pub async fn ensure_image(docker: &Docker, image: &str) -> Result<Option<String>, PullError> {
     // Check local first.
     match image_exists_locally(docker, image).await {
         Ok(Some(digest)) => {

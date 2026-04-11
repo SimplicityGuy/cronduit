@@ -168,7 +168,7 @@ pub async fn run_job(
                     ),
                 }
             }
-        }
+        },
         other => {
             sender.close();
             command::ExecResult {

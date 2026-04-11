@@ -11,7 +11,9 @@ use std::collections::HashMap;
 
 use bollard::Docker;
 use bollard::models::ContainerSummaryStateEnum;
-use bollard::query_parameters::{ListContainersOptionsBuilder, RemoveContainerOptions, StopContainerOptions};
+use bollard::query_parameters::{
+    ListContainersOptionsBuilder, RemoveContainerOptions, StopContainerOptions,
+};
 
 use crate::db::DbPool;
 use crate::db::queries::PoolRef;
@@ -23,10 +25,7 @@ use crate::db::queries::PoolRef;
 /// as `status=error` with `error_message="orphaned at restart"`.
 ///
 /// Returns the number of orphan containers reconciled.
-pub async fn reconcile_orphans(
-    docker: &Docker,
-    pool: &DbPool,
-) -> anyhow::Result<u32> {
+pub async fn reconcile_orphans(docker: &Docker, pool: &DbPool) -> anyhow::Result<u32> {
     // Build filter: all containers (including stopped) with our label.
     let mut filters = HashMap::new();
     filters.insert("label".to_string(), vec!["cronduit.run_id".to_string()]);

@@ -93,7 +93,14 @@ async fn test_command_job_fires_and_captures_logs() {
 
         // Run the job directly (not through the scheduler loop).
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), None, job.clone(), "scheduled".to_string(), cancel).await;
+        let result = run_job(
+            pool.clone(),
+            None,
+            job.clone(),
+            "scheduled".to_string(),
+            cancel,
+        )
+        .await;
 
         assert_eq!(result.status, "success");
         assert!(result.run_id > 0);

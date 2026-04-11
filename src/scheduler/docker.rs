@@ -11,11 +11,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use bollard::Docker;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{
     CreateContainerOptions, RemoveContainerOptions, StopContainerOptions,
 };
-use bollard::Docker;
 use futures_util::StreamExt;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
@@ -134,11 +134,7 @@ pub async fn execute_docker(
     labels.insert("cronduit.job_name".to_string(), job_name.to_string());
 
     // Build env vars as KEY=VALUE strings.
-    let env_vec: Vec<String> = config
-        .env
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let env_vec: Vec<String> = config.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
 
     // Build HostConfig with network_mode, volumes, and auto_remove=false.
     let host_config = HostConfig {
@@ -163,12 +159,13 @@ pub async fn execute_docker(
     };
 
     // Build CreateContainerOptions with optional name.
-    let create_options = config.container_name.as_ref().map(|name| {
-        CreateContainerOptions {
+    let create_options = config
+        .container_name
+        .as_ref()
+        .map(|name| CreateContainerOptions {
             name: Some(name.clone()),
             ..Default::default()
-        }
-    });
+        });
 
     // Create the container.
     let container_id = match docker
@@ -416,7 +413,10 @@ mod tests {
     fn test_docker_job_config_with_cmd() {
         let json = r#"{"image": "alpine:latest", "cmd": ["echo", "hello"]}"#;
         let config: DockerJobConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.cmd.as_ref().unwrap(), &vec!["echo".to_string(), "hello".to_string()]);
+        assert_eq!(
+            config.cmd.as_ref().unwrap(),
+            &vec!["echo".to_string(), "hello".to_string()]
+        );
     }
 
     #[test]
