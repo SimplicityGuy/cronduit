@@ -174,4 +174,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-10 — Phase 3 complete: Read-Only Web UI & Health Endpoint. Terminal-green askama_web dashboard with HTMX polling, job/run detail pages with ANSI log viewer, Run Now via CSRF-protected API, /health endpoint, dark/light mode toggle, rust-embed asset serving, 9 integration tests including XSS safety hardening.*
+*Last updated: 2026-04-11 — Phase 4 complete: Docker Executor & container-network Differentiator. bollard 0.20-based ephemeral container lifecycle, image pull with 3-attempt retry + error classification, network pre-flight validation (container:\<name\> + named networks), orphan reconciliation at startup, Docker dispatch wired into scheduler, 7 integration tests including DOCKER-10 marquee container:\<name\> test.*
