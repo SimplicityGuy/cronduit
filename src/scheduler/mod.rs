@@ -6,6 +6,7 @@
 
 pub mod cmd;
 pub mod command;
+pub mod docker_pull;
 pub mod fire;
 pub mod log_pipeline;
 pub mod run;
