@@ -22,7 +22,7 @@ tokio = { version = "1.51", features = ["full"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
 
 # HTTP / web placeholder
-axum = { version = "0.8.8", default-features = false, features = ["tokio", "http1", "http2", "json"] }
+axum = { version = "0.8.8", default-features = false, features = ["tokio", "http1", "http2", "json", "query"] }
 tower-http = { version = "0.6.8", default-features = false, features = ["trace"] }
 hyper = { version = "1", default-features = false }
 
