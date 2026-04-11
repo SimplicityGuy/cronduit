@@ -8,6 +8,8 @@ pub mod cmd;
 pub mod command;
 pub mod docker;
 pub mod docker_log;
+pub mod docker_preflight;
+pub mod docker_pull;
 pub mod fire;
 pub mod log_pipeline;
 pub mod run;
