@@ -9,8 +9,8 @@ use axum_htmx::HxRequest;
 use serde::Deserialize;
 
 use crate::db::queries;
-use crate::web::ansi;
 use crate::web::AppState;
+use crate::web::ansi;
 
 // ---------------------------------------------------------------------------
 // Query params
@@ -147,8 +147,7 @@ pub async fn run_detail(
     };
 
     let offset = params.offset.max(0);
-    let (logs, total_logs, has_older, next_offset) =
-        fetch_logs(&state.pool, run_id, offset).await;
+    let (logs, total_logs, has_older, next_offset) = fetch_logs(&state.pool, run_id, offset).await;
 
     if is_htmx {
         LogViewerPartial {
@@ -197,8 +196,7 @@ pub async fn log_viewer_partial(
     Query(params): Query<LogPaginationParams>,
 ) -> impl IntoResponse {
     let offset = params.offset.max(0);
-    let (logs, _total, has_older, next_offset) =
-        fetch_logs(&state.pool, run_id, offset).await;
+    let (logs, _total, has_older, next_offset) = fetch_logs(&state.pool, run_id, offset).await;
 
     LogViewerPartial {
         run_id,

@@ -520,10 +520,7 @@ pub async fn get_dashboard_jobs(
         PoolRef::Sqlite(p) => {
             let rows = if has_filter {
                 let pattern = format!("%{}%", filter.unwrap().to_lowercase());
-                sqlx::query(&base_sql)
-                    .bind(pattern)
-                    .fetch_all(p)
-                    .await?
+                sqlx::query(&base_sql).bind(pattern).fetch_all(p).await?
             } else {
                 sqlx::query(&base_sql).fetch_all(p).await?
             };
@@ -573,10 +570,7 @@ pub async fn get_dashboard_jobs(
             };
             let rows = if has_filter {
                 let pattern = format!("%{}%", filter.unwrap().to_lowercase());
-                sqlx::query(&pg_sql)
-                    .bind(pattern)
-                    .fetch_all(p)
-                    .await?
+                sqlx::query(&pg_sql).bind(pattern).fetch_all(p).await?
             } else {
                 sqlx::query(&pg_sql).fetch_all(p).await?
             };
@@ -631,11 +625,10 @@ pub async fn get_run_history(
 ) -> anyhow::Result<Paginated<DbRun>> {
     match pool.reader() {
         PoolRef::Sqlite(p) => {
-            let count_row =
-                sqlx::query("SELECT COUNT(*) as cnt FROM job_runs WHERE job_id = ?1")
-                    .bind(job_id)
-                    .fetch_one(p)
-                    .await?;
+            let count_row = sqlx::query("SELECT COUNT(*) as cnt FROM job_runs WHERE job_id = ?1")
+                .bind(job_id)
+                .fetch_one(p)
+                .await?;
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
@@ -665,11 +658,10 @@ pub async fn get_run_history(
             Ok(Paginated { items, total })
         }
         PoolRef::Postgres(p) => {
-            let count_row =
-                sqlx::query("SELECT COUNT(*) as cnt FROM job_runs WHERE job_id = $1")
-                    .bind(job_id)
-                    .fetch_one(p)
-                    .await?;
+            let count_row = sqlx::query("SELECT COUNT(*) as cnt FROM job_runs WHERE job_id = $1")
+                .bind(job_id)
+                .fetch_one(p)
+                .await?;
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
@@ -767,11 +759,10 @@ pub async fn get_log_lines(
 ) -> anyhow::Result<Paginated<DbLogLine>> {
     match pool.reader() {
         PoolRef::Sqlite(p) => {
-            let count_row =
-                sqlx::query("SELECT COUNT(*) as cnt FROM job_logs WHERE run_id = ?1")
-                    .bind(run_id)
-                    .fetch_one(p)
-                    .await?;
+            let count_row = sqlx::query("SELECT COUNT(*) as cnt FROM job_logs WHERE run_id = ?1")
+                .bind(run_id)
+                .fetch_one(p)
+                .await?;
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
@@ -796,11 +787,10 @@ pub async fn get_log_lines(
             Ok(Paginated { items, total })
         }
         PoolRef::Postgres(p) => {
-            let count_row =
-                sqlx::query("SELECT COUNT(*) as cnt FROM job_logs WHERE run_id = $1")
-                    .bind(run_id)
-                    .fetch_one(p)
-                    .await?;
+            let count_row = sqlx::query("SELECT COUNT(*) as cnt FROM job_logs WHERE run_id = $1")
+                .bind(run_id)
+                .fetch_one(p)
+                .await?;
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
@@ -1221,16 +1211,19 @@ mod tests {
 
     // ── Helper for dashboard/UI query tests ──────────────────────────────
 
-    async fn create_job_with_runs(
-        pool: &DbPool,
-        name: &str,
-        schedule: &str,
-    ) -> i64 {
+    async fn create_job_with_runs(pool: &DbPool, name: &str, schedule: &str) -> i64 {
         let job_id = upsert_job(
-            pool, name, schedule, schedule, "command",
+            pool,
+            name,
+            schedule,
+            schedule,
+            "command",
             &format!(r#"{{"command":"echo {name}"}}"#),
-            &format!("hash-{name}"), 3600,
-        ).await.unwrap();
+            &format!("hash-{name}"),
+            3600,
+        )
+        .await
+        .unwrap();
         job_id
     }
 
@@ -1247,11 +1240,13 @@ mod tests {
 
     async fn insert_logs(pool: &DbPool, run_id: i64, count: usize) {
         let lines: Vec<(String, String, String)> = (0..count)
-            .map(|i| (
-                "stdout".to_string(),
-                format!("2026-01-01T00:00:{:02}Z", i % 60),
-                format!("log line {i}"),
-            ))
+            .map(|i| {
+                (
+                    "stdout".to_string(),
+                    format!("2026-01-01T00:00:{:02}Z", i % 60),
+                    format!("log line {i}"),
+                )
+            })
             .collect();
         insert_log_batch(pool, run_id, &lines).await.unwrap();
     }
@@ -1267,7 +1262,9 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         insert_run(&pool, job_id, "failed", "manual").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "asc").await.unwrap();
+        let jobs = get_dashboard_jobs(&pool, None, "name", "asc")
+            .await
+            .unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].name, "test-job");
         assert_eq!(jobs[0].last_status.as_deref(), Some("failed"));
@@ -1281,7 +1278,9 @@ mod tests {
         let pool = setup_pool().await;
         create_job_with_runs(&pool, "no-runs-job", "*/5 * * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "asc").await.unwrap();
+        let jobs = get_dashboard_jobs(&pool, None, "name", "asc")
+            .await
+            .unwrap();
         assert_eq!(jobs.len(), 1);
         assert!(jobs[0].last_status.is_none());
         assert!(jobs[0].last_run_time.is_none());
@@ -1296,7 +1295,9 @@ mod tests {
         create_job_with_runs(&pool, "test-sync", "*/10 * * * *").await;
         create_job_with_runs(&pool, "deploy-app", "0 0 * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, Some("test"), "name", "asc").await.unwrap();
+        let jobs = get_dashboard_jobs(&pool, Some("test"), "name", "asc")
+            .await
+            .unwrap();
         assert_eq!(jobs.len(), 2);
         let names: Vec<&str> = jobs.iter().map(|j| j.name.as_str()).collect();
         assert!(names.contains(&"test-backup"));
@@ -1311,7 +1312,9 @@ mod tests {
         create_job_with_runs(&pool, "TestJob", "*/5 * * * *").await;
         create_job_with_runs(&pool, "other", "*/10 * * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, Some("TESTJOB"), "name", "asc").await.unwrap();
+        let jobs = get_dashboard_jobs(&pool, Some("TESTJOB"), "name", "asc")
+            .await
+            .unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].name, "TestJob");
         pool.close().await;
@@ -1324,7 +1327,9 @@ mod tests {
         create_job_with_runs(&pool, "zulu", "*/10 * * * *").await;
         create_job_with_runs(&pool, "mike", "0 0 * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "desc").await.unwrap();
+        let jobs = get_dashboard_jobs(&pool, None, "name", "desc")
+            .await
+            .unwrap();
         assert_eq!(jobs.len(), 3);
         assert_eq!(jobs[0].name, "zulu");
         assert_eq!(jobs[1].name, "mike");

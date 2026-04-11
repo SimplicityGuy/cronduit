@@ -41,7 +41,10 @@ mod tests {
     #[test]
     fn html_is_escaped() {
         let result = render_log_line("<script>alert('xss')</script>");
-        assert!(!result.contains("<script>"), "HTML should be escaped: {result}");
+        assert!(
+            !result.contains("<script>"),
+            "HTML should be escaped: {result}"
+        );
         assert!(result.contains("&lt;script&gt;"), "got: {result}");
     }
 
@@ -49,7 +52,13 @@ mod tests {
     fn ansi_color_produces_span() {
         // \x1b[31m = red text, \x1b[0m = reset
         let result = render_log_line("\x1b[31mERROR\x1b[0m: something failed");
-        assert!(result.contains("<span"), "ANSI should produce span: {result}");
-        assert!(result.contains("ERROR"), "text should be preserved: {result}");
+        assert!(
+            result.contains("<span"),
+            "ANSI should produce span: {result}"
+        );
+        assert!(
+            result.contains("ERROR"),
+            "text should be preserved: {result}"
+        );
     }
 }

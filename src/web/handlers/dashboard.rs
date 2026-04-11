@@ -11,8 +11,8 @@ use serde::Deserialize;
 use std::str::FromStr;
 
 use crate::db::queries::{self, DashboardJob};
-use crate::web::csrf;
 use crate::web::AppState;
+use crate::web::csrf;
 
 // ---------------------------------------------------------------------------
 // Query params
@@ -86,11 +86,7 @@ fn to_view(job: DashboardJob, tz: Tz) -> DashboardJobView {
     };
 
     // Normalize last_status for CSS class matching (lowercase)
-    let last_status = job
-        .last_status
-        .as_deref()
-        .unwrap_or("")
-        .to_lowercase();
+    let last_status = job.last_status.as_deref().unwrap_or("").to_lowercase();
 
     let last_status_label = if last_status.is_empty() {
         String::new()

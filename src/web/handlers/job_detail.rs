@@ -10,8 +10,8 @@ use serde::Deserialize;
 use std::str::FromStr;
 
 use crate::db::queries;
-use crate::web::csrf;
 use crate::web::AppState;
+use crate::web::csrf;
 
 // ---------------------------------------------------------------------------
 // Query params

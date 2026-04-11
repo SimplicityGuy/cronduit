@@ -63,10 +63,9 @@ pub async fn ensure_csrf_cookie(
             "{}={}; HttpOnly; SameSite=Strict; Path=/",
             CSRF_COOKIE_NAME, token
         );
-        response.headers_mut().insert(
-            axum::http::header::SET_COOKIE,
-            cookie.parse().unwrap(),
-        );
+        response
+            .headers_mut()
+            .insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
     }
 
     response

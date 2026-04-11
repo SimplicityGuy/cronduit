@@ -61,7 +61,11 @@ pub async fn settings(State(state): State<AppState>) -> impl IntoResponse {
         PoolRef::Sqlite(p) => sqlx::query("SELECT 1").fetch_one(p).await.is_ok(),
         PoolRef::Postgres(p) => sqlx::query("SELECT 1").fetch_one(p).await.is_ok(),
     };
-    let db_status = if db_ok { "ok".to_string() } else { "error".to_string() };
+    let db_status = if db_ok {
+        "ok".to_string()
+    } else {
+        "error".to_string()
+    };
 
     SettingsPage {
         uptime,

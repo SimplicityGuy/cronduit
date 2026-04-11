@@ -2,7 +2,7 @@
 
 use axum::Json;
 use axum::extract::State;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::db::queries::PoolRef;
 use crate::web::AppState;

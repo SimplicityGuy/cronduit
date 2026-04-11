@@ -102,8 +102,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     );
 
     // 7. Wire graceful shutdown + spawn scheduler + serve.
-    let (cmd_tx, cmd_rx) =
-        tokio::sync::mpsc::channel::<crate::scheduler::cmd::SchedulerCmd>(32);
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<crate::scheduler::cmd::SchedulerCmd>(32);
 
     let state = AppState {
         started_at: chrono::Utc::now(),

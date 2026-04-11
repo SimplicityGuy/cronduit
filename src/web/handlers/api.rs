@@ -15,8 +15,8 @@ use serde_json::json;
 
 use crate::db::queries;
 use crate::scheduler::cmd::SchedulerCmd;
-use crate::web::csrf;
 use crate::web::AppState;
+use crate::web::csrf;
 
 #[derive(Deserialize)]
 pub struct RunNowForm {
@@ -43,9 +43,7 @@ pub async fn run_now(
     let job = match queries::get_job_by_id(&state.pool, job_id).await {
         Ok(Some(job)) => job,
         Ok(None) => return (StatusCode::NOT_FOUND, "Job not found").into_response(),
-        Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response()
-        }
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response(),
     };
 
     // 3. Send RunNow command through scheduler channel (D-08)
@@ -69,8 +67,10 @@ pub async fn run_now(
 
             (HxResponseTrigger::normal([event]), StatusCode::OK).into_response()
         }
-        Err(_) => {
-            (StatusCode::SERVICE_UNAVAILABLE, "Scheduler is shutting down").into_response()
-        }
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Scheduler is shutting down",
+        )
+            .into_response(),
     }
 }

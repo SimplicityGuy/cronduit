@@ -3,7 +3,10 @@ pub mod assets;
 pub mod csrf;
 pub mod handlers;
 
-use axum::{Router, middleware, routing::{get, post}};
+use axum::{
+    Router, middleware,
+    routing::{get, post},
+};
 use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
@@ -25,9 +28,18 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(handlers::dashboard::dashboard))
         .route("/partials/job-table", get(handlers::dashboard::dashboard))
         .route("/jobs/{id}", get(handlers::job_detail::job_detail))
-        .route("/partials/run-history/{id}", get(handlers::job_detail::job_detail))
-        .route("/jobs/{job_id}/runs/{run_id}", get(handlers::run_detail::run_detail))
-        .route("/partials/log-viewer/{run_id}", get(handlers::run_detail::log_viewer_partial))
+        .route(
+            "/partials/run-history/{id}",
+            get(handlers::job_detail::job_detail),
+        )
+        .route(
+            "/jobs/{job_id}/runs/{run_id}",
+            get(handlers::run_detail::run_detail),
+        )
+        .route(
+            "/partials/log-viewer/{run_id}",
+            get(handlers::run_detail::log_viewer_partial),
+        )
         .route("/settings", get(handlers::settings::settings))
         .route("/health", get(handlers::health::health))
         .route("/api/jobs/{id}/run", post(handlers::api::run_now))
