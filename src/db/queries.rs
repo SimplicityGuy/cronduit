@@ -403,6 +403,430 @@ pub async fn insert_log_batch(
     Ok(())
 }
 
+// ── Dashboard / UI query types ───────────────────────────────────────────
+
+/// A row for the dashboard view: job + its most recent run.
+#[derive(Debug, Clone)]
+pub struct DashboardJob {
+    pub id: i64,
+    pub name: String,
+    pub schedule: String,
+    pub resolved_schedule: String,
+    pub job_type: String,
+    pub timeout_secs: i64,
+    pub last_status: Option<String>,
+    pub last_run_time: Option<String>,
+    pub last_trigger: Option<String>,
+}
+
+/// A row from job_runs for the run history view.
+#[derive(Debug, Clone)]
+pub struct DbRun {
+    pub id: i64,
+    pub job_id: i64,
+    pub status: String,
+    pub trigger: String,
+    pub start_time: String,
+    pub end_time: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub exit_code: Option<i32>,
+    pub error_message: Option<String>,
+}
+
+/// A row from job_runs with the associated job name (for run detail page).
+#[derive(Debug, Clone)]
+pub struct DbRunDetail {
+    pub id: i64,
+    pub job_id: i64,
+    pub job_name: String,
+    pub status: String,
+    pub trigger: String,
+    pub start_time: String,
+    pub end_time: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub exit_code: Option<i32>,
+    pub error_message: Option<String>,
+}
+
+/// A row from job_logs.
+#[derive(Debug, Clone)]
+pub struct DbLogLine {
+    pub id: i64,
+    pub stream: String,
+    pub ts: String,
+    pub line: String,
+}
+
+/// Paginated result with total count.
+#[derive(Debug, Clone)]
+pub struct Paginated<T> {
+    pub items: Vec<T>,
+    pub total: i64,
+}
+
+/// Fetch enabled jobs with their most recent run status for the dashboard.
+///
+/// T-03-04: Filter uses parameterized LIKE query. Sort uses whitelist match.
+pub async fn get_dashboard_jobs(
+    pool: &DbPool,
+    filter: Option<&str>,
+    sort: &str,
+    order: &str,
+) -> anyhow::Result<Vec<DashboardJob>> {
+    // Build ORDER BY from whitelist — never interpolate user input into SQL.
+    let order_clause = match (sort, order) {
+        ("name", "desc") => "ORDER BY j.name DESC",
+        ("name", _) => "ORDER BY j.name ASC",
+        ("last_run", "desc") => "ORDER BY lr.start_time DESC NULLS LAST",
+        ("last_run", _) => "ORDER BY lr.start_time ASC NULLS LAST",
+        ("status", "desc") => "ORDER BY lr.status DESC NULLS LAST",
+        ("status", _) => "ORDER BY lr.status ASC NULLS LAST",
+        ("next_run", _) => "ORDER BY j.name ASC", // placeholder — actual next_run sort applied post-query in Rust
+        (_, "desc") => "ORDER BY j.name DESC",
+        _ => "ORDER BY j.name ASC",
+    };
+
+    let has_filter = filter.map_or(false, |f| !f.is_empty());
+
+    let base_sql = if has_filter {
+        format!(
+            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+                      lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
+               FROM jobs j
+               LEFT JOIN (
+                   SELECT job_id, status, start_time, trigger,
+                          ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
+                   FROM job_runs
+               ) lr ON lr.job_id = j.id AND lr.rn = 1
+               WHERE j.enabled = 1 AND LOWER(j.name) LIKE ?1
+               {order_clause}"#
+        )
+    } else {
+        format!(
+            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+                      lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
+               FROM jobs j
+               LEFT JOIN (
+                   SELECT job_id, status, start_time, trigger,
+                          ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
+                   FROM job_runs
+               ) lr ON lr.job_id = j.id AND lr.rn = 1
+               WHERE j.enabled = 1
+               {order_clause}"#
+        )
+    };
+
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let rows = if has_filter {
+                let pattern = format!("%{}%", filter.unwrap().to_lowercase());
+                sqlx::query(&base_sql)
+                    .bind(pattern)
+                    .fetch_all(p)
+                    .await?
+            } else {
+                sqlx::query(&base_sql).fetch_all(p).await?
+            };
+            Ok(rows
+                .into_iter()
+                .map(|r| DashboardJob {
+                    id: r.get("id"),
+                    name: r.get("name"),
+                    schedule: r.get("schedule"),
+                    resolved_schedule: r.get("resolved_schedule"),
+                    job_type: r.get("job_type"),
+                    timeout_secs: r.get("timeout_secs"),
+                    last_status: r.get("last_status"),
+                    last_run_time: r.get("last_run_time"),
+                    last_trigger: r.get("last_trigger"),
+                })
+                .collect())
+        }
+        PoolRef::Postgres(p) => {
+            // Postgres uses $1 instead of ?1
+            let pg_sql = if has_filter {
+                format!(
+                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+                              lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
+                       FROM jobs j
+                       LEFT JOIN (
+                           SELECT job_id, status, start_time, trigger,
+                                  ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
+                           FROM job_runs
+                       ) lr ON lr.job_id = j.id AND lr.rn = 1
+                       WHERE j.enabled = true AND LOWER(j.name) LIKE $1
+                       {order_clause}"#
+                )
+            } else {
+                format!(
+                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+                              lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
+                       FROM jobs j
+                       LEFT JOIN (
+                           SELECT job_id, status, start_time, trigger,
+                                  ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
+                           FROM job_runs
+                       ) lr ON lr.job_id = j.id AND lr.rn = 1
+                       WHERE j.enabled = true
+                       {order_clause}"#
+                )
+            };
+            let rows = if has_filter {
+                let pattern = format!("%{}%", filter.unwrap().to_lowercase());
+                sqlx::query(&pg_sql)
+                    .bind(pattern)
+                    .fetch_all(p)
+                    .await?
+            } else {
+                sqlx::query(&pg_sql).fetch_all(p).await?
+            };
+            Ok(rows
+                .into_iter()
+                .map(|r| DashboardJob {
+                    id: r.get("id"),
+                    name: r.get("name"),
+                    schedule: r.get("schedule"),
+                    resolved_schedule: r.get("resolved_schedule"),
+                    job_type: r.get("job_type"),
+                    timeout_secs: r.get("timeout_secs"),
+                    last_status: r.get("last_status"),
+                    last_run_time: r.get("last_run_time"),
+                    last_trigger: r.get("last_trigger"),
+                })
+                .collect())
+        }
+    }
+}
+
+/// Fetch a single job by id.
+pub async fn get_job_by_id(pool: &DbPool, id: i64) -> anyhow::Result<Option<DbJob>> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let row = sqlx::query_as::<_, SqliteDbJobRow>(
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at FROM jobs WHERE id = ?1",
+            )
+            .bind(id)
+            .fetch_optional(p)
+            .await?;
+            Ok(row.map(|r| r.into()))
+        }
+        PoolRef::Postgres(p) => {
+            let row = sqlx::query_as::<_, PgDbJobRow>(
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at FROM jobs WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_optional(p)
+            .await?;
+            Ok(row.map(|r| r.into()))
+        }
+    }
+}
+
+/// Fetch paginated run history for a job, ordered by start_time DESC.
+pub async fn get_run_history(
+    pool: &DbPool,
+    job_id: i64,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Paginated<DbRun>> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let count_row =
+                sqlx::query("SELECT COUNT(*) as cnt FROM job_runs WHERE job_id = ?1")
+                    .bind(job_id)
+                    .fetch_one(p)
+                    .await?;
+            let total: i64 = count_row.get("cnt");
+
+            let rows = sqlx::query(
+                "SELECT id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
+            )
+            .bind(job_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(p)
+            .await?;
+
+            let items = rows
+                .into_iter()
+                .map(|r| DbRun {
+                    id: r.get("id"),
+                    job_id: r.get("job_id"),
+                    status: r.get("status"),
+                    trigger: r.get("trigger"),
+                    start_time: r.get("start_time"),
+                    end_time: r.get("end_time"),
+                    duration_ms: r.get("duration_ms"),
+                    exit_code: r.get("exit_code"),
+                    error_message: r.get("error_message"),
+                })
+                .collect();
+
+            Ok(Paginated { items, total })
+        }
+        PoolRef::Postgres(p) => {
+            let count_row =
+                sqlx::query("SELECT COUNT(*) as cnt FROM job_runs WHERE job_id = $1")
+                    .bind(job_id)
+                    .fetch_one(p)
+                    .await?;
+            let total: i64 = count_row.get("cnt");
+
+            let rows = sqlx::query(
+                "SELECT id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
+            )
+            .bind(job_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(p)
+            .await?;
+
+            let items = rows
+                .into_iter()
+                .map(|r| DbRun {
+                    id: r.get("id"),
+                    job_id: r.get("job_id"),
+                    status: r.get("status"),
+                    trigger: r.get("trigger"),
+                    start_time: r.get("start_time"),
+                    end_time: r.get("end_time"),
+                    duration_ms: r.get("duration_ms"),
+                    exit_code: r.get("exit_code"),
+                    error_message: r.get("error_message"),
+                })
+                .collect();
+
+            Ok(Paginated { items, total })
+        }
+    }
+}
+
+/// Fetch a single run by id with its associated job name.
+pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<DbRunDetail>> {
+    let sql_sqlite = r#"
+        SELECT r.id, r.job_id, j.name AS job_name, r.status, r.trigger,
+               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
+        FROM job_runs r
+        JOIN jobs j ON j.id = r.job_id
+        WHERE r.id = ?1
+    "#;
+    let sql_postgres = r#"
+        SELECT r.id, r.job_id, j.name AS job_name, r.status, r.trigger,
+               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
+        FROM job_runs r
+        JOIN jobs j ON j.id = r.job_id
+        WHERE r.id = $1
+    "#;
+
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let row = sqlx::query(sql_sqlite)
+                .bind(run_id)
+                .fetch_optional(p)
+                .await?;
+            Ok(row.map(|r| DbRunDetail {
+                id: r.get("id"),
+                job_id: r.get("job_id"),
+                job_name: r.get("job_name"),
+                status: r.get("status"),
+                trigger: r.get("trigger"),
+                start_time: r.get("start_time"),
+                end_time: r.get("end_time"),
+                duration_ms: r.get("duration_ms"),
+                exit_code: r.get("exit_code"),
+                error_message: r.get("error_message"),
+            }))
+        }
+        PoolRef::Postgres(p) => {
+            let row = sqlx::query(sql_postgres)
+                .bind(run_id)
+                .fetch_optional(p)
+                .await?;
+            Ok(row.map(|r| DbRunDetail {
+                id: r.get("id"),
+                job_id: r.get("job_id"),
+                job_name: r.get("job_name"),
+                status: r.get("status"),
+                trigger: r.get("trigger"),
+                start_time: r.get("start_time"),
+                end_time: r.get("end_time"),
+                duration_ms: r.get("duration_ms"),
+                exit_code: r.get("exit_code"),
+                error_message: r.get("error_message"),
+            }))
+        }
+    }
+}
+
+/// Fetch paginated log lines for a run, ordered by id DESC (most recent first).
+pub async fn get_log_lines(
+    pool: &DbPool,
+    run_id: i64,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Paginated<DbLogLine>> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let count_row =
+                sqlx::query("SELECT COUNT(*) as cnt FROM job_logs WHERE run_id = ?1")
+                    .bind(run_id)
+                    .fetch_one(p)
+                    .await?;
+            let total: i64 = count_row.get("cnt");
+
+            let rows = sqlx::query(
+                "SELECT id, stream, ts, line FROM job_logs WHERE run_id = ?1 ORDER BY id DESC LIMIT ?2 OFFSET ?3",
+            )
+            .bind(run_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(p)
+            .await?;
+
+            let items = rows
+                .into_iter()
+                .map(|r| DbLogLine {
+                    id: r.get("id"),
+                    stream: r.get("stream"),
+                    ts: r.get("ts"),
+                    line: r.get("line"),
+                })
+                .collect();
+
+            Ok(Paginated { items, total })
+        }
+        PoolRef::Postgres(p) => {
+            let count_row =
+                sqlx::query("SELECT COUNT(*) as cnt FROM job_logs WHERE run_id = $1")
+                    .bind(run_id)
+                    .fetch_one(p)
+                    .await?;
+            let total: i64 = count_row.get("cnt");
+
+            let rows = sqlx::query(
+                "SELECT id, stream, ts, line FROM job_logs WHERE run_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3",
+            )
+            .bind(run_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(p)
+            .await?;
+
+            let items = rows
+                .into_iter()
+                .map(|r| DbLogLine {
+                    id: r.get("id"),
+                    stream: r.get("stream"),
+                    ts: r.get("ts"),
+                    line: r.get("line"),
+                })
+                .collect();
+
+            Ok(Paginated { items, total })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,6 +1216,228 @@ mod tests {
             }
             _ => unreachable!(),
         }
+        pool.close().await;
+    }
+
+    // ── Helper for dashboard/UI query tests ──────────────────────────────
+
+    async fn create_job_with_runs(
+        pool: &DbPool,
+        name: &str,
+        schedule: &str,
+    ) -> i64 {
+        let job_id = upsert_job(
+            pool, name, schedule, schedule, "command",
+            &format!(r#"{{"command":"echo {name}"}}"#),
+            &format!("hash-{name}"), 3600,
+        ).await.unwrap();
+        job_id
+    }
+
+    async fn insert_run(pool: &DbPool, job_id: i64, status: &str, trigger: &str) -> i64 {
+        let run_id = insert_running_run(pool, job_id, trigger).await.unwrap();
+        if status != "running" {
+            let start = tokio::time::Instant::now();
+            finalize_run(pool, run_id, status, Some(0), start, None)
+                .await
+                .unwrap();
+        }
+        run_id
+    }
+
+    async fn insert_logs(pool: &DbPool, run_id: i64, count: usize) {
+        let lines: Vec<(String, String, String)> = (0..count)
+            .map(|i| (
+                "stdout".to_string(),
+                format!("2026-01-01T00:00:{:02}Z", i % 60),
+                format!("log line {i}"),
+            ))
+            .collect();
+        insert_log_batch(pool, run_id, &lines).await.unwrap();
+    }
+
+    // ── Dashboard query tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dashboard_jobs_returns_enabled_with_last_run() {
+        let pool = setup_pool().await;
+        let job_id = create_job_with_runs(&pool, "test-job", "*/5 * * * *").await;
+        insert_run(&pool, job_id, "success", "scheduled").await;
+        // Small delay then insert another run — this should be the "last" one
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        insert_run(&pool, job_id, "failed", "manual").await;
+
+        let jobs = get_dashboard_jobs(&pool, None, "name", "asc").await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].name, "test-job");
+        assert_eq!(jobs[0].last_status.as_deref(), Some("failed"));
+        assert_eq!(jobs[0].last_trigger.as_deref(), Some("manual"));
+        assert!(jobs[0].last_run_time.is_some());
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn dashboard_jobs_no_runs_returns_null_status() {
+        let pool = setup_pool().await;
+        create_job_with_runs(&pool, "no-runs-job", "*/5 * * * *").await;
+
+        let jobs = get_dashboard_jobs(&pool, None, "name", "asc").await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].last_status.is_none());
+        assert!(jobs[0].last_run_time.is_none());
+        assert!(jobs[0].last_trigger.is_none());
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn dashboard_jobs_filter_by_name() {
+        let pool = setup_pool().await;
+        create_job_with_runs(&pool, "test-backup", "*/5 * * * *").await;
+        create_job_with_runs(&pool, "test-sync", "*/10 * * * *").await;
+        create_job_with_runs(&pool, "deploy-app", "0 0 * * *").await;
+
+        let jobs = get_dashboard_jobs(&pool, Some("test"), "name", "asc").await.unwrap();
+        assert_eq!(jobs.len(), 2);
+        let names: Vec<&str> = jobs.iter().map(|j| j.name.as_str()).collect();
+        assert!(names.contains(&"test-backup"));
+        assert!(names.contains(&"test-sync"));
+        assert!(!names.contains(&"deploy-app"));
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn dashboard_jobs_filter_case_insensitive() {
+        let pool = setup_pool().await;
+        create_job_with_runs(&pool, "TestJob", "*/5 * * * *").await;
+        create_job_with_runs(&pool, "other", "*/10 * * * *").await;
+
+        let jobs = get_dashboard_jobs(&pool, Some("TESTJOB"), "name", "asc").await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].name, "TestJob");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn dashboard_jobs_sort_name_desc() {
+        let pool = setup_pool().await;
+        create_job_with_runs(&pool, "alpha", "*/5 * * * *").await;
+        create_job_with_runs(&pool, "zulu", "*/10 * * * *").await;
+        create_job_with_runs(&pool, "mike", "0 0 * * *").await;
+
+        let jobs = get_dashboard_jobs(&pool, None, "name", "desc").await.unwrap();
+        assert_eq!(jobs.len(), 3);
+        assert_eq!(jobs[0].name, "zulu");
+        assert_eq!(jobs[1].name, "mike");
+        assert_eq!(jobs[2].name, "alpha");
+        pool.close().await;
+    }
+
+    // ── Run history tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn run_history_paginated() {
+        let pool = setup_pool().await;
+        let job_id = create_job_with_runs(&pool, "paginated-job", "*/5 * * * *").await;
+        for _ in 0..5 {
+            insert_run(&pool, job_id, "success", "scheduled").await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        let page1 = get_run_history(&pool, job_id, 2, 0).await.unwrap();
+        assert_eq!(page1.total, 5);
+        assert_eq!(page1.items.len(), 2);
+        // Ordered by start_time DESC — first item should be most recent
+        assert!(page1.items[0].start_time >= page1.items[1].start_time);
+
+        let page2 = get_run_history(&pool, job_id, 2, 2).await.unwrap();
+        assert_eq!(page2.total, 5);
+        assert_eq!(page2.items.len(), 2);
+
+        let page3 = get_run_history(&pool, job_id, 2, 4).await.unwrap();
+        assert_eq!(page3.total, 5);
+        assert_eq!(page3.items.len(), 1);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn run_history_returns_correct_total() {
+        let pool = setup_pool().await;
+        let job_id = create_job_with_runs(&pool, "count-job", "*/5 * * * *").await;
+        for _ in 0..3 {
+            insert_run(&pool, job_id, "success", "scheduled").await;
+        }
+
+        let result = get_run_history(&pool, job_id, 10, 0).await.unwrap();
+        assert_eq!(result.total, 3);
+        assert_eq!(result.items.len(), 3);
+        pool.close().await;
+    }
+
+    // ── Log lines tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn log_lines_paginated_desc() {
+        let pool = setup_pool().await;
+        let job_id = create_job_with_runs(&pool, "log-job", "*/5 * * * *").await;
+        let run_id = insert_run(&pool, job_id, "success", "scheduled").await;
+        insert_logs(&pool, run_id, 10).await;
+
+        let page1 = get_log_lines(&pool, run_id, 3, 0).await.unwrap();
+        assert_eq!(page1.total, 10);
+        assert_eq!(page1.items.len(), 3);
+        // ORDER BY id DESC — first item has highest id
+        assert!(page1.items[0].id > page1.items[1].id);
+        assert!(page1.items[1].id > page1.items[2].id);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn log_lines_returns_correct_total() {
+        let pool = setup_pool().await;
+        let job_id = create_job_with_runs(&pool, "log-count-job", "*/5 * * * *").await;
+        let run_id = insert_run(&pool, job_id, "success", "scheduled").await;
+        insert_logs(&pool, run_id, 7).await;
+
+        let result = get_log_lines(&pool, run_id, 100, 0).await.unwrap();
+        assert_eq!(result.total, 7);
+        assert_eq!(result.items.len(), 7);
+        pool.close().await;
+    }
+
+    // ── get_job_by_id tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_job_by_id_returns_job() {
+        let pool = setup_pool().await;
+        let job_id = create_job_with_runs(&pool, "by-id-job", "*/5 * * * *").await;
+
+        let job = get_job_by_id(&pool, job_id).await.unwrap();
+        assert!(job.is_some());
+        assert_eq!(job.unwrap().name, "by-id-job");
+
+        let missing = get_job_by_id(&pool, 99999).await.unwrap();
+        assert!(missing.is_none());
+        pool.close().await;
+    }
+
+    // ── get_run_by_id tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_run_by_id_returns_run_with_job_name() {
+        let pool = setup_pool().await;
+        let job_id = create_job_with_runs(&pool, "detail-job", "*/5 * * * *").await;
+        let run_id = insert_run(&pool, job_id, "success", "manual").await;
+
+        let detail = get_run_by_id(&pool, run_id).await.unwrap();
+        assert!(detail.is_some());
+        let d = detail.unwrap();
+        assert_eq!(d.job_name, "detail-job");
+        assert_eq!(d.status, "success");
+        assert_eq!(d.trigger, "manual");
+        assert_eq!(d.job_id, job_id);
+
+        let missing = get_run_by_id(&pool, 99999).await.unwrap();
+        assert!(missing.is_none());
         pool.close().await;
     }
 }

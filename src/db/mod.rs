@@ -8,8 +8,9 @@
 
 pub mod queries;
 pub use queries::{
-    DbJob, disable_missing_jobs, finalize_run, get_enabled_jobs, get_job_by_name, insert_log_batch,
-    insert_running_run, upsert_job,
+    DashboardJob, DbJob, DbLogLine, DbRun, DbRunDetail, Paginated, disable_missing_jobs,
+    finalize_run, get_dashboard_jobs, get_enabled_jobs, get_job_by_id, get_job_by_name,
+    get_log_lines, get_run_by_id, get_run_history, insert_log_batch, insert_running_run, upsert_job,
 };
 
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
