@@ -69,16 +69,6 @@
     No log output captured for this run.
   </div>
   {% else %}
-  {% if has_older %}
-  <div class="mb-2">
-    <button class="cd-btn-secondary text-sm py-1 px-3"
-            hx-get="/partials/log-viewer/{{ run.id }}?offset={{ next_offset }}"
-            hx-target="#log-lines"
-            hx-swap="afterbegin">
-      Load older lines
-    </button>
-  </div>
-  {% endif %}
   <div id="log-lines" style="background:var(--cd-bg-surface-sunken);padding:var(--cd-space-4);border-radius:8px;overflow-x:auto">
     {% include "partials/log_viewer.html" %}
   </div>
