@@ -93,7 +93,7 @@ async fn test_command_job_fires_and_captures_logs() {
 
         // Run the job directly (not through the scheduler loop).
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), job.clone(), "scheduled".to_string(), cancel).await;
+        let result = run_job(pool.clone(), None, job.clone(), "scheduled".to_string(), cancel).await;
 
         assert_eq!(result.status, "success");
         assert!(result.run_id > 0);
@@ -158,7 +158,7 @@ async fn test_script_job_fires_and_captures_logs() {
         assert_eq!(job.job_type, "script");
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), job, "scheduled".to_string(), cancel).await;
+        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
 
         assert_eq!(result.status, "success");
 
@@ -209,7 +209,7 @@ async fn test_failed_command_records_exit_code() {
         let job = sync_and_get_job(&pool, &config, "test-fail").await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), job, "scheduled".to_string(), cancel).await;
+        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
 
         assert_eq!(result.status, "failed");
 
@@ -248,7 +248,7 @@ async fn test_timeout_preserves_partial_logs() {
         let job = sync_and_get_job(&pool, &config, "test-timeout").await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), job, "scheduled".to_string(), cancel).await;
+        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
 
         assert_eq!(result.status, "timeout");
 
@@ -301,7 +301,7 @@ async fn test_sync_disables_removed_jobs() {
             .unwrap()
             .unwrap();
         let cancel = CancellationToken::new();
-        let run_result = run_job(pool.clone(), job_b, "scheduled".to_string(), cancel).await;
+        let run_result = run_job(pool.clone(), None, job_b, "scheduled".to_string(), cancel).await;
         assert_eq!(run_result.status, "success");
 
         // Second sync with only job-a (job-b removed).
@@ -376,8 +376,8 @@ async fn test_concurrent_runs_same_job() {
         let job2 = job.clone();
 
         let (r1, r2) = tokio::join!(
-            run_job(pool1, job1, "scheduled".to_string(), cancel1),
-            run_job(pool2, job2, "scheduled".to_string(), cancel2),
+            run_job(pool1, None, job1, "scheduled".to_string(), cancel1),
+            run_job(pool2, None, job2, "scheduled".to_string(), cancel2),
         );
 
         assert_ne!(
