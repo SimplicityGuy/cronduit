@@ -1,3 +1,5 @@
+pub mod assets;
+
 use axum::{Router, http::StatusCode, routing::get};
 use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
@@ -12,6 +14,8 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/static/{*path}", get(assets::static_handler))
+        .route("/vendor/{*path}", get(assets::vendor_handler))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
