@@ -114,9 +114,47 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     let cancel = CancellationToken::new();
     shutdown::install(cancel.clone());
 
+    // Create Docker client (non-fatal if unavailable).
+    let docker = match bollard::Docker::connect_with_local_defaults() {
+        Ok(d) => {
+            tracing::info!(target: "cronduit.startup", "Docker client connected");
+            Some(d)
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "cronduit.startup",
+                error = %e,
+                "Docker client unavailable -- docker-type jobs will fail"
+            );
+            None
+        }
+    };
+
+    // Orphan reconciliation before scheduler starts (SCHED-08).
+    if let Some(ref docker_client) = docker {
+        match crate::scheduler::docker_orphan::reconcile_orphans(docker_client, &pool).await {
+            Ok(count) if count > 0 => {
+                tracing::info!(
+                    target: "cronduit.startup",
+                    orphans = count,
+                    "orphan reconciliation complete"
+                );
+            }
+            Ok(_) => {} // No orphans found -- no log needed
+            Err(e) => {
+                tracing::error!(
+                    target: "cronduit.startup",
+                    error = %e,
+                    "orphan reconciliation failed"
+                );
+            }
+        }
+    }
+
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(
         pool.clone(),
+        docker,
         sync_result.jobs,
         tz,
         cancel.clone(),

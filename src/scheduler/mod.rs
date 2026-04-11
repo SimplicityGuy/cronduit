@@ -17,6 +17,7 @@ pub mod run;
 pub mod script;
 pub mod sync;
 
+use bollard::Docker;
 use crate::db::DbPool;
 use crate::db::queries::DbJob;
 use chrono::Utc;
@@ -35,6 +36,7 @@ pub struct RunResult {
 /// The main scheduler loop. Owns the fire queue, job set, and shutdown token.
 pub struct SchedulerLoop {
     pub pool: DbPool,
+    pub docker: Option<Docker>,
     pub jobs: HashMap<i64, DbJob>,
     pub tz: Tz,
     pub cancel: CancellationToken,
@@ -84,6 +86,7 @@ impl SchedulerLoop {
                             let child_cancel = self.cancel.child_token();
                             join_set.spawn(run::run_job(
                                 self.pool.clone(),
+                                self.docker.clone(),
                                 job.clone(),
                                 "catch-up".to_string(),
                                 child_cancel,
@@ -106,6 +109,7 @@ impl SchedulerLoop {
                             let child_cancel = self.cancel.child_token();
                             join_set.spawn(run::run_job(
                                 self.pool.clone(),
+                                self.docker.clone(),
                                 job.clone(),
                                 "scheduled".to_string(),
                                 child_cancel,
@@ -148,6 +152,7 @@ impl SchedulerLoop {
                                 let child_cancel = self.cancel.child_token();
                                 join_set.spawn(run::run_job(
                                     self.pool.clone(),
+                                    self.docker.clone(),
                                     job.clone(),
                                     "manual".to_string(),
                                     child_cancel,
@@ -270,6 +275,7 @@ impl SchedulerLoop {
 /// Returns a `JoinHandle` that resolves when the loop exits (on cancellation).
 pub fn spawn(
     pool: DbPool,
+    docker: Option<Docker>,
     jobs: Vec<DbJob>,
     tz: Tz,
     cancel: CancellationToken,
@@ -279,6 +285,7 @@ pub fn spawn(
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
         pool,
+        docker,
         jobs: jobs_map,
         tz,
         cancel,
@@ -345,6 +352,7 @@ mod tests {
         };
         join_set.spawn(run::run_job(
             pool.clone(),
+            None,
             job,
             "test".to_string(),
             child_cancel,
@@ -406,6 +414,7 @@ mod tests {
         };
         join_set.spawn(run::run_job(
             pool.clone(),
+            None,
             job,
             "test".to_string(),
             child_cancel,

@@ -87,6 +87,44 @@ pub async fn execute_docker(
         }
     };
 
+    // Pre-flight network validation (D-10, D-11, D-12).
+    if let Some(ref network) = config.network {
+        if let Err(e) = super::docker_preflight::preflight_network(docker, network).await {
+            let err_msg = e.to_error_message();
+            sender.send(make_log_line(
+                "system",
+                format!("[pre-flight failed: {err_msg}]"),
+            ));
+            sender.close();
+            return DockerExecResult {
+                exec: ExecResult {
+                    exit_code: None,
+                    status: RunStatus::Error,
+                    error_message: Some(err_msg),
+                },
+                container_id: None,
+            };
+        }
+    }
+
+    // Ensure image is available locally, pulling if necessary.
+    let _image_digest = match super::docker_pull::ensure_image(docker, &config.image).await {
+        Ok(digest) => digest,
+        Err(e) => {
+            let err_msg = format!("image pull failed: {e}");
+            sender.send(make_log_line("system", format!("[{err_msg}]")));
+            sender.close();
+            return DockerExecResult {
+                exec: ExecResult {
+                    exit_code: None,
+                    status: RunStatus::Error,
+                    error_message: Some(err_msg),
+                },
+                container_id: None,
+            };
+        }
+    };
+
     // Build labels (T-04-03: only run_id and job_name, never secrets).
     let mut labels = HashMap::new();
     labels.insert("cronduit.run_id".to_string(), run_id.to_string());
