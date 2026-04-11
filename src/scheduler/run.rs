@@ -79,6 +79,12 @@ pub async fn run_job(
     // The `<= 0` guard ensures negative i64 values never reach the `as u64` cast,
     // which would silently wrap to a very large duration.
     let timeout = if job.timeout_secs <= 0 {
+        tracing::debug!(
+            target: "cronduit.run",
+            job = %job.name,
+            timeout_secs = job.timeout_secs,
+            "timeout_secs <= 0, using effectively-infinite timeout (1 year)"
+        );
         Duration::from_secs(86400 * 365) // effectively no timeout
     } else {
         Duration::from_secs(job.timeout_secs as u64)
