@@ -70,6 +70,10 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 chrono = { version = "0.4.44", default-features = false, features = ["std", "serde", "clock"] }
 chrono-tz = "0.10.4"
 
+# Docker API client (DOCKER-01)
+bollard = "0.20"
+futures-util = "0.3"
+
 # Process execution
 shell-words = "1.1"
 tempfile = "3"
