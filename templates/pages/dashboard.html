@@ -2,5 +2,100 @@
 {% block title %}Dashboard - Cronduit{% endblock %}
 {% block nav_dashboard_active %}border-b-2 border-[var(--cd-text-accent)] text-[var(--cd-text-primary)]{% endblock %}
 {% block content %}
-<div>placeholder</div>
+<div class="flex items-center justify-between mb-6">
+  <h1 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em">Dashboard</h1>
+</div>
+
+{% if jobs.is_empty() %}
+<!-- Empty state (D-04) -->
+<div class="flex flex-col items-center justify-center py-16 text-center">
+  <h2 style="font-size:var(--cd-text-lg);font-weight:700;color:var(--cd-text-secondary)">No jobs configured</h2>
+  <p style="font-size:var(--cd-text-base);color:var(--cd-text-secondary)" class="mt-2">
+    Add jobs to your config file at <code class="text-[var(--cd-text-accent)]">{{ config_path }}</code> and restart Cronduit.
+  </p>
+</div>
+{% else %}
+<!-- Filter bar -->
+<div class="flex items-center gap-4 mb-6">
+  <input
+    type="text"
+    name="filter"
+    value="{{ filter }}"
+    placeholder="Filter by name..."
+    autocomplete="off"
+    style="background:var(--cd-bg-surface-sunken);border:1px solid var(--cd-border);font-size:var(--cd-text-base);border-radius:8px;padding:var(--cd-space-2) var(--cd-space-4);color:var(--cd-text-primary)"
+    class="flex-1 outline-none focus:border-[var(--cd-text-accent)]"
+    hx-get="/partials/job-table"
+    hx-trigger="keyup changed delay:300ms"
+    hx-target="#job-table-body"
+    hx-include="[name='sort'],[name='order']"
+    hx-push-url="true"
+  >
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="order" value="{{ order }}">
+</div>
+
+<!-- Job table -->
+<div class="overflow-x-auto">
+  <table style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr style="background:var(--cd-bg-surface-raised)">
+        <!-- Name (sortable) -->
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "name" %};color:var(--cd-text-accent){% endif %}">
+          <a href="?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}"
+             class="no-underline hover:text-[var(--cd-text-accent)]{% if sort == "name" %} text-[var(--cd-text-accent)]{% else %} text-[var(--cd-text-secondary)]{% endif %}"
+             hx-get="/partials/job-table?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}"
+             hx-target="#job-table-body"
+             hx-push-url="true">
+            Name{% if sort == "name" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
+          </a>
+        </th>
+        <!-- Schedule (not sortable) -->
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Schedule</th>
+        <!-- Resolved (not sortable) -->
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Resolved</th>
+        <!-- Next Fire (sortable) -->
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "next_run" %};color:var(--cd-text-accent){% endif %}">
+          <a href="?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}"
+             class="no-underline hover:text-[var(--cd-text-accent)]{% if sort == "next_run" %} text-[var(--cd-text-accent)]{% else %} text-[var(--cd-text-secondary)]{% endif %}"
+             hx-get="/partials/job-table?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}"
+             hx-target="#job-table-body"
+             hx-push-url="true">
+            Next Fire{% if sort == "next_run" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
+          </a>
+        </th>
+        <!-- Status (sortable) -->
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "status" %};color:var(--cd-text-accent){% endif %}">
+          <a href="?filter={{ filter }}&sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}"
+             class="no-underline hover:text-[var(--cd-text-accent)]{% if sort == "status" %} text-[var(--cd-text-accent)]{% else %} text-[var(--cd-text-secondary)]{% endif %}"
+             hx-get="/partials/job-table?filter={{ filter }}&sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}"
+             hx-target="#job-table-body"
+             hx-push-url="true">
+            Status{% if sort == "status" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
+          </a>
+        </th>
+        <!-- Last Run (sortable) -->
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "last_run" %};color:var(--cd-text-accent){% endif %}">
+          <a href="?filter={{ filter }}&sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}"
+             class="no-underline hover:text-[var(--cd-text-accent)]{% if sort == "last_run" %} text-[var(--cd-text-accent)]{% else %} text-[var(--cd-text-secondary)]{% endif %}"
+             hx-get="/partials/job-table?filter={{ filter }}&sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}"
+             hx-target="#job-table-body"
+             hx-push-url="true">
+            Last Run{% if sort == "last_run" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
+          </a>
+        </th>
+        <!-- Actions (not sortable) -->
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="job-table-body"
+           hx-get="/partials/job-table"
+           hx-trigger="every 3s"
+           hx-swap="innerHTML"
+           hx-include="[name='filter'],[name='sort'],[name='order']">
+      {% include "partials/job_table.html" %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% endblock %}
