@@ -34,6 +34,7 @@ created: 2026-04-11
 
 ---
 
+<<<<<<< HEAD
 ## Nyquist Compliance Justification
 
 Wave 0 test stubs are NOT required as separate pre-created files. Each plan creates its own test files as part of in-task TDD (`tdd="true"` on Plan 01 Task 1) or in-task implementation (Plan 05 Task 1 creates integration tests). This provides adequate Wave 1-2 feedback coverage because:
