@@ -311,7 +311,7 @@ pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> an
     }
 }
 
-/// Finalize a job run by updating its status, exit_code, end_time, duration_ms, and error_message.
+/// Finalize a job run by updating its status, exit_code, end_time, duration_ms, error_message, and container_id.
 pub async fn finalize_run(
     pool: &DbPool,
     run_id: i64,
@@ -319,6 +319,7 @@ pub async fn finalize_run(
     exit_code: Option<i32>,
     duration: tokio::time::Instant,
     error_message: Option<&str>,
+    container_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let duration_ms = duration.elapsed().as_millis() as i64;
@@ -326,26 +327,28 @@ pub async fn finalize_run(
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             sqlx::query(
-                "UPDATE job_runs SET status = ?1, exit_code = ?2, end_time = ?3, duration_ms = ?4, error_message = ?5 WHERE id = ?6",
+                "UPDATE job_runs SET status = ?1, exit_code = ?2, end_time = ?3, duration_ms = ?4, error_message = ?5, container_id = ?6 WHERE id = ?7",
             )
             .bind(status)
             .bind(exit_code)
             .bind(&now)
             .bind(duration_ms)
             .bind(error_message)
+            .bind(container_id)
             .bind(run_id)
             .execute(p)
             .await?;
         }
         PoolRef::Postgres(p) => {
             sqlx::query(
-                "UPDATE job_runs SET status = $1, exit_code = $2, end_time = $3, duration_ms = $4, error_message = $5 WHERE id = $6",
+                "UPDATE job_runs SET status = $1, exit_code = $2, end_time = $3, duration_ms = $4, error_message = $5, container_id = $6 WHERE id = $7",
             )
             .bind(status)
             .bind(exit_code)
             .bind(&now)
             .bind(duration_ms)
             .bind(error_message)
+            .bind(container_id)
             .bind(run_id)
             .execute(p)
             .await?;
@@ -1125,7 +1128,7 @@ mod tests {
         let start = tokio::time::Instant::now();
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
-        finalize_run(&pool, run_id, "success", Some(0), start, None)
+        finalize_run(&pool, run_id, "success", Some(0), start, None, None)
             .await
             .unwrap();
 
@@ -1230,7 +1233,7 @@ mod tests {
         let run_id = insert_running_run(pool, job_id, trigger).await.unwrap();
         if status != "running" {
             let start = tokio::time::Instant::now();
-            finalize_run(pool, run_id, status, Some(0), start, None)
+            finalize_run(pool, run_id, status, Some(0), start, None, None)
                 .await
                 .unwrap();
         }

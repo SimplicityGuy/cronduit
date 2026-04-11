@@ -108,12 +108,6 @@ rand = "0.8"
 # Hex encoding for CSRF tokens
 hex = "0.4"
 
-# Docker API client (locked — no CLI shelling)
-bollard = "0.20"
-
-# Stream combinators for bollard response streams
-futures-util = "0.3"
-
 # MIME type guessing for embedded assets
 mime_guess = "2"
 

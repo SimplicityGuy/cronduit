@@ -177,6 +177,7 @@ pub async fn run_job(
         exec_result.exit_code,
         start,
         exec_result.error_message.as_deref(),
+        None, // container_id: set by Docker executor in Task 2
     )
     .await
     {
