@@ -485,22 +485,25 @@ async fn retention_pruner(pool: DbPool, retention: Duration, cancel: Cancellatio
 | A4 | Distroless image lacks tools for HTTP healthcheck | Release Engineering | Low -- verified pattern; alternative is `cronduit check` command |
 | A5 | 24-hour interval from startup is preferable to wall-clock scheduling for pruner | Retention Pruner | Low -- either approach works; interval is simpler |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Healthcheck in distroless**
    - What we know: `gcr.io/distroless/static-debian12:nonroot` has no shell or HTTP tools.
    - What's unclear: Whether `cronduit check` is a sufficient Docker healthcheck (it validates config, not HTTP liveness).
    - Recommendation: Add a `cronduit healthcheck` subcommand that does an HTTP GET to `http://localhost:8080/health` and exits 0/1. This adds ~20 lines of code and gives proper Docker healthcheck support.
+   - RESOLVED: Deferred to v2 enhancement. Phase 6 scope uses `cronduit check` as a config-validation healthcheck in docker-compose (sufficient for v1). The `cronduit healthcheck` HTTP-probe subcommand is a nice-to-have beyond Phase 6.
 
 2. **SSE and compression middleware**
    - What we know: SSE responses should not be compressed (breaks streaming).
    - What's unclear: Whether `tower-http::CompressionLayer` is active (currently only `TraceLayer` is used).
    - Recommendation: If compression is ever added, exclude `text/event-stream` content type.
+   - RESOLVED: Non-issue for Phase 6. No `CompressionLayer` is active in the current middleware stack (only `TraceLayer`). If compression is added in a future phase, the exclusion note in this research serves as the reference.
 
 3. **Broadcast channel cleanup**
    - What we know: Broadcast senders are stored in `HashMap<i64, broadcast::Sender<LogLine>>`.
    - What's unclear: Exact cleanup timing -- when does the entry get removed from the map?
    - Recommendation: Remove the entry after the log writer task completes (run finalized). Late SSE connections get the "run already completed" fast path.
+   - RESOLVED: Addressed by 06-01 Plan Task 2 design. The broadcast sender entry is removed from the map when the log writer task for that run completes (run finalized). Late SSE connections hitting a missing map entry receive the "run already completed" fast path, serving historical logs from the database instead.
 
 ## Validation Architecture
 
