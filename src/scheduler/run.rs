@@ -39,7 +39,9 @@ impl FailureReason {
         }
     }
 }
-use super::log_pipeline::{self, DEFAULT_BATCH_SIZE, DEFAULT_CHANNEL_CAPACITY, LogLine, LogReceiver};
+use super::log_pipeline::{
+    self, DEFAULT_BATCH_SIZE, DEFAULT_CHANNEL_CAPACITY, LogLine, LogReceiver,
+};
 use crate::db::DbPool;
 use crate::db::queries::{DbJob, finalize_run, insert_log_batch, insert_running_run};
 
@@ -97,14 +99,22 @@ pub async fn run_job(
 
     // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
-    active_runs.write().await.insert(run_id, broadcast_tx.clone());
+    active_runs
+        .write()
+        .await
+        .insert(run_id, broadcast_tx.clone());
 
     // 2. Create log channel.
     let (sender, receiver) = log_pipeline::channel(DEFAULT_CHANNEL_CAPACITY);
 
     // 3. Spawn log writer task.
     let writer_pool = pool.clone();
-    let writer_handle = tokio::spawn(log_writer_task(writer_pool, run_id, receiver, broadcast_tx.clone()));
+    let writer_handle = tokio::spawn(log_writer_task(
+        writer_pool,
+        run_id,
+        receiver,
+        broadcast_tx.clone(),
+    ));
 
     // 4. Dispatch to executor based on job type.
     // Negative or zero timeout_secs (e.g. from corrupted DB) is treated as "no timeout".
@@ -255,7 +265,8 @@ pub async fn run_job(
     // 7b. Record Prometheus metrics (OPS-02, D-07).
     let duration_secs = start.elapsed().as_secs_f64();
     metrics::counter!("cronduit_runs_total", "job" => job.name.clone(), "status" => status_str.to_string()).increment(1);
-    metrics::histogram!("cronduit_run_duration_seconds", "job" => job.name.clone()).record(duration_secs);
+    metrics::histogram!("cronduit_run_duration_seconds", "job" => job.name.clone())
+        .record(duration_secs);
     if status_str != "success" {
         let reason = classify_failure_reason(status_str, exec_result.error_message.as_deref());
         metrics::counter!("cronduit_run_failures_total", "job" => job.name.clone(), "reason" => reason.as_label().to_string()).increment(1);
@@ -395,7 +406,15 @@ mod tests {
             insert_test_job(&pool, "echo-job", "command", r#"{"command":"echo hello"}"#).await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel, test_active_runs()).await;
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            cancel,
+            test_active_runs(),
+        )
+        .await;
 
         assert_eq!(result.status, "success");
         assert!(result.run_id > 0);
@@ -453,7 +472,15 @@ mod tests {
         .await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel, test_active_runs()).await;
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            cancel,
+            test_active_runs(),
+        )
+        .await;
 
         assert_eq!(result.status, "success");
         assert!(result.run_id > 0);

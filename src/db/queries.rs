@@ -1515,9 +1515,9 @@ mod tests {
         let page1 = get_log_lines(&pool, run_id, 3, 0).await.unwrap();
         assert_eq!(page1.total, 10);
         assert_eq!(page1.items.len(), 3);
-        // ORDER BY id DESC — first item has highest id
-        assert!(page1.items[0].id > page1.items[1].id);
-        assert!(page1.items[1].id > page1.items[2].id);
+        // ORDER BY id ASC — first item has lowest id
+        assert!(page1.items[0].id < page1.items[1].id);
+        assert!(page1.items[1].id < page1.items[2].id);
         pool.close().await;
     }
 

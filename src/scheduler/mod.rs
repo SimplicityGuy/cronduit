@@ -413,7 +413,8 @@ mod tests {
         pool
     }
 
-    fn test_active_runs() -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<log_pipeline::LogLine>>>> {
+    fn test_active_runs()
+    -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<log_pipeline::LogLine>>>> {
         Arc::new(RwLock::new(HashMap::new()))
     }
 

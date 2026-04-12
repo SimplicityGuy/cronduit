@@ -74,10 +74,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/reload", post(handlers::api::reload))
         .route("/api/jobs/{id}/reroll", post(handlers::api::reroll))
         .route("/metrics", get(handlers::metrics::metrics_handler))
-        .route(
-            "/events/runs/{run_id}/logs",
-            get(handlers::sse::sse_logs),
-        )
+        .route("/events/runs/{run_id}/logs", get(handlers::sse::sse_logs))
         .route("/static/{*path}", get(assets::static_handler))
         .route("/vendor/{*path}", get(assets::vendor_handler))
         .with_state(state)

@@ -28,7 +28,9 @@ async fn test_app() -> axum::Router {
         last_reload: std::sync::Arc::new(std::sync::Mutex::new(None)),
         metrics_handle,
         watch_config: false,
-        active_runs: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        active_runs: std::sync::Arc::new(
+            tokio::sync::RwLock::new(std::collections::HashMap::new()),
+        ),
     };
 
     router(state)

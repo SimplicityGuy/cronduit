@@ -3,7 +3,7 @@
 //! Deletes job_logs and job_runs older than `[server].log_retention` in batches
 //! to avoid SQLite write contention (Pitfall 11).
 
-use crate::db::{queries, DbPool};
+use crate::db::{DbPool, queries};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -33,8 +33,8 @@ pub async fn retention_pruner(pool: DbPool, retention: Duration, cancel: Cancell
 }
 
 async fn run_prune_cycle(pool: &DbPool, retention: Duration, cancel: &CancellationToken) {
-    let cutoff =
-        chrono::Utc::now() - chrono::Duration::from_std(retention).unwrap_or(chrono::Duration::days(90));
+    let cutoff = chrono::Utc::now()
+        - chrono::Duration::from_std(retention).unwrap_or(chrono::Duration::days(90));
     let cutoff_str = cutoff.to_rfc3339();
 
     tracing::info!(

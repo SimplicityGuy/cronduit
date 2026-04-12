@@ -130,9 +130,8 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     let metrics_handle = crate::telemetry::setup_metrics();
     metrics::gauge!("cronduit_scheduler_up").set(1.0);
 
-    let active_runs = std::sync::Arc::new(
-        tokio::sync::RwLock::new(std::collections::HashMap::new()),
-    );
+    let active_runs =
+        std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
     let state = AppState {
         started_at: chrono::Utc::now(),
