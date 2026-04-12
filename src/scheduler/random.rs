@@ -79,13 +79,15 @@ pub fn resolve_schedule(
     }
 
     // Last-ditch attempt: accept whatever we get.
+    let last_attempt = resolve_fields(&fields, rng);
     tracing::warn!(
         target: "cronduit.random",
         schedule = %raw,
-        "failed to resolve valid cron after {} attempts, accepting best effort",
+        resolved = %last_attempt,
+        "failed to resolve valid cron after {} attempts, accepting unvalidated result",
         MAX_RESOLVE_RETRIES
     );
-    resolve_fields(&fields, rng)
+    last_attempt
 }
 
 /// Replace @random fields with random values from the appropriate range.
