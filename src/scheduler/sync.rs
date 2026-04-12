@@ -97,6 +97,11 @@ pub async fn sync_config_to_db(
     let mut updated: u64 = 0;
     let mut unchanged: u64 = 0;
 
+    // Build a name->DbJob cache from a single pass of DB queries so each job
+    // is fetched only once (not twice per sync cycle).
+    let mut existing_cache: std::collections::HashMap<String, Option<DbJob>> =
+        std::collections::HashMap::new();
+
     // Build batch resolver input: (name, raw_schedule, existing_resolved_from_db).
     // NOTE: rng must be created AFTER the async loop to avoid holding !Send
     // ThreadRng across await points (tokio::spawn requires Send futures).
@@ -109,6 +114,7 @@ pub async fn sync_config_to_db(
             .filter(|db_job| db_job.config_hash == hash && db_job.enabled)
             .map(|db_job| db_job.resolved_schedule.clone());
         batch_input.push((job.name.clone(), job.schedule.clone(), existing_resolved));
+        existing_cache.insert(job.name.clone(), existing);
     }
     let resolved_map: std::collections::HashMap<String, String> = {
         let mut rng = rand::thread_rng();
@@ -130,8 +136,8 @@ pub async fn sync_config_to_db(
             .unwrap_or(Duration::from_secs(3600))
             .as_secs() as i64;
 
-        // Check if the job already exists to determine insert vs update.
-        let existing = get_job_by_name(pool, &job.name).await?;
+        // Use the cached DB lookup from the first pass instead of fetching again.
+        let existing = existing_cache.remove(&job.name).flatten();
 
         match existing {
             Some(ref db_job) if db_job.config_hash == hash && db_job.enabled => {
