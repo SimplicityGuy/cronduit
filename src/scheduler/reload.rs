@@ -57,7 +57,13 @@ pub async fn do_reload(
     };
 
     // 2. Sync to DB (creates/updates/disables) (RELOAD-05, RELOAD-07)
-    match sync::sync_config_to_db(pool, &parsed.config).await {
+    let random_min_gap = parsed
+        .config
+        .defaults
+        .as_ref()
+        .and_then(|d| d.random_min_gap)
+        .unwrap_or(std::time::Duration::from_secs(0));
+    match sync::sync_config_to_db(pool, &parsed.config, random_min_gap).await {
         Ok(sync_result) => {
             tracing::info!(
                 target: "cronduit.reload",

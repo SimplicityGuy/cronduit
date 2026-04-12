@@ -98,7 +98,8 @@ pub async fn sync_config_to_db(
     let mut unchanged: u64 = 0;
 
     // Build batch resolver input: (name, raw_schedule, existing_resolved_from_db).
-    let mut rng = rand::thread_rng();
+    // NOTE: rng must be created AFTER the async loop to avoid holding !Send
+    // ThreadRng across await points (tokio::spawn requires Send futures).
     let mut batch_input: Vec<(String, String, Option<String>)> = Vec::new();
     for job in &config.jobs {
         let hash = compute_config_hash(job);
@@ -109,10 +110,12 @@ pub async fn sync_config_to_db(
             .map(|db_job| db_job.resolved_schedule.clone());
         batch_input.push((job.name.clone(), job.schedule.clone(), existing_resolved));
     }
-    let resolved_map: std::collections::HashMap<String, String> =
+    let resolved_map: std::collections::HashMap<String, String> = {
+        let mut rng = rand::thread_rng();
         random::resolve_random_schedules_batch(&batch_input, random_min_gap, &mut rng)
             .into_iter()
-            .collect();
+            .collect()
+    };
 
     for job in &config.jobs {
         let hash = compute_config_hash(job);
