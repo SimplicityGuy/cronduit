@@ -176,6 +176,34 @@ impl SchedulerLoop {
                                 );
                             }
                         }
+                        Some(cmd::SchedulerCmd::Reload { response_tx }) => {
+                            // TODO(Phase 5 Plan 02): implement hot-reload logic.
+                            tracing::info!(target: "cronduit.scheduler", "reload requested (not yet implemented)");
+                            let _ = response_tx.send(cmd::ReloadResult {
+                                status: cmd::ReloadStatus::Error,
+                                added: 0,
+                                updated: 0,
+                                disabled: 0,
+                                unchanged: 0,
+                                error_message: Some("reload not yet implemented".to_string()),
+                            });
+                        }
+                        Some(cmd::SchedulerCmd::Reroll { job_id, response_tx }) => {
+                            // TODO(Phase 5 Plan 02): implement reroll logic.
+                            tracing::info!(
+                                target: "cronduit.scheduler",
+                                job_id,
+                                "reroll requested (not yet implemented)"
+                            );
+                            let _ = response_tx.send(cmd::ReloadResult {
+                                status: cmd::ReloadStatus::Error,
+                                added: 0,
+                                updated: 0,
+                                disabled: 0,
+                                unchanged: 0,
+                                error_message: Some("reroll not yet implemented".to_string()),
+                            });
+                        }
                         None => {
                             tracing::info!(target: "cronduit.scheduler", "command channel closed");
                             break;

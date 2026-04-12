@@ -66,7 +66,7 @@ fn test_config_with_jobs(jobs: Vec<JobConfig>) -> Config {
 
 /// Helper: sync config and get the DbJob for a given job name.
 async fn sync_and_get_job(pool: &DbPool, config: &Config, name: &str) -> DbJob {
-    sync_config_to_db(pool, config).await.unwrap();
+    sync_config_to_db(pool, config, Duration::from_secs(0)).await.unwrap();
     queries::get_job_by_name(pool, name)
         .await
         .unwrap()
@@ -299,7 +299,7 @@ async fn test_sync_disables_removed_jobs() {
             make_job("job-a", "* * * * *", Some("echo a"), None, None),
             make_job("job-b", "* * * * *", Some("echo b"), None, None),
         ]);
-        let result1 = sync_config_to_db(&pool, &config1).await.unwrap();
+        let result1 = sync_config_to_db(&pool, &config1, Duration::from_secs(0)).await.unwrap();
         assert_eq!(result1.jobs.len(), 2);
 
         // Run job-b so it has run history.
@@ -319,7 +319,7 @@ async fn test_sync_disables_removed_jobs() {
             None,
             None,
         )]);
-        let result2 = sync_config_to_db(&pool, &config2).await.unwrap();
+        let result2 = sync_config_to_db(&pool, &config2, Duration::from_secs(0)).await.unwrap();
         assert_eq!(result2.disabled, 1);
 
         // Verify job-b is disabled.

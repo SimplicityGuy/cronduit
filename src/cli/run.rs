@@ -69,7 +69,13 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         .parse()
         .map_err(|_| anyhow::anyhow!("invalid timezone: {}", cfg.server.timezone))?;
 
-    let sync_result = crate::scheduler::sync::sync_config_to_db(&pool, &parsed.config).await?;
+    let random_min_gap = cfg
+        .defaults
+        .as_ref()
+        .and_then(|d| d.random_min_gap)
+        .unwrap_or(std::time::Duration::from_secs(0));
+    let sync_result =
+        crate::scheduler::sync::sync_config_to_db(&pool, &parsed.config, random_min_gap).await?;
 
     // 6. Emit startup event (D-23) + bind warning (D-24) BEFORE serve.
     let backend = match pool.backend() {

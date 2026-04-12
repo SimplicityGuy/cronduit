@@ -13,6 +13,8 @@ use crate::db::DbPool;
 use crate::db::queries::{
     DbJob, disable_missing_jobs, get_enabled_jobs, get_job_by_name, upsert_job,
 };
+use super::random;
+use std::time::Duration;
 
 /// Result of a config sync operation.
 #[derive(Debug)]
@@ -20,6 +22,7 @@ pub struct SyncResult {
     pub inserted: u64,
     pub updated: u64,
     pub disabled: u64,
+    pub unchanged: u64,
     pub jobs: Vec<DbJob>,
 }
 
@@ -85,19 +88,43 @@ fn serialize_config_json(job: &JobConfig) -> String {
 /// are not in the config (counted as `disabled`).
 ///
 /// Returns the final list of enabled jobs.
-pub async fn sync_config_to_db(pool: &DbPool, config: &Config) -> anyhow::Result<SyncResult> {
+pub async fn sync_config_to_db(
+    pool: &DbPool,
+    config: &Config,
+    random_min_gap: Duration,
+) -> anyhow::Result<SyncResult> {
     let mut inserted: u64 = 0;
     let mut updated: u64 = 0;
+    let mut unchanged: u64 = 0;
+
+    // Build batch resolver input: (name, raw_schedule, existing_resolved_from_db).
+    let mut rng = rand::thread_rng();
+    let mut batch_input: Vec<(String, String, Option<String>)> = Vec::new();
+    for job in &config.jobs {
+        let hash = compute_config_hash(job);
+        let existing = get_job_by_name(pool, &job.name).await?;
+        let existing_resolved = existing
+            .as_ref()
+            .filter(|db_job| db_job.config_hash == hash && db_job.enabled)
+            .map(|db_job| db_job.resolved_schedule.clone());
+        batch_input.push((job.name.clone(), job.schedule.clone(), existing_resolved));
+    }
+    let resolved_map: std::collections::HashMap<String, String> =
+        random::resolve_random_schedules_batch(&batch_input, random_min_gap, &mut rng)
+            .into_iter()
+            .collect();
 
     for job in &config.jobs {
         let hash = compute_config_hash(job);
         let jtype = job_type(job);
         let config_json = serialize_config_json(job);
-        // Placeholder for Phase 5 @random resolution.
-        let resolved_schedule = job.schedule.clone();
+        let resolved_schedule = resolved_map
+            .get(&job.name)
+            .cloned()
+            .unwrap_or_else(|| job.schedule.clone());
         let timeout_secs = job
             .timeout
-            .unwrap_or(std::time::Duration::from_secs(3600))
+            .unwrap_or(Duration::from_secs(3600))
             .as_secs() as i64;
 
         // Check if the job already exists to determine insert vs update.
@@ -106,6 +133,7 @@ pub async fn sync_config_to_db(pool: &DbPool, config: &Config) -> anyhow::Result
         match existing {
             Some(ref db_job) if db_job.config_hash == hash && db_job.enabled => {
                 // No change, skip upsert entirely.
+                unchanged += 1;
                 continue;
             }
             Some(_) => {
@@ -153,6 +181,7 @@ pub async fn sync_config_to_db(pool: &DbPool, config: &Config) -> anyhow::Result
         inserted,
         updated,
         disabled,
+        unchanged,
         total = jobs.len(),
         "config sync complete"
     );
@@ -161,6 +190,7 @@ pub async fn sync_config_to_db(pool: &DbPool, config: &Config) -> anyhow::Result
         inserted,
         updated,
         disabled,
+        unchanged,
         jobs,
     })
 }
@@ -222,7 +252,7 @@ mod tests {
             ],
         };
 
-        let result = sync_config_to_db(&pool, &config).await.unwrap();
+        let result = sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
         assert_eq!(result.inserted, 2);
         assert_eq!(result.updated, 0);
         assert_eq!(result.disabled, 0);
@@ -248,7 +278,7 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("job-a", "*/5 * * * *", Some("echo a"), None)],
         };
-        sync_config_to_db(&pool, &config1).await.unwrap();
+        sync_config_to_db(&pool, &config1, Duration::from_secs(0)).await.unwrap();
 
         let before = get_job_by_name(&pool, "job-a").await.unwrap().unwrap();
 
@@ -260,7 +290,7 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("job-a", "*/5 * * * *", Some("echo changed"), None)],
         };
-        let result = sync_config_to_db(&pool, &config2).await.unwrap();
+        let result = sync_config_to_db(&pool, &config2, Duration::from_secs(0)).await.unwrap();
         assert_eq!(result.inserted, 0);
         assert_eq!(result.updated, 1);
 
@@ -282,7 +312,7 @@ mod tests {
                 make_job("remove", "*/5 * * * *", Some("echo remove"), None),
             ],
         };
-        sync_config_to_db(&pool, &config1).await.unwrap();
+        sync_config_to_db(&pool, &config1, Duration::from_secs(0)).await.unwrap();
 
         // Second sync with "remove" absent.
         let config2 = Config {
@@ -290,7 +320,7 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("keep", "*/5 * * * *", Some("echo keep"), None)],
         };
-        let result = sync_config_to_db(&pool, &config2).await.unwrap();
+        let result = sync_config_to_db(&pool, &config2, Duration::from_secs(0)).await.unwrap();
         assert_eq!(result.disabled, 1);
         assert_eq!(result.jobs.len(), 1);
 
@@ -311,13 +341,13 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("job-a", "*/5 * * * *", Some("echo a"), None)],
         };
-        sync_config_to_db(&pool, &config).await.unwrap();
+        sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
         let before = get_job_by_name(&pool, "job-a").await.unwrap().unwrap();
 
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         // Same config, should be a no-op.
-        let result = sync_config_to_db(&pool, &config).await.unwrap();
+        let result = sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
         assert_eq!(result.inserted, 0);
         assert_eq!(result.updated, 0);
         assert_eq!(result.disabled, 0);
@@ -356,7 +386,7 @@ mod tests {
             }],
         };
 
-        sync_config_to_db(&pool, &config).await.unwrap();
+        sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
         let job = get_job_by_name(&pool, "with-env").await.unwrap().unwrap();
 
         // config_json should contain the key name but NOT the secret value.
@@ -377,7 +407,7 @@ mod tests {
                 make_job("b", "*/5 * * * *", Some("echo b"), None),
             ],
         };
-        sync_config_to_db(&pool, &config).await.unwrap();
+        sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
 
         // Remove "b".
         let config2 = Config {
@@ -385,7 +415,7 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("a", "*/5 * * * *", Some("echo a"), None)],
         };
-        sync_config_to_db(&pool, &config2).await.unwrap();
+        sync_config_to_db(&pool, &config2, Duration::from_secs(0)).await.unwrap();
 
         let enabled = get_enabled_jobs(&pool).await.unwrap();
         assert_eq!(enabled.len(), 1);
