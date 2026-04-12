@@ -82,11 +82,14 @@ fn check_schedule(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
     use crate::scheduler::random::is_random_schedule;
 
     // Schedules containing @random tokens are resolved at sync time, not here.
-    // Validate only the non-@random fields by substituting @random with "0".
+    // Validate only the non-@random fields by substituting @random with valid
+    // stand-in values per field position (minute=0, hour=0, dom=1, month=1, dow=0).
+    const RANDOM_FALLBACKS: [&str; 5] = ["0", "0", "1", "1", "0"];
     let schedule_to_validate = if is_random_schedule(&job.schedule) {
         job.schedule
             .split_whitespace()
-            .map(|f| if f == "@random" { "0" } else { f })
+            .enumerate()
+            .map(|(i, f)| if f == "@random" { RANDOM_FALLBACKS.get(i).copied().unwrap_or("0") } else { f })
             .collect::<Vec<_>>()
             .join(" ")
     } else {
