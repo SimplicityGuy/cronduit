@@ -45,6 +45,12 @@ RUN set -eux; \
 # ---- runtime ----
 FROM gcr.io/distroless/static-debian12:nonroot
 
+# Static OCI labels. Dynamic labels (version, revision) are injected via --label
+# in the GitHub Actions docker/build-push-action step.
+LABEL org.opencontainers.image.source="https://github.com/SimplicityGuy/cronduit"
+LABEL org.opencontainers.image.description="Self-hosted Docker-native cron scheduler with a web UI"
+LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
+
 COPY --from=builder /cronduit /cronduit
 # Migrations are embedded via `sqlx::migrate!(...)` -- no filesystem copy.
 COPY --from=builder /build/examples/cronduit.toml /etc/cronduit/config.toml
