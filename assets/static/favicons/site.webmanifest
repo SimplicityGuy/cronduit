@@ -1,0 +1,12 @@
+{
+  "name": "Cronduit",
+  "short_name": "Cronduit",
+  "description": "cron, modernized for the container era",
+  "icons": [
+    { "src": "/static/favicons/favicon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/favicons/favicon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#050508",
+  "background_color": "#050508",
+  "display": "standalone"
+}
