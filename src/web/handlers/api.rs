@@ -23,9 +23,6 @@ pub struct CsrfForm {
     csrf_token: String,
 }
 
-// Backward-compatible alias for run_now handler.
-type RunNowForm = CsrfForm;
-
 pub async fn run_now(
     State(state): State<AppState>,
     Path(job_id): Path<i64>,
