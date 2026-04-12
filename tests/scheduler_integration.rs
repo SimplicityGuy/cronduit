@@ -31,6 +31,7 @@ fn make_server_config() -> ServerConfig {
         timezone: "UTC".to_string(),
         shutdown_grace: Duration::from_secs(5),
         log_retention: Duration::from_secs(86400),
+        watch_config: true,
     }
 }
 
