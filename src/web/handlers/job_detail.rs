@@ -65,6 +65,7 @@ pub struct JobDetailView {
     pub name: String,
     pub schedule: String,
     pub resolved_schedule: String,
+    pub has_random_schedule: bool,
     pub job_type: String,
     pub config_json: String,
     pub cron_description: String,
@@ -182,11 +183,14 @@ pub async fn job_detail(
             .map(|c| c.describe())
             .unwrap_or_else(|_| "Invalid schedule".to_string());
 
+        let has_random_schedule = job.schedule.split_whitespace().any(|f| f == "@random");
+
         let job_view = JobDetailView {
             id: job.id,
             name: job.name,
             schedule: job.schedule.clone(),
             resolved_schedule: job.resolved_schedule.clone(),
+            has_random_schedule,
             job_type: job.job_type.clone(),
             config_json: pretty_json(&job.config_json),
             cron_description,

@@ -52,8 +52,6 @@
         </th>
         <!-- Schedule (not sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Schedule</th>
-        <!-- Resolved (not sortable) -->
-        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Resolved</th>
         <!-- Next Fire (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "next_run" %};color:var(--cd-text-accent){% endif %}">
           <a href="?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}"

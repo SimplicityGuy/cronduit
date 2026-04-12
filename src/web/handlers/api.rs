@@ -30,7 +30,7 @@ pub async fn run_now(
     State(state): State<AppState>,
     Path(job_id): Path<i64>,
     cookies: CookieJar,
-    axum::Form(form): axum::Form<RunNowForm>,
+    axum::Form(form): axum::Form<CsrfForm>,
 ) -> impl IntoResponse {
     // 1. Validate CSRF token (T-03-14)
     let cookie_token = cookies
@@ -138,6 +138,27 @@ pub async fn reload(
                         (msg, "error", 0u32) // 0 = persist until dismissed (D-02)
                     }
                 };
+
+                // Update last_reload state for settings page
+                {
+                    let summary = match result.status {
+                        ReloadStatus::Ok => format!(
+                            "{} added, {} updated, {} disabled",
+                            result.added, result.updated, result.disabled
+                        ),
+                        ReloadStatus::Error => result
+                            .error_message
+                            .as_deref()
+                            .unwrap_or("unknown error")
+                            .to_string(),
+                    };
+                    let mut lr = state.last_reload.lock().unwrap();
+                    *lr = Some(crate::web::ReloadState {
+                        timestamp: chrono::Utc::now(),
+                        status: status_str.to_string(),
+                        summary,
+                    });
+                }
 
                 tracing::info!(
                     target: "cronduit.web",
