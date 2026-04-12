@@ -172,7 +172,11 @@ pub async fn reload(
                 )
                 .expect("toast event serialization");
 
-                (HxResponseTrigger::normal([event]), axum::Json(json_body)).into_response()
+                // HX-Refresh: true so settings page auto-refreshes with new reload state
+                let mut headers = axum::http::HeaderMap::new();
+                headers.insert("HX-Refresh", "true".parse().unwrap());
+
+                (HxResponseTrigger::normal([event]), headers, axum::Json(json_body)).into_response()
             }
             Err(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response()
