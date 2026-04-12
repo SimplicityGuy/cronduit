@@ -7,12 +7,15 @@
 pub mod cmd;
 pub mod command;
 pub mod docker;
+// Phase 5: @random cron field resolver (RAND-01 through RAND-05).
 pub mod docker_log;
 pub mod docker_orphan;
 pub mod docker_preflight;
 pub mod docker_pull;
 pub mod fire;
 pub mod log_pipeline;
+pub mod random;
+pub mod reload;
 pub mod run;
 pub mod script;
 pub mod sync;
@@ -23,6 +26,7 @@ use bollard::Docker;
 use chrono::Utc;
 use chrono_tz::Tz;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -42,6 +46,7 @@ pub struct SchedulerLoop {
     pub cancel: CancellationToken,
     pub shutdown_grace: Duration,
     pub cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
+    pub config_path: PathBuf,
 }
 
 impl SchedulerLoop {
@@ -50,10 +55,7 @@ impl SchedulerLoop {
     /// D-01: Selects over next-fire sleep, join_set reaping, and cancel token.
     /// D-02: Uses BinaryHeap<Reverse<FireEntry>> for efficient next-fire lookup.
     pub async fn run(mut self) {
-        // TODO(Phase 5): Config reload. Currently the job set is immutable for the
-        // scheduler's lifetime. Hot-reload will require rebuilding the heap and
-        // updating self.jobs via a channel or watch.
-        let jobs_vec: Vec<DbJob> = self.jobs.values().cloned().collect();
+        let mut jobs_vec: Vec<DbJob> = self.jobs.values().cloned().collect();
         let mut heap = fire::build_initial_heap(&jobs_vec, self.tz);
         let mut join_set: JoinSet<RunResult> = JoinSet::new();
         let mut last_expected_wake: chrono::DateTime<Tz> = Utc::now().with_timezone(&self.tz);
@@ -174,6 +176,92 @@ impl SchedulerLoop {
                                 );
                             }
                         }
+                        Some(cmd::SchedulerCmd::Reload { response_tx }) => {
+                            let (result, new_heap) = reload::do_reload(
+                                &self.pool,
+                                &self.config_path,
+                                &mut self.jobs,
+                                self.tz,
+                            ).await;
+                            if let Some(h) = new_heap {
+                                heap = h;
+                                jobs_vec = self.jobs.values().cloned().collect();
+                            }
+                            let _ = response_tx.send(result);
+
+                            // D-09: Coalesce queued reloads — drain any Reload commands
+                            // that arrived while this reload was in-flight. If any were
+                            // pending, run ONE additional reload (not N). Reply to each
+                            // drained sender with the coalesced result.
+                            let mut coalesced_senders: Vec<tokio::sync::oneshot::Sender<cmd::ReloadResult>> = Vec::new();
+                            while let Ok(queued) = self.cmd_rx.try_recv() {
+                                match queued {
+                                    cmd::SchedulerCmd::Reload { response_tx: tx } => {
+                                        coalesced_senders.push(tx);
+                                    }
+                                    cmd::SchedulerCmd::RunNow { job_id: rid } => {
+                                        // Re-enqueue RunNow so it isn't dropped.
+                                        if let Some(job) = self.jobs.get(&rid) {
+                                            let child_cancel = self.cancel.child_token();
+                                            join_set.spawn(run::run_job(
+                                                self.pool.clone(),
+                                                self.docker.clone(),
+                                                job.clone(),
+                                                "manual".to_string(),
+                                                child_cancel,
+                                            ));
+                                        }
+                                    }
+                                    cmd::SchedulerCmd::Reroll { job_id: rid, response_tx: tx } => {
+                                        let (rr_result, rr_heap) = reload::do_reroll(
+                                            &self.pool, rid, &mut self.jobs, self.tz,
+                                        ).await;
+                                        if let Some(h) = rr_heap {
+                                            heap = h;
+                                            jobs_vec = self.jobs.values().cloned().collect();
+                                        }
+                                        let _ = tx.send(rr_result);
+                                    }
+                                }
+                            }
+                            if !coalesced_senders.is_empty() {
+                                tracing::debug!(
+                                    target: "cronduit.reload",
+                                    coalesced = coalesced_senders.len(),
+                                    "coalescing queued reload requests into one additional reload"
+                                );
+                                let (coal_result, coal_heap) = reload::do_reload(
+                                    &self.pool, &self.config_path, &mut self.jobs, self.tz,
+                                ).await;
+                                if let Some(h) = coal_heap {
+                                    heap = h;
+                                    jobs_vec = self.jobs.values().cloned().collect();
+                                }
+                                for tx in coalesced_senders {
+                                    let _ = tx.send(cmd::ReloadResult {
+                                        status: coal_result.status,
+                                        added: coal_result.added,
+                                        updated: coal_result.updated,
+                                        disabled: coal_result.disabled,
+                                        unchanged: coal_result.unchanged,
+                                        error_message: coal_result.error_message.clone(),
+                                    });
+                                }
+                            }
+                        }
+                        Some(cmd::SchedulerCmd::Reroll { job_id, response_tx }) => {
+                            let (result, new_heap) = reload::do_reroll(
+                                &self.pool,
+                                job_id,
+                                &mut self.jobs,
+                                self.tz,
+                            ).await;
+                            if let Some(h) = new_heap {
+                                heap = h;
+                                jobs_vec = self.jobs.values().cloned().collect();
+                            }
+                            let _ = response_tx.send(result);
+                        }
                         None => {
                             tracing::info!(target: "cronduit.scheduler", "command channel closed");
                             break;
@@ -276,6 +364,7 @@ impl SchedulerLoop {
 ///
 /// Accepts `Vec<DbJob>` and converts to `HashMap` internally for O(1) lookup.
 /// Returns a `JoinHandle` that resolves when the loop exits (on cancellation).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     pool: DbPool,
     docker: Option<Docker>,
@@ -284,6 +373,7 @@ pub fn spawn(
     cancel: CancellationToken,
     shutdown_grace: Duration,
     cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
+    config_path: PathBuf,
 ) -> JoinHandle<()> {
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
@@ -294,6 +384,7 @@ pub fn spawn(
         cancel,
         shutdown_grace,
         cmd_rx,
+        config_path,
     };
     tokio::spawn(scheduler.run())
 }

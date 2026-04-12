@@ -66,6 +66,7 @@ pub struct DashboardJobView {
     pub name: String,
     pub schedule: String,
     pub resolved_schedule: String,
+    pub has_random_schedule: bool,
     pub next_fire: String,
     pub last_status: String,
     pub last_status_label: String,
@@ -115,11 +116,14 @@ fn to_view(job: DashboardJob, tz: Tz) -> DashboardJobView {
         None => "never".to_string(),
     };
 
+    let has_random_schedule = job.schedule.split_whitespace().any(|f| f == "@random");
+
     DashboardJobView {
         id: job.id,
         name: job.name,
         schedule: job.schedule,
         resolved_schedule: job.resolved_schedule,
+        has_random_schedule,
         next_fire,
         last_status,
         last_status_label,

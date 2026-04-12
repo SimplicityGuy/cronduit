@@ -62,9 +62,18 @@
     document.body.addEventListener('showToast', function(e) {
       var msg = e.detail && e.detail.message ? e.detail.message : 'Action completed';
       var level = e.detail && e.detail.level ? e.detail.level : 'info';
+      var duration = e.detail && e.detail.duration !== undefined ? e.detail.duration : 3000;
       var container = document.getElementById('toast-container');
       var toast = document.createElement('div');
-      toast.className = 'pointer-events-auto px-4 py-2 rounded text-sm font-mono';
+      toast.className = 'pointer-events-auto rounded font-mono';
+      toast.style.padding = 'var(--cd-space-3) var(--cd-space-4)';
+      toast.style.fontSize = 'var(--cd-text-sm)';
+      toast.style.borderRadius = 'var(--cd-radius-md)';
+      toast.style.display = 'flex';
+      toast.style.alignItems = 'center';
+      toast.style.gap = 'var(--cd-space-2)';
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
       if (level === 'error') {
         toast.style.background = 'var(--cd-status-error-bg)';
         toast.style.color = 'var(--cd-status-error)';
@@ -74,13 +83,32 @@
         toast.style.color = 'var(--cd-status-active)';
         toast.style.border = '1px solid var(--cd-status-active)';
       }
-      toast.textContent = msg;
+      var msgSpan = document.createElement('span');
+      msgSpan.style.flex = '1';
+      msgSpan.textContent = msg;
+      toast.appendChild(msgSpan);
+      if (level === 'error' || duration === 0) {
+        var closeBtn = document.createElement('button');
+        closeBtn.textContent = '\u00d7';
+        closeBtn.style.cursor = 'pointer';
+        closeBtn.style.background = 'none';
+        closeBtn.style.border = 'none';
+        closeBtn.style.color = 'inherit';
+        closeBtn.style.fontSize = '1.2em';
+        closeBtn.style.lineHeight = '1';
+        closeBtn.style.padding = '0';
+        closeBtn.setAttribute('aria-label', 'Dismiss notification');
+        closeBtn.onclick = function() { toast.remove(); };
+        toast.appendChild(closeBtn);
+      } else {
+        var autoDismiss = duration > 0 ? duration : 3000;
+        setTimeout(function() {
+          toast.style.opacity = '0';
+          toast.style.transition = 'opacity 0.3s ease';
+          setTimeout(function() { toast.remove(); }, 300);
+        }, autoDismiss);
+      }
       container.appendChild(toast);
-      setTimeout(function() {
-        toast.style.opacity = '0';
-        toast.style.transition = 'opacity 0.3s ease';
-        setTimeout(function() { toast.remove(); }, 300);
-      }, 3000);
     });
   </script>
 </body>

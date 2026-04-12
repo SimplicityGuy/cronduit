@@ -194,7 +194,14 @@ Plans:
 - Pitfall 9 (non-atomic config reload): 500 ms debounce, staging parse, atomic apply under lock, in-flight runs not cancelled.
 - Pitfall 16 (Run Now idempotency under reload): manual runs go through scheduler; idempotency token scoped correctly.
 
-**Plans**: TBD
+**Plans**: 5 plans (3 waves)
+
+Plans:
+- [x] 05-01-PLAN.md — @random resolver module with TDD + SchedulerCmd extension + sync engine wiring (Wave 1)
+- [x] 05-02-PLAN.md — Reload infrastructure: do_reload(), SIGHUP handler, file watcher, watch_config (Wave 1)
+- [x] 05-03-PLAN.md — Scheduler loop Reload/Reroll branches + reload/reroll API handlers + routes (Wave 2)
+- [x] 05-04-PLAN.md — UI surfaces: toast JS update, settings page enhancement, @random badge, job detail resolved schedule + re-roll (Wave 2)
+- [x] 05-05-PLAN.md — Integration tests (reload diff, in-flight survival, @random stability) + visual checkpoint (Wave 3)
 
 ---
 
@@ -233,7 +240,7 @@ Plans:
 | 2. Scheduler Core & Command/Script Executor | 0/TBD | Not started | - |
 | 3. Read-Only Web UI & Health Endpoint | 0/6 | Planned | - |
 | 4. Docker Executor & container-network Differentiator | 0/TBD | Not started | - |
-| 5. Config Reload & `@random` Resolver | 0/TBD | Not started | - |
+| 5. Config Reload & `@random` Resolver | 0/5 | Planned | - |
 | 6. Live Events, Metrics, Retention & Release Engineering | 0/TBD | Not started | - |
 
 ## Coverage Validation

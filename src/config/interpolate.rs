@@ -15,34 +15,87 @@ pub enum ErrorKind {
 
 /// Expand `${VAR}` references in `input`. Collects all errors (missing vars,
 /// forbidden `${VAR:-default}` syntax) into a Vec; never early-exits.
+///
+/// TOML comments (lines starting with optional whitespace then `#`) are
+/// skipped so that documentation examples containing `${VAR}` don't trigger
+/// missing-variable errors.
 pub fn interpolate(input: &str) -> (String, Vec<InterpolationError>) {
     static VAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").unwrap());
     static DEFAULT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{[^}]*:-").unwrap());
 
     let mut errors = Vec::new();
 
-    for m in DEFAULT_RE.find_iter(input) {
-        errors.push(InterpolationError {
-            kind: ErrorKind::DefaultSyntaxForbidden,
-            byte_range: m.range(),
-        });
-    }
+    // Strip TOML comments before interpolation so that `${VAR}` inside
+    // comments is not expanded. We rebuild the string line-by-line,
+    // preserving comment lines verbatim and only interpolating value lines.
+    let mut result = String::with_capacity(input.len());
+    for line in input.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            // Comment line — pass through unchanged.
+            result.push_str(line);
+        } else {
+            // Check for inline comment: find `#` that isn't inside a string.
+            // For simplicity, interpolate only the portion before an inline
+            // comment. TOML inline comments start at `#` outside of quotes.
+            let content = strip_inline_comment(line);
 
-    let result = VAR_RE.replace_all(input, |caps: &regex::Captures| {
-        let var = &caps[1];
-        match std::env::var(var) {
-            Ok(v) => v,
-            Err(_) => {
+            for m in DEFAULT_RE.find_iter(content) {
                 errors.push(InterpolationError {
-                    kind: ErrorKind::MissingVar(var.to_string()),
-                    byte_range: caps.get(0).unwrap().range(),
+                    kind: ErrorKind::DefaultSyntaxForbidden,
+                    byte_range: offset_range(input, line, m.range()),
                 });
-                String::new()
+            }
+
+            let expanded = VAR_RE.replace_all(content, |caps: &regex::Captures| {
+                let var = &caps[1];
+                match std::env::var(var) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        errors.push(InterpolationError {
+                            kind: ErrorKind::MissingVar(var.to_string()),
+                            byte_range: offset_range(input, line, caps.get(0).unwrap().range()),
+                        });
+                        String::new()
+                    }
+                }
+            });
+            result.push_str(&expanded);
+            // Append the inline comment portion unchanged.
+            if content.len() < line.len() {
+                result.push_str(&line[content.len()..]);
             }
         }
-    });
+        result.push('\n');
+    }
+    // Remove trailing newline added by the loop if input didn't end with one.
+    if !input.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
 
-    (result.into_owned(), errors)
+    (result, errors)
+}
+
+/// Return the portion of `line` before any inline TOML comment.
+/// A `#` is an inline comment only if it's outside quoted strings.
+fn strip_inline_comment(line: &str) -> &str {
+    let mut in_basic = false;
+    let mut in_literal = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' if !in_literal => in_basic = !in_basic,
+            '\'' if !in_basic => in_literal = !in_literal,
+            '#' if !in_basic && !in_literal => return &line[..i],
+            _ => {}
+        }
+    }
+    line
+}
+
+/// Convert a range relative to `line` into a range relative to `input`.
+fn offset_range(input: &str, line: &str, range: std::ops::Range<usize>) -> std::ops::Range<usize> {
+    let line_offset = line.as_ptr() as usize - input.as_ptr() as usize;
+    (line_offset + range.start)..(line_offset + range.end)
 }
 
 #[cfg(test)]
@@ -88,5 +141,35 @@ mod tests {
     fn default_syntax_rejected() {
         let (_out, errs) = interpolate("x=${FOO:-bar}");
         assert!(matches!(errs[0].kind, ErrorKind::DefaultSyntaxForbidden));
+    }
+
+    #[test]
+    fn comments_not_interpolated() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::remove_var("NONEXISTENT");
+        }
+        let input = "# reference ${NONEXISTENT} in a comment\nkey = \"value\"";
+        let (out, errs) = interpolate(input);
+        assert!(errs.is_empty(), "comment ${{VAR}} should not trigger error");
+        assert!(
+            out.contains("${NONEXISTENT}"),
+            "comment should be preserved verbatim"
+        );
+    }
+
+    #[test]
+    fn inline_comment_not_interpolated() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::remove_var("NONEXISTENT");
+        }
+        let input = "key = \"value\" # see ${NONEXISTENT}";
+        let (out, errs) = interpolate(input);
+        assert!(
+            errs.is_empty(),
+            "inline comment ${{VAR}} should not trigger error"
+        );
+        assert!(out.contains("${NONEXISTENT}"));
     }
 }

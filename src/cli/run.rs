@@ -69,7 +69,13 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         .parse()
         .map_err(|_| anyhow::anyhow!("invalid timezone: {}", cfg.server.timezone))?;
 
-    let sync_result = crate::scheduler::sync::sync_config_to_db(&pool, &parsed.config).await?;
+    let random_min_gap = cfg
+        .defaults
+        .as_ref()
+        .and_then(|d| d.random_min_gap)
+        .unwrap_or(std::time::Duration::from_secs(0));
+    let sync_result =
+        crate::scheduler::sync::sync_config_to_db(&pool, &parsed.config, random_min_gap).await?;
 
     // 6. Emit startup event (D-23) + bind warning (D-24) BEFORE serve.
     let backend = match pool.backend() {
@@ -104,6 +110,22 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     // 7. Wire graceful shutdown + spawn scheduler + serve.
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<crate::scheduler::cmd::SchedulerCmd>(32);
 
+    let cancel = CancellationToken::new();
+    shutdown::install(cancel.clone());
+    shutdown::install_sighup(cmd_tx.clone());
+
+    // File watcher for automatic config reload (D-10, RELOAD-03).
+    if cfg.server.watch_config
+        && let Err(e) =
+            crate::scheduler::reload::spawn_file_watcher(config_path.clone(), cmd_tx.clone())
+    {
+        tracing::warn!(
+            target: "cronduit.startup",
+            error = %e,
+            "failed to start config file watcher -- file-based reload unavailable"
+        );
+    }
+
     let state = AppState {
         started_at: chrono::Utc::now(),
         version: env!("CARGO_PKG_VERSION"),
@@ -111,9 +133,9 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cmd_tx,
         config_path: config_path.clone(),
         tz,
+        last_reload: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        watch_config: cfg.server.watch_config,
     };
-    let cancel = CancellationToken::new();
-    shutdown::install(cancel.clone());
 
     // Create Docker client (non-fatal if unavailable).
     let docker = match bollard::Docker::connect_with_local_defaults() {
@@ -161,6 +183,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cancel.clone(),
         cfg.server.shutdown_grace,
         cmd_rx,
+        config_path.to_path_buf(),
     );
 
     // Serve web (blocks until cancel).

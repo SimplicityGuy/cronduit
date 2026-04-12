@@ -79,7 +79,30 @@ fn check_network_mode(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError
 }
 
 fn check_schedule(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
-    if let Err(e) = job.schedule.parse::<Cron>() {
+    use crate::scheduler::random::is_random_schedule;
+
+    // Schedules containing @random tokens are resolved at sync time, not here.
+    // Validate only the non-@random fields by substituting @random with valid
+    // stand-in values per field position (minute=0, hour=0, dom=1, month=1, dow=0).
+    const RANDOM_FALLBACKS: [&str; 5] = ["0", "0", "1", "1", "0"];
+    let schedule_to_validate = if is_random_schedule(&job.schedule) {
+        job.schedule
+            .split_whitespace()
+            .enumerate()
+            .map(|(i, f)| {
+                if f == "@random" {
+                    RANDOM_FALLBACKS.get(i).copied().unwrap_or("0")
+                } else {
+                    f
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        job.schedule.clone()
+    };
+
+    if let Err(e) = schedule_to_validate.parse::<Cron>() {
         errors.push(ConfigError {
             file: path.into(),
             line: 0,

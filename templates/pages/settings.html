@@ -5,9 +5,40 @@
 
 <div class="flex items-center justify-between mb-6">
   <h1 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em">Settings</h1>
+  <form hx-post="/api/reload" hx-swap="none">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="cd-btn-primary" style="min-height:36px">Reload Config</button>
+  </form>
 </div>
 
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+  <!-- Last Reload (focal point - first position per UI-SPEC Component 5) -->
+  <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Last Reload</span>
+    {% if last_reload_status == "ok" %}
+    <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);font-weight:700;margin-top:4px">{{ last_reload_time }}</div>
+    <div style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:2px">{{ last_reload_summary }}</div>
+    {% elif last_reload_status == "error" %}
+    <div style="font-size:var(--cd-text-base);color:var(--cd-status-error);font-weight:700;margin-top:4px">{{ last_reload_time }}</div>
+    <div style="font-size:var(--cd-text-sm);color:var(--cd-status-error);margin-top:2px">{{ last_reload_summary }}</div>
+    {% else %}
+    <div style="font-size:var(--cd-text-base);color:var(--cd-text-muted);margin-top:4px">Never</div>
+    {% endif %}
+  </div>
+
+  <!-- Config Watcher (Component 7) -->
+  <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Config Watcher</span>
+    <div style="margin-top:4px">
+      {% if watch_config %}
+      <span class="cd-badge cd-badge--success">WATCHING</span>
+      {% else %}
+      <span class="cd-badge cd-badge--disabled">DISABLED</span>
+      {% endif %}
+    </div>
+    <div style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:2px">{{ config_path }}</div>
+  </div>
+
   <!-- Uptime -->
   <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
     <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Uptime</span>
@@ -30,12 +61,6 @@
   <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
     <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Config File</span>
     <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:4px;font-family:monospace">{{ config_path }}</div>
-  </div>
-
-  <!-- Last Reload -->
-  <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
-    <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Last Reload</span>
-    <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:4px">{{ last_reload }}</div>
   </div>
 
   <!-- Version -->

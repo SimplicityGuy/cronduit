@@ -36,10 +36,22 @@
       <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Schedule</span>
       <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">
         <code>{{ job.schedule }}</code>
+        {% if job.has_random_schedule %} <span class="cd-badge cd-badge--random">@random</span>{% endif %}
       </div>
       <div style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:2px">{{ job.cron_description }}</div>
     </div>
-    {% if job.resolved_schedule != job.schedule %}
+    {% if job.has_random_schedule %}
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Resolved Schedule</span>
+      <div style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:var(--cd-space-1)">
+        Resolved to <code style="color:var(--cd-text-primary)">{{ job.resolved_schedule }}</code>
+        <form style="display:inline" hx-post="/api/jobs/{{ job.id }}/reroll" hx-swap="none">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="cd-btn-secondary" style="margin-left:var(--cd-space-2);padding:var(--cd-space-1) var(--cd-space-2);font-size:var(--cd-text-xs)">Re-roll Schedule</button>
+        </form>
+      </div>
+    </div>
+    {% elif job.resolved_schedule != job.schedule %}
     <div>
       <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">Resolved Schedule</span>
       <div style="font-size:var(--cd-text-base);color:var(--cd-text-primary);margin-top:2px">

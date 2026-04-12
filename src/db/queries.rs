@@ -620,6 +620,31 @@ pub async fn get_job_by_id(pool: &DbPool, id: i64) -> anyhow::Result<Option<DbJo
     }
 }
 
+/// Update the resolved schedule for a job (used by @random re-roll).
+pub async fn update_resolved_schedule(
+    pool: &DbPool,
+    job_id: i64,
+    resolved: &str,
+) -> anyhow::Result<()> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            sqlx::query("UPDATE jobs SET resolved_schedule = ?1 WHERE id = ?2")
+                .bind(resolved)
+                .bind(job_id)
+                .execute(p)
+                .await?;
+        }
+        PoolRef::Postgres(p) => {
+            sqlx::query("UPDATE jobs SET resolved_schedule = $1 WHERE id = $2")
+                .bind(resolved)
+                .bind(job_id)
+                .execute(p)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Fetch paginated run history for a job, ordered by start_time DESC.
 pub async fn get_run_history(
     pool: &DbPool,

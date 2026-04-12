@@ -110,6 +110,7 @@ hex = "0.4"
 
 # MIME type guessing for embedded assets
 mime_guess = "2"
+notify = "8.2"
 
 [dev-dependencies]
 testcontainers = "0.27.2"

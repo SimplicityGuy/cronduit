@@ -21,6 +21,8 @@ async fn test_app() -> axum::Router {
         cmd_tx,
         config_path: std::path::PathBuf::from("/test/config.toml"),
         tz: chrono_tz::Tz::UTC,
+        last_reload: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        watch_config: false,
     };
 
     router(state)
