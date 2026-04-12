@@ -42,12 +42,18 @@ pub fn init(format: LogFormat) {
 /// Must be called once at startup, after tracing init but before any metrics macros are used.
 /// Returns a `PrometheusHandle` that renders the `/metrics` endpoint response.
 pub fn setup_metrics() -> PrometheusHandle {
-    PrometheusBuilder::new()
+    let builder = PrometheusBuilder::new()
         .set_buckets_for_metric(
             Matcher::Full("cronduit_run_duration_seconds".to_string()),
             &[1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1800.0, 3600.0],
         )
-        .expect("valid bucket config")
-        .install_recorder()
-        .expect("metrics recorder installed")
+        .expect("valid bucket config");
+
+    match builder.install_recorder() {
+        Ok(handle) => handle,
+        Err(_) => {
+            tracing::warn!("metrics recorder already installed, building detached handle");
+            PrometheusBuilder::new().build_recorder().handle()
+        }
+    }
 }
