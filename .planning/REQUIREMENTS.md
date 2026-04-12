@@ -45,7 +45,7 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 - [ ] **DB-05**: SQLite uses separate read and write `sqlx::Pool` instances (single-connection writer, multi-connection reader) to avoid writer-contention collapse under concurrent log writes
 - [ ] **DB-06**: Each `jobs` row stores `schedule` (raw from config) and `resolved_schedule` (concrete cron after `@random` resolution) and a `config_hash` (SHA-256) used as the idempotency key for sync
 - [ ] **DB-07**: Removed jobs are marked `enabled=0` rather than deleted; `job_runs` and `job_logs` for removed jobs remain queryable
-- [ ] **DB-08**: A daily retention pruner deletes `job_runs` and `job_logs` older than the configured `[server].log_retention` (default 90 days) in batched transactions
+- [x] **DB-08**: A daily retention pruner deletes `job_runs` and `job_logs` older than the configured `[server].log_retention` (default 90 days) in batched transactions
 
 ### Scheduler (SCHED)
 
@@ -205,7 +205,7 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | DB-05 | Phase 1 | Pending |
 | DB-06 | Phase 1 | Pending |
 | DB-07 | Phase 1 | Pending |
-| DB-08 | Phase 6 | Pending |
+| DB-08 | Phase 6 | Complete |
 | SCHED-01 | Phase 2 | Pending |
 | SCHED-02 | Phase 2 | Pending |
 | SCHED-03 | Phase 2 | Pending |
