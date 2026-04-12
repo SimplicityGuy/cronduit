@@ -290,7 +290,7 @@ pub fn spawn_file_watcher(
                         target: "cronduit.reload",
                         "file change detected, triggering reload"
                     );
-                    let (resp_tx, _) = tokio::sync::oneshot::channel();
+                    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                     if cmd_tx
                         .send(SchedulerCmd::Reload { response_tx: resp_tx })
                         .await
@@ -301,6 +301,23 @@ pub fn spawn_file_watcher(
                             "scheduler channel closed, stopping file watcher"
                         );
                         break;
+                    }
+                    // Log the result so file-watch reload outcomes are observable.
+                    match resp_rx.await {
+                        Ok(result) if result.status == ReloadStatus::Error => {
+                            tracing::warn!(
+                                target: "cronduit.reload",
+                                error = ?result.error_message,
+                                "file-watch triggered reload failed"
+                            );
+                        }
+                        Err(_) => {
+                            tracing::debug!(
+                                target: "cronduit.reload",
+                                "file-watch reload response channel dropped"
+                            );
+                        }
+                        _ => {}
                     }
                 }
             }
