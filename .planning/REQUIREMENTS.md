@@ -114,7 +114,7 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 - [ ] **UI-11**: A Settings/Status page shows scheduler uptime, DB connection status, config file path, last successful reload time, and the Cronduit version
 - [ ] **UI-12**: A "Run Now" button on each job triggers a manual run via `POST /api/jobs/:id/run`; the manual run is recorded with `trigger='manual'`
 - [ ] **UI-13**: The Dashboard supports filter (substring match on job name) and sort (by name, last run, next run, status) via query params
-- [ ] **UI-14**: The Run Detail page log viewer streams new lines via SSE (`/events/runs/:id/logs`) for in-progress runs; completed runs render statically from `job_logs`
+- [x] **UI-14**: The Run Detail page log viewer streams new lines via SSE (`/events/runs/:id/logs`) for in-progress runs; completed runs render statically from `job_logs`
 - [ ] **UI-15**: All state-changing endpoints (`/api/reload`, `/api/jobs/:id/run`) require a CSRF token bound to the user's session cookie
 
 ### Operational Endpoints (OPS)
@@ -256,7 +256,7 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | UI-11 | Phase 3 | Pending |
 | UI-12 | Phase 3 | Pending |
 | UI-13 | Phase 3 | Pending |
-| UI-14 | Phase 6 | Pending |
+| UI-14 | Phase 6 | Complete |
 | UI-15 | Phase 3 | Pending |
 | OPS-01 | Phase 3 | Pending |
 | OPS-02 | Phase 6 | Pending |

@@ -229,7 +229,7 @@ Plans:
 **Plans**: 5 plans (2 waves)
 
 Plans:
-- [ ] 06-01-PLAN.md -- SSE log streaming: broadcast channel fan-out + SSE handler + Run Detail template (Wave 1)
+- [x] 06-01-PLAN.md -- SSE log streaming: broadcast channel fan-out + SSE handler + Run Detail template (Wave 1)
 - [ ] 06-02-PLAN.md -- Prometheus metrics: metrics facade + /metrics endpoint + scheduler instrumentation (Wave 1)
 - [ ] 06-03-PLAN.md -- Retention pruner: daily batched deletes + WAL checkpoint (Wave 1)
 - [ ] 06-04-PLAN.md -- Release docs: README quickstart + docker-compose + THREAT_MODEL.md (Wave 2)
