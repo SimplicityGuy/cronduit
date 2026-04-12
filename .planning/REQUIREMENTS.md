@@ -45,7 +45,7 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 - [ ] **DB-05**: SQLite uses separate read and write `sqlx::Pool` instances (single-connection writer, multi-connection reader) to avoid writer-contention collapse under concurrent log writes
 - [ ] **DB-06**: Each `jobs` row stores `schedule` (raw from config) and `resolved_schedule` (concrete cron after `@random` resolution) and a `config_hash` (SHA-256) used as the idempotency key for sync
 - [ ] **DB-07**: Removed jobs are marked `enabled=0` rather than deleted; `job_runs` and `job_logs` for removed jobs remain queryable
-- [ ] **DB-08**: A daily retention pruner deletes `job_runs` and `job_logs` older than the configured `[server].log_retention` (default 90 days) in batched transactions
+- [x] **DB-08**: A daily retention pruner deletes `job_runs` and `job_logs` older than the configured `[server].log_retention` (default 90 days) in batched transactions
 
 ### Scheduler (SCHED)
 
@@ -114,16 +114,16 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 - [ ] **UI-11**: A Settings/Status page shows scheduler uptime, DB connection status, config file path, last successful reload time, and the Cronduit version
 - [ ] **UI-12**: A "Run Now" button on each job triggers a manual run via `POST /api/jobs/:id/run`; the manual run is recorded with `trigger='manual'`
 - [ ] **UI-13**: The Dashboard supports filter (substring match on job name) and sort (by name, last run, next run, status) via query params
-- [ ] **UI-14**: The Run Detail page log viewer streams new lines via SSE (`/events/runs/:id/logs`) for in-progress runs; completed runs render statically from `job_logs`
+- [x] **UI-14**: The Run Detail page log viewer streams new lines via SSE (`/events/runs/:id/logs`) for in-progress runs; completed runs render statically from `job_logs`
 - [ ] **UI-15**: All state-changing endpoints (`/api/reload`, `/api/jobs/:id/run`) require a CSRF token bound to the user's session cookie
 
 ### Operational Endpoints (OPS)
 
 - [ ] **OPS-01**: `GET /health` returns `200 OK` with a JSON body `{"status":"ok","db":"ok","scheduler":"running"}` when the process is healthy; the example `docker-compose.yml` healthcheck targets this endpoint
-- [ ] **OPS-02**: `GET /metrics` exposes Prometheus-format metrics including `cronduit_jobs_total`, `cronduit_runs_total{status}`, `cronduit_run_duration_seconds` (histogram), and `cronduit_run_failures_total{reason}` where `reason` is a closed enum (no unbounded label cardinality)
+- [x] **OPS-02**: `GET /metrics` exposes Prometheus-format metrics including `cronduit_jobs_total`, `cronduit_runs_total{status}`, `cronduit_run_duration_seconds` (histogram), and `cronduit_run_failures_total{reason}` where `reason` is a closed enum (no unbounded label cardinality)
 - [ ] **OPS-03**: Cronduit defaults `[server].bind` to `127.0.0.1:8080`; on startup, if the resolved bind address is non-loopback, a WARN-level log line is emitted explaining the no-auth-in-v1 stance and recommending a reverse proxy
-- [ ] **OPS-04**: An example `docker-compose.yml` is shipped in the repo with the Docker socket mounted, the config file mounted read-only, and a named volume for the SQLite database
-- [ ] **OPS-05**: The README quickstart enables a stranger to clone the repo, run `docker compose up`, and schedule a working job in under 5 minutes
+- [x] **OPS-04**: An example `docker-compose.yml` is shipped in the repo with the Docker socket mounted, the config file mounted read-only, and a named volume for the SQLite database
+- [x] **OPS-05**: The README quickstart enables a stranger to clone the repo, run `docker compose up`, and schedule a working job in under 5 minutes
 
 ## v2 Requirements
 
@@ -205,7 +205,7 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | DB-05 | Phase 1 | Pending |
 | DB-06 | Phase 1 | Pending |
 | DB-07 | Phase 1 | Pending |
-| DB-08 | Phase 6 | Pending |
+| DB-08 | Phase 6 | Complete |
 | SCHED-01 | Phase 2 | Pending |
 | SCHED-02 | Phase 2 | Pending |
 | SCHED-03 | Phase 2 | Pending |
@@ -256,13 +256,13 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | UI-11 | Phase 3 | Pending |
 | UI-12 | Phase 3 | Pending |
 | UI-13 | Phase 3 | Pending |
-| UI-14 | Phase 6 | Pending |
+| UI-14 | Phase 6 | Complete |
 | UI-15 | Phase 3 | Pending |
 | OPS-01 | Phase 3 | Pending |
-| OPS-02 | Phase 6 | Pending |
+| OPS-02 | Phase 6 | Complete |
 | OPS-03 | Phase 1 | Pending |
-| OPS-04 | Phase 6 | Pending |
-| OPS-05 | Phase 6 | Pending |
+| OPS-04 | Phase 6 | Complete |
+| OPS-05 | Phase 6 | Complete |
 
 **Coverage:**
 - v1 requirements: 86 total

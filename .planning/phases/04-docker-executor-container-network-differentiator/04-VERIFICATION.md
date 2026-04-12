@@ -1,7 +1,7 @@
 ---
 phase: 04-docker-executor-container-network-differentiator
 verified: 2026-04-11T20:00:00Z
-status: human_needed
+status: verified
 score: 6/6 must-haves verified
 overrides_applied: 0
 human_verification:
@@ -104,28 +104,17 @@ human_verification:
 
 No blockers or warnings found. The `_image_digest` discard is intentional — the image digest for recording is obtained post-start via `inspect_container`, not from the pre-start pull response.
 
-### Human Verification Required
+### Human Verification — Completed
 
-#### 1. Marquee container:<name> Network Mode Test (DOCKER-10)
+#### 1. Marquee container:<name> Network Mode Test (DOCKER-10) — PASSED
 
-**Test:** With Docker daemon running: `cargo test --test docker_container_network -- --ignored --nocapture`
-**Expected:** Both tests pass. `test_container_network_mode` must show:
-- "target container ID: ..." logged
-- "result: DockerExecResult { exec: ExecResult { exit_code: Some(0), status: Success, ... } }"
-- "network-ok" appears in captured log lines
-- "PASSED: container:<name> network mode works end-to-end" printed
-**Why human:** Requires a running Docker daemon with internet access to pull `alpine:latest`. This is the marquee differentiating feature — the primary reason Phase 4 exists.
+**Test:** `cargo test --test docker_container_network -- --ignored --nocapture`
+**Result:** Passed. Verified by user in 04-HUMAN-UAT.md.
 
-#### 2. Full Docker Executor Test Suite
+#### 2. Full Docker Executor Test Suite — PASSED
 
-**Test:** With Docker daemon running: `cargo test --test docker_executor -- --ignored --nocapture`
-**Expected:** All 5 tests pass:
-- `test_docker_basic_echo`: exit_code=Some(0), status=Success, "hello-cronduit" in logs
-- `test_docker_timeout_stops_container`: status=Timeout, error_message contains "timed out"
-- `test_docker_preflight_nonexistent_target`: Err(NetworkTargetUnavailable("nonexistent_container_xyz_12345"))
-- `test_docker_orphan_reconciliation`: count>=1, container removed (inspect 404), DB status="error", error_message="orphaned at restart"
-- `test_docker_execute_preflight_failure_returns_error`: status=Error, error_message contains "network_target_unavailable"
-**Why human:** Requires a running Docker daemon. The orphan reconciliation test particularly validates the SCHED-08 lifecycle end-to-end.
+**Test:** `cargo test --test docker_executor -- --ignored --nocapture --test-threads=1`
+**Result:** All 5 tests passed. Required `--test-threads=1` due to Docker resource contention on Rancher Desktop. Fixed wait_container fallback (inspect polling), log streaming retry, and async log drain. Verified by user in 04-HUMAN-UAT.md.
 
 ### Gaps Summary
 

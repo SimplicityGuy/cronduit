@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 5 UI-SPEC approved
-last_updated: "2026-04-12T02:41:17.717Z"
-last_activity: 2026-04-12
+status: verifying
+stopped_at: Completed 06-04-PLAN.md
+last_updated: "2026-04-12T22:38:46.084Z"
+last_activity: "2026-04-12 -- Phase 6 shipped via PR #10"
 progress:
   total_phases: 6
-  completed_phases: 5
-  total_plans: 28
-  completed_plans: 28
+  completed_phases: 6
+  total_plans: 33
+  completed_plans: 33
   percent: 100
 ---
 
@@ -21,7 +21,7 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-09 after research synthesis)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 02 — scheduler-core-command-script-executor
+**Current focus:** Phase 06 — live-events-metrics-retention-release-engineering
 
 ## Current Position
 
@@ -39,10 +39,10 @@ flowchart LR
     class P2,P3,P4,P5,P6 pending
 ```
 
-Phase: 6
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-04-12
+Phase: 06 (live-events-metrics-retention-release-engineering) — EXECUTING
+Plan: 5 of 5
+Status: Phase complete — ready for verification
+Last activity: 2026-04-12 -- Phase 6 shipped via PR #10
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -70,6 +70,11 @@ Progress: [░░░░░░░░░░] 0%
 - No plans executed yet.
 
 *Updated after each plan completion.*
+| Phase 06 P01 | 21min | 4 tasks | 15 files |
+| Phase 06 P02 | 11min | 3 tasks | 11 files |
+| Phase 06 P03 | 3min | 2 tasks | 5 files |
+| Phase 06 P05 | 2min | 1 tasks | 4 files |
+| Phase 06 P04 | 5min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -86,6 +91,12 @@ Decisions are logged in `.planning/PROJECT.md` Key Decisions table. Recent settl
 - **Phase 1:** CI matrix (`linux/amd64 + linux/arm64 × SQLite + Postgres`) required from day one via `cargo-zigbuild`.
 - **Phase 1:** All diagrams authored as mermaid code blocks; no ASCII art anywhere in project artifacts.
 - **Phase 1:** All changes land via PR on a feature branch; no direct commits to `main`.
+- [Phase 06]: Broadcast channel capacity 256 per active run, publish in log_writer_task alongside DB inserts
+- [Phase 06]: HTMX SSE extension vendored at v2.2.2 for offline homelab compatibility
+- [Phase 06]: Metrics facade with PrometheusBuilder, closed-enum FailureReason for cardinality control
+- [Phase 06]: Retention pruner uses pool.writer() accessor, fires 24h from startup, tracing target cronduit.retention
+- [Phase 06]: Release workflow uses docker/build-push-action@v6 directly for GHA cache integration, not justfile
+- [Phase 06]: README SECURITY-first structure with 3-step quickstart, THREAT_MODEL with four models
 
 ### Pending Todos
 
@@ -102,6 +113,6 @@ None yet. Known gaps from research synthesis (`.planning/research/SUMMARY.md` §
 
 ## Session Continuity
 
-Last session: 2026-04-11T23:39:13.373Z
-Stopped at: Phase 5 UI-SPEC approved
-Resume file: .planning/phases/05-config-reload-random-resolver/05-UI-SPEC.md
+Last session: 2026-04-12T22:19:01.528Z
+Stopped at: Completed 06-04-PLAN.md
+Resume file: None

@@ -1,3 +1,4 @@
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +33,27 @@ pub fn init(format: LogFormat) {
                 .with(filter)
                 .with(fmt_layer)
                 .init();
+        }
+    }
+}
+
+/// Initialize the Prometheus metrics recorder with homelab-tuned histogram buckets (D-06).
+///
+/// Must be called once at startup, after tracing init but before any metrics macros are used.
+/// Returns a `PrometheusHandle` that renders the `/metrics` endpoint response.
+pub fn setup_metrics() -> PrometheusHandle {
+    let builder = PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full("cronduit_run_duration_seconds".to_string()),
+            &[1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1800.0, 3600.0],
+        )
+        .expect("valid bucket config");
+
+    match builder.install_recorder() {
+        Ok(handle) => handle,
+        Err(_) => {
+            tracing::warn!("metrics recorder already installed, building detached handle");
+            PrometheusBuilder::new().build_recorder().handle()
         }
     }
 }

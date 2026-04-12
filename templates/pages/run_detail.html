@@ -61,7 +61,74 @@
 </div>
 
 <!-- Log Viewer -->
-<div class="mb-6">
+{% if is_running %}
+<div id="log-container">
+  <div class="flex items-center gap-2 mb-4">
+    <h2 style="font-size:var(--cd-text-lg);font-weight:700">Log Output</h2>
+    <span class="cd-badge cd-badge--running" aria-label="Live streaming">LIVE</span>
+  </div>
+  <div id="log-lines"
+       role="log"
+       aria-live="polite"
+       hx-ext="sse"
+       sse-connect="/events/runs/{{ run_id }}/logs"
+       sse-swap="log_line"
+       hx-swap="beforeend"
+       style="background:var(--cd-bg-surface-sunken);padding:var(--cd-space-4);border-radius:8px;overflow-x:auto;max-height:600px;overflow-y:auto">
+    <div id="log-placeholder" style="padding:var(--cd-space-6);text-align:center;color:var(--cd-text-secondary);font-size:var(--cd-text-base)">
+      Waiting for output...
+    </div>
+  </div>
+</div>
+<script>
+(function() {
+  var logLines = document.getElementById('log-lines');
+  if (!logLines) return;
+  var autoScroll = true;
+  var placeholder = document.getElementById('log-placeholder');
+
+  // Observe new children to remove placeholder and auto-scroll
+  var observer = new MutationObserver(function(mutations) {
+    if (placeholder && placeholder.parentNode) {
+      placeholder.parentNode.removeChild(placeholder);
+      placeholder = null;
+    }
+    if (autoScroll) {
+      logLines.scrollTop = logLines.scrollHeight;
+    }
+  });
+  observer.observe(logLines, { childList: true });
+
+  // Detect manual scroll-up to pause auto-scroll
+  logLines.addEventListener('scroll', function() {
+    autoScroll = (logLines.scrollTop + logLines.clientHeight >= logLines.scrollHeight - 50);
+  });
+
+  // Listen for run_complete SSE event -- HTMX OOB swap to static view per D-04
+  logLines.addEventListener('sse:run_complete', function(e) {
+    htmx.ajax('GET', '/partials/runs/{{ run_id }}/logs', {
+      target: '#log-container',
+      swap: 'outerHTML'
+    });
+  });
+
+  // Handle SSE connection error
+  logLines.addEventListener('htmx:sseError', function() {
+    var errorDiv = document.createElement('div');
+    errorDiv.setAttribute('style', 'padding:var(--cd-space-4);text-align:center;color:var(--cd-status-disabled);font-size:var(--cd-text-base)');
+    errorDiv.textContent = 'Unable to stream logs. ';
+    var link = document.createElement('a');
+    link.href = '';
+    link.setAttribute('style', 'color:var(--cd-text-accent);text-decoration:underline');
+    link.textContent = 'Refresh the page';
+    errorDiv.appendChild(link);
+    errorDiv.appendChild(document.createTextNode(' to retry.'));
+    logLines.replaceChildren(errorDiv);
+  });
+})();
+</script>
+{% else %}
+<div id="log-container" class="mb-6">
   <h2 style="font-size:var(--cd-text-lg);font-weight:700;margin-bottom:var(--cd-space-4)">Log Output</h2>
 
   {% if total_logs == 0 %}
@@ -74,5 +141,6 @@
   </div>
   {% endif %}
 </div>
+{% endif %}
 
 {% endblock %}

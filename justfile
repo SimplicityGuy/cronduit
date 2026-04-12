@@ -17,6 +17,14 @@ default:
 # The ORDERED chain CI runs. Local `just ci` must predict CI exit code (FOUND-12).
 ci: fmt-check clippy openssl-check nextest schema-diff image
 
+# Tag and push a release. Usage: just release 0.1.0
+# The actual image build and push happens in CI via docker/build-push-action@v6.
+release version:
+    @echo "Creating release v{{version}}..."
+    git tag -a "v{{version}}" -m "Release v{{version}}"
+    git push origin "v{{version}}"
+    @echo "Release v{{version}} tagged and pushed. CI will build and publish."
+
 # -------------------- build & artifacts --------------------
 
 build:

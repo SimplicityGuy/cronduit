@@ -11,12 +11,19 @@ use std::time::Duration;
 use cronduit::config::{Config, JobConfig, ServerConfig};
 use cronduit::db::DbPool;
 use cronduit::db::queries::{self, DbJob, PoolRef};
+use cronduit::scheduler::log_pipeline::LogLine;
 use cronduit::scheduler::run::run_job;
 use cronduit::scheduler::sync::sync_config_to_db;
 use secrecy::SecretString;
 use sqlx::Row;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+
+fn test_active_runs() -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>> {
+    Arc::new(RwLock::new(HashMap::new()))
+}
 
 async fn setup_test_db() -> DbPool {
     let pool = DbPool::connect("sqlite::memory:").await.unwrap();
@@ -102,6 +109,7 @@ async fn test_command_job_fires_and_captures_logs() {
             job.clone(),
             "scheduled".to_string(),
             cancel,
+            test_active_runs(),
         )
         .await;
 
@@ -168,7 +176,15 @@ async fn test_script_job_fires_and_captures_logs() {
         assert_eq!(job.job_type, "script");
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            cancel,
+            test_active_runs(),
+        )
+        .await;
 
         assert_eq!(result.status, "success");
 
@@ -219,7 +235,15 @@ async fn test_failed_command_records_exit_code() {
         let job = sync_and_get_job(&pool, &config, "test-fail").await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            cancel,
+            test_active_runs(),
+        )
+        .await;
 
         assert_eq!(result.status, "failed");
 
@@ -258,7 +282,15 @@ async fn test_timeout_preserves_partial_logs() {
         let job = sync_and_get_job(&pool, &config, "test-timeout").await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            cancel,
+            test_active_runs(),
+        )
+        .await;
 
         assert_eq!(result.status, "timeout");
 
@@ -313,7 +345,15 @@ async fn test_sync_disables_removed_jobs() {
             .unwrap()
             .unwrap();
         let cancel = CancellationToken::new();
-        let run_result = run_job(pool.clone(), None, job_b, "scheduled".to_string(), cancel).await;
+        let run_result = run_job(
+            pool.clone(),
+            None,
+            job_b,
+            "scheduled".to_string(),
+            cancel,
+            test_active_runs(),
+        )
+        .await;
         assert_eq!(run_result.status, "success");
 
         // Second sync with only job-a (job-b removed).
@@ -390,8 +430,22 @@ async fn test_concurrent_runs_same_job() {
         let job2 = job.clone();
 
         let (r1, r2) = tokio::join!(
-            run_job(pool1, None, job1, "scheduled".to_string(), cancel1),
-            run_job(pool2, None, job2, "scheduled".to_string(), cancel2),
+            run_job(
+                pool1,
+                None,
+                job1,
+                "scheduled".to_string(),
+                cancel1,
+                test_active_runs()
+            ),
+            run_job(
+                pool2,
+                None,
+                job2,
+                "scheduled".to_string(),
+                cancel2,
+                test_active_runs()
+            ),
         );
 
         assert_ne!(

@@ -4,15 +4,44 @@
 //! SCHED-05: Per-job timeout enforced; timeout produces status=timeout with partial logs.
 //! SCHED-06: Concurrent runs of the same job each create separate job_runs rows.
 
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bollard::Docker;
 use serde::Deserialize;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use super::RunResult;
 use super::command::{self, RunStatus};
-use super::log_pipeline::{self, DEFAULT_BATCH_SIZE, DEFAULT_CHANNEL_CAPACITY, LogReceiver};
+
+/// Closed-enum failure reasons for the cronduit_run_failures_total metric (D-05).
+/// Cardinality fixed at 6 values -- never add unbounded labels.
+pub enum FailureReason {
+    ImagePullFailed,
+    NetworkTargetUnavailable,
+    Timeout,
+    ExitNonzero,
+    Abandoned,
+    Unknown,
+}
+
+impl FailureReason {
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            Self::ImagePullFailed => "image_pull_failed",
+            Self::NetworkTargetUnavailable => "network_target_unavailable",
+            Self::Timeout => "timeout",
+            Self::ExitNonzero => "exit_nonzero",
+            Self::Abandoned => "abandoned",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+use super::log_pipeline::{
+    self, DEFAULT_BATCH_SIZE, DEFAULT_CHANNEL_CAPACITY, LogLine, LogReceiver,
+};
 use crate::db::DbPool;
 use crate::db::queries::{DbJob, finalize_run, insert_log_batch, insert_running_run};
 
@@ -39,6 +68,7 @@ pub async fn run_job(
     job: DbJob,
     trigger: String,
     cancel: CancellationToken,
+    active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
 ) -> RunResult {
     let start = tokio::time::Instant::now();
 
@@ -67,12 +97,24 @@ pub async fn run_job(
         "run started"
     );
 
+    // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
+    let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
+    active_runs
+        .write()
+        .await
+        .insert(run_id, broadcast_tx.clone());
+
     // 2. Create log channel.
     let (sender, receiver) = log_pipeline::channel(DEFAULT_CHANNEL_CAPACITY);
 
     // 3. Spawn log writer task.
     let writer_pool = pool.clone();
-    let writer_handle = tokio::spawn(log_writer_task(writer_pool, run_id, receiver));
+    let writer_handle = tokio::spawn(log_writer_task(
+        writer_pool,
+        run_id,
+        receiver,
+        broadcast_tx.clone(),
+    ));
 
     // 4. Dispatch to executor based on job type.
     // Negative or zero timeout_secs (e.g. from corrupted DB) is treated as "no timeout".
@@ -220,6 +262,20 @@ pub async fn run_job(
         );
     }
 
+    // 7b. Record Prometheus metrics (OPS-02, D-07).
+    let duration_secs = start.elapsed().as_secs_f64();
+    metrics::counter!("cronduit_runs_total", "job" => job.name.clone(), "status" => status_str.to_string()).increment(1);
+    metrics::histogram!("cronduit_run_duration_seconds", "job" => job.name.clone())
+        .record(duration_secs);
+    if status_str != "success" {
+        let reason = classify_failure_reason(status_str, exec_result.error_message.as_deref());
+        metrics::counter!("cronduit_run_failures_total", "job" => job.name.clone(), "reason" => reason.as_label().to_string()).increment(1);
+    }
+
+    // 7c. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
+    active_runs.write().await.remove(&run_id);
+    drop(broadcast_tx);
+
     tracing::info!(
         target: "cronduit.run",
         job = %job.name,
@@ -235,16 +291,48 @@ pub async fn run_job(
     }
 }
 
+/// Classify a run failure into one of the 6 FailureReason variants (D-05).
+///
+/// Maps error_message strings from docker_preflight, docker_pull, and docker_orphan
+/// to the closed enum. Unknown errors default to `Unknown`.
+fn classify_failure_reason(status: &str, error_msg: Option<&str>) -> FailureReason {
+    match status {
+        "timeout" => FailureReason::Timeout,
+        "failed" => FailureReason::ExitNonzero,
+        "error" => match error_msg {
+            Some(msg) if msg.starts_with("network_target_unavailable:") => {
+                FailureReason::NetworkTargetUnavailable
+            }
+            Some(msg) if msg.starts_with("image pull failed:") => FailureReason::ImagePullFailed,
+            Some("orphaned at restart") => FailureReason::Abandoned,
+            _ => FailureReason::Unknown,
+        },
+        // "cancelled" (shutdown) and any other unexpected status
+        _ => FailureReason::Unknown,
+    }
+}
+
 /// Log writer task that drains log lines from the receiver in micro-batches
-/// and inserts them into job_logs.
+/// and inserts them into job_logs, while also publishing each line to the
+/// broadcast channel for SSE subscribers (UI-14).
 ///
 /// D-12: Micro-batch inserts of DEFAULT_BATCH_SIZE (64) lines per transaction.
-async fn log_writer_task(pool: DbPool, run_id: i64, receiver: LogReceiver) {
+async fn log_writer_task(
+    pool: DbPool,
+    run_id: i64,
+    receiver: LogReceiver,
+    broadcast_tx: tokio::sync::broadcast::Sender<LogLine>,
+) {
     loop {
         let batch = receiver.drain_batch_async(DEFAULT_BATCH_SIZE).await;
         if batch.is_empty() {
             // Channel closed and fully drained.
             break;
+        }
+        // Publish each line to the broadcast channel for SSE subscribers.
+        // Ignore SendError if no subscribers are connected (T-6-02).
+        for line in &batch {
+            let _ = broadcast_tx.send(line.clone());
         }
         let tuples: Vec<(String, String, String)> = batch
             .into_iter()
@@ -271,6 +359,10 @@ mod tests {
         let pool = DbPool::connect("sqlite::memory:").await.unwrap();
         pool.migrate().await.unwrap();
         pool
+    }
+
+    fn test_active_runs() -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>> {
+        Arc::new(RwLock::new(HashMap::new()))
     }
 
     async fn insert_test_job(
@@ -314,7 +406,15 @@ mod tests {
             insert_test_job(&pool, "echo-job", "command", r#"{"command":"echo hello"}"#).await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            cancel,
+            test_active_runs(),
+        )
+        .await;
 
         assert_eq!(result.status, "success");
         assert!(result.run_id > 0);
@@ -372,7 +472,15 @@ mod tests {
         .await;
 
         let cancel = CancellationToken::new();
-        let result = run_job(pool.clone(), None, job, "scheduled".to_string(), cancel).await;
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            cancel,
+            test_active_runs(),
+        )
+        .await;
 
         assert_eq!(result.status, "success");
         assert!(result.run_id > 0);
@@ -422,6 +530,7 @@ mod tests {
             job_with_short_timeout,
             "scheduled".to_string(),
             cancel,
+            test_active_runs(),
         )
         .await;
 
@@ -473,9 +582,11 @@ mod tests {
         let job1 = job.clone();
         let job2 = job.clone();
 
+        let active1 = test_active_runs();
+        let active2 = test_active_runs();
         let (r1, r2) = tokio::join!(
-            run_job(pool1, None, job1, "scheduled".to_string(), cancel1),
-            run_job(pool2, None, job2, "scheduled".to_string(), cancel2),
+            run_job(pool1, None, job1, "scheduled".to_string(), cancel1, active1),
+            run_job(pool2, None, job2, "scheduled".to_string(), cancel2, active2),
         );
 
         assert_ne!(

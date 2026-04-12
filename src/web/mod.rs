@@ -33,6 +33,18 @@ pub struct AppState {
     pub tz: chrono_tz::Tz,
     pub last_reload: std::sync::Arc<std::sync::Mutex<Option<ReloadState>>>,
     pub watch_config: bool,
+    /// Prometheus metrics handle for rendering /metrics endpoint (OPS-02).
+    pub metrics_handle: metrics_exporter_prometheus::PrometheusHandle,
+    /// Broadcast channels for active (in-progress) runs, keyed by run_id.
+    /// SSE handlers subscribe to these for real-time log streaming (UI-14).
+    pub active_runs: std::sync::Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<
+                i64,
+                tokio::sync::broadcast::Sender<crate::scheduler::log_pipeline::LogLine>,
+            >,
+        >,
+    >,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -52,11 +64,17 @@ pub fn router(state: AppState) -> Router {
             "/partials/log-viewer/{run_id}",
             get(handlers::run_detail::log_viewer_partial),
         )
+        .route(
+            "/partials/runs/{run_id}/logs",
+            get(handlers::run_detail::static_log_partial),
+        )
         .route("/settings", get(handlers::settings::settings))
         .route("/health", get(handlers::health::health))
         .route("/api/jobs/{id}/run", post(handlers::api::run_now))
         .route("/api/reload", post(handlers::api::reload))
         .route("/api/jobs/{id}/reroll", post(handlers::api::reroll))
+        .route("/metrics", get(handlers::metrics::metrics_handler))
+        .route("/events/runs/{run_id}/logs", get(handlers::sse::sse_logs))
         .route("/static/{*path}", get(assets::static_handler))
         .route("/vendor/{*path}", get(assets::vendor_handler))
         .with_state(state)

@@ -182,6 +182,9 @@ pub async fn sync_config_to_db(
     // Fetch final enabled job list.
     let jobs = get_enabled_jobs(pool).await?;
 
+    // Update Prometheus gauge with current enabled job count (OPS-02).
+    metrics::gauge!("cronduit_jobs_total").set(jobs.len() as f64);
+
     tracing::info!(
         target: "cronduit.sync",
         inserted,

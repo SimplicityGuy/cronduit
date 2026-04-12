@@ -226,7 +226,14 @@ Plans:
 - Pitfall 11 (retention pruning under load): batched deletes, WAL checkpoint after prune, separate log vs run retention.
 - Pitfall 17 (metrics cardinality explosion): closed-enum `reason` label, no `run_id` label, documented scrape guidance.
 
-**Plans**: TBD
+**Plans**: 5 plans (2 waves)
+
+Plans:
+- [x] 06-01-PLAN.md -- SSE log streaming: broadcast channel fan-out + SSE handler + Run Detail template (Wave 1)
+- [x] 06-02-PLAN.md -- Prometheus metrics: metrics facade + /metrics endpoint + scheduler instrumentation (Wave 1)
+- [x] 06-03-PLAN.md -- Retention pruner: daily batched deletes + WAL checkpoint (Wave 1)
+- [x] 06-04-PLAN.md -- Release docs: README quickstart + docker-compose + THREAT_MODEL.md (Wave 2)
+- [x] 06-05-PLAN.md -- Release CI: release.yml workflow + git-cliff + OCI labels (Wave 2)
 
 ---
 

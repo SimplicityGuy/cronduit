@@ -1,0 +1,26 @@
+# Cronduit quickstart -- run `docker compose up` to get started.
+#
+# This exposes port 8080 for immediate access. For production deployments,
+# replace `ports:` with `expose:` and put Cronduit behind a reverse proxy
+# with authentication (Traefik, Caddy, nginx basic auth, etc.).
+#
+# Prerequisites: Docker with Compose v2+
+# Usage: docker compose -f examples/docker-compose.yml up -d
+# Web UI: http://localhost:8080
+
+services:
+  cronduit:
+    image: ghcr.io/simplicityguy/cronduit:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./cronduit.toml:/etc/cronduit/config.toml:ro
+      - cronduit-data:/data
+    environment:
+      - RUST_LOG=info,cronduit=debug
+      - DATABASE_URL=sqlite:///data/cronduit.db
+    restart: unless-stopped
+
+volumes:
+  cronduit-data:

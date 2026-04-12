@@ -1,0 +1,15 @@
+# Prometheus scrape configuration for Cronduit.
+# Copy this into your existing prometheus.yml under scrape_configs:
+#
+# Usage:
+#   scrape_configs:
+#     - !include examples/prometheus.yml
+#
+# Or copy the job definition below into your scrape_configs array.
+
+- job_name: 'cronduit'
+  scrape_interval: 15s
+  static_configs:
+    - targets: ['localhost:8080']
+  # If Cronduit is behind a reverse proxy on a subpath:
+  # metrics_path: '/metrics'
