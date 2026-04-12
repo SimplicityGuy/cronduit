@@ -89,7 +89,7 @@ pub async fn do_reload(
                     added: sync_result.inserted,
                     updated: sync_result.updated,
                     disabled: sync_result.disabled,
-                    unchanged: 0, // TODO: track unchanged count in SyncResult
+                    unchanged: sync_result.unchanged,
                     error_message: None,
                 },
                 Some(new_heap),
@@ -170,10 +170,11 @@ pub async fn do_reroll(
         );
     }
 
-    // For now, just use the existing resolved schedule as-is.
-    // Plan 01 will add the random module with proper @random resolution.
-    // When that lands, this will call random::resolve_schedule().
-    let new_resolved = job.resolved_schedule.clone();
+    // Resolve a fresh @random schedule (RAND-03c: explicit re-randomize)
+    let new_resolved = {
+        let mut rng = rand::thread_rng();
+        crate::scheduler::random::resolve_schedule(&job.schedule, None, &mut rng)
+    };
 
     // Update DB
     match queries::update_resolved_schedule(pool, job_id, &new_resolved).await {
