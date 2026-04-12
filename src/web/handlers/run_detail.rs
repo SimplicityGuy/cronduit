@@ -34,6 +34,7 @@ const LOG_PAGE_SIZE: i64 = 500;
 struct RunDetailPage {
     run: RunDetailView,
     run_id: i64,
+    is_running: bool,
     logs: Vec<LogLineView>,
     total_logs: i64,
     has_older: bool,
@@ -45,6 +46,16 @@ struct RunDetailPage {
 struct LogViewerPartial {
     run_id: i64,
     logs: Vec<LogLineView>,
+    has_older: bool,
+    next_offset: i64,
+}
+
+#[derive(Template)]
+#[template(path = "partials/static_log_viewer.html")]
+struct StaticLogViewerPartial {
+    run_id: i64,
+    logs: Vec<LogLineView>,
+    total_logs: i64,
     has_older: bool,
     next_offset: i64,
 }
@@ -158,9 +169,12 @@ pub async fn run_detail(
             error_message: run.error_message,
         };
 
+        let is_running = run_view.status == "running";
+
         RunDetailPage {
             run: run_view,
             run_id,
+            is_running,
             logs,
             total_logs,
             has_older,
@@ -183,6 +197,25 @@ pub async fn log_viewer_partial(
     LogViewerPartial {
         run_id,
         logs,
+        has_older,
+        next_offset,
+    }
+    .into_web_template()
+    .into_response()
+}
+
+/// HTMX partial handler that returns the static log viewer for a completed run.
+/// Used by the SSE `run_complete` event to swap from live to static view (D-04).
+pub async fn static_log_partial(
+    State(state): State<AppState>,
+    Path(run_id): Path<i64>,
+) -> impl IntoResponse {
+    let (logs, total_logs, has_older, next_offset) = fetch_logs(&state.pool, run_id, 0).await;
+
+    StaticLogViewerPartial {
+        run_id,
+        logs,
+        total_logs,
         has_older,
         next_offset,
     }

@@ -62,6 +62,10 @@ pub fn router(state: AppState) -> Router {
             "/partials/log-viewer/{run_id}",
             get(handlers::run_detail::log_viewer_partial),
         )
+        .route(
+            "/partials/runs/{run_id}/logs",
+            get(handlers::run_detail::static_log_partial),
+        )
         .route("/settings", get(handlers::settings::settings))
         .route("/health", get(handlers::health::health))
         .route("/api/jobs/{id}/run", post(handlers::api::run_now))
