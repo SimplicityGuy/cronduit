@@ -23,6 +23,7 @@ async fn test_app() -> axum::Router {
         tz: chrono_tz::Tz::UTC,
         last_reload: std::sync::Arc::new(std::sync::Mutex::new(None)),
         watch_config: false,
+        active_runs: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
     router(state)

@@ -658,6 +658,7 @@ dependencies = [
  "askama",
  "askama_web",
  "assert_cmd",
+ "async-stream",
  "axum",
  "axum-extra",
  "axum-htmx",

@@ -126,6 +126,10 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         );
     }
 
+    let active_runs = std::sync::Arc::new(
+        tokio::sync::RwLock::new(std::collections::HashMap::new()),
+    );
+
     let state = AppState {
         started_at: chrono::Utc::now(),
         version: env!("CARGO_PKG_VERSION"),
@@ -135,6 +139,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         tz,
         last_reload: std::sync::Arc::new(std::sync::Mutex::new(None)),
         watch_config: cfg.server.watch_config,
+        active_runs: active_runs.clone(),
     };
 
     // Create Docker client (non-fatal if unavailable).
@@ -184,6 +189,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cfg.server.shutdown_grace,
         cmd_rx,
         config_path.to_path_buf(),
+        active_runs,
     );
 
     // Serve web (blocks until cancel).

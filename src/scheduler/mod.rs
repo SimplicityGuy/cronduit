@@ -22,12 +22,15 @@ pub mod sync;
 
 use crate::db::DbPool;
 use crate::db::queries::DbJob;
+use crate::scheduler::log_pipeline::LogLine;
 use bollard::Docker;
 use chrono::Utc;
 use chrono_tz::Tz;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
 
@@ -47,6 +50,8 @@ pub struct SchedulerLoop {
     pub shutdown_grace: Duration,
     pub cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
     pub config_path: PathBuf,
+    /// Broadcast channels for active runs (shared with AppState for SSE, UI-14).
+    pub active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
 }
 
 impl SchedulerLoop {
@@ -95,6 +100,7 @@ impl SchedulerLoop {
                                 job.clone(),
                                 "catch-up".to_string(),
                                 child_cancel,
+                                self.active_runs.clone(),
                             ));
                             tracing::warn!(
                                 target: "cronduit.scheduler",
@@ -118,6 +124,7 @@ impl SchedulerLoop {
                                 job.clone(),
                                 "scheduled".to_string(),
                                 child_cancel,
+                                self.active_runs.clone(),
                             ));
                             tracing::info!(
                                 target: "cronduit.scheduler",
@@ -161,6 +168,7 @@ impl SchedulerLoop {
                                     job.clone(),
                                     "manual".to_string(),
                                     child_cancel,
+                                    self.active_runs.clone(),
                                 ));
                                 tracing::info!(
                                     target: "cronduit.scheduler",
@@ -209,6 +217,7 @@ impl SchedulerLoop {
                                                 job.clone(),
                                                 "manual".to_string(),
                                                 child_cancel,
+                                                self.active_runs.clone(),
                                             ));
                                         }
                                     }
@@ -374,6 +383,7 @@ pub fn spawn(
     shutdown_grace: Duration,
     cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
     config_path: PathBuf,
+    active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
 ) -> JoinHandle<()> {
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
@@ -385,6 +395,7 @@ pub fn spawn(
         shutdown_grace,
         cmd_rx,
         config_path,
+        active_runs,
     };
     tokio::spawn(scheduler.run())
 }
@@ -399,6 +410,10 @@ mod tests {
         let pool = DbPool::connect("sqlite::memory:").await.unwrap();
         pool.migrate().await.unwrap();
         pool
+    }
+
+    fn test_active_runs() -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<log_pipeline::LogLine>>>> {
+        Arc::new(RwLock::new(HashMap::new()))
     }
 
     fn make_test_job(id: i64, name: &str, command: &str) -> DbJob {
@@ -450,6 +465,7 @@ mod tests {
             job,
             "test".to_string(),
             child_cancel,
+            test_active_runs(),
         ));
 
         // Cancel after a small delay to let the run start.
@@ -512,6 +528,7 @@ mod tests {
             job,
             "test".to_string(),
             child_cancel,
+            test_active_runs(),
         ));
 
         // Cancel immediately.
