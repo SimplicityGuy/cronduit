@@ -11,6 +11,7 @@ mod sse_tests {
     // TODO: Import test helpers, AppState builder, axum test utilities
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn sse_active_run_streams_log_lines() {
         // Setup: create AppState with active_runs containing a broadcast sender
         // Act: send GET /events/runs/:id/logs via axum test client
@@ -19,6 +20,7 @@ mod sse_tests {
     }
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn sse_completed_run_returns_immediate_close() {
         // Setup: create AppState with empty active_runs
         // Act: send GET /events/runs/999/logs
@@ -27,6 +29,7 @@ mod sse_tests {
     }
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn sse_slow_subscriber_gets_skip_marker() {
         // Setup: create broadcast channel with capacity 4
         // Send 10 messages rapidly, then subscribe
@@ -35,6 +38,7 @@ mod sse_tests {
     }
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn sse_stream_closes_on_run_finalize() {
         // Setup: create active broadcast channel, subscribe
         // Act: drop the broadcast sender (simulating run finalization)

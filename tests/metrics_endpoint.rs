@@ -11,6 +11,7 @@ mod metrics_tests {
     // TODO: Import test helpers, AppState builder, axum test utilities
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn metrics_endpoint_returns_prometheus_format() {
         // Setup: create AppState with metrics_handle
         // Act: GET /metrics
@@ -20,6 +21,7 @@ mod metrics_tests {
     }
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn metrics_contain_all_four_families_after_run() {
         // Setup: create AppState, simulate a completed run
         // Act: GET /metrics
@@ -29,6 +31,7 @@ mod metrics_tests {
     }
 
     #[test]
+    #[ignore = "not yet implemented"]
     fn failure_reason_labels_are_bounded_enum() {
         // Assert: FailureReason enum has exactly 6 variants
         // Assert: each variant produces a valid label string
@@ -37,6 +40,7 @@ mod metrics_tests {
     }
 
     #[test]
+    #[ignore = "not yet implemented"]
     fn failure_reason_classification_covers_known_errors() {
         // Assert: classify_failure_reason("timeout", None) => Timeout
         // Assert: classify_failure_reason("failed", None) => ExitNonzero

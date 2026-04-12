@@ -12,6 +12,7 @@ mod retention_tests {
     // TODO: Import test helpers, DbPool, in-memory SQLite setup
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn retention_deletes_old_logs_in_batches() {
         // Setup: create in-memory SQLite, insert 2500 old log rows
         // Act: call delete_old_logs_batch in a loop with batch_size=1000
@@ -20,6 +21,7 @@ mod retention_tests {
     }
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn retention_deletes_runs_after_logs_removed() {
         // Setup: create in-memory SQLite, insert old runs with logs
         // Act: delete logs first, then delete runs
@@ -28,6 +30,7 @@ mod retention_tests {
     }
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn retention_respects_cutoff_date() {
         // Setup: insert runs at various dates (30d, 60d, 100d ago)
         // Act: prune with 90d retention
@@ -36,6 +39,7 @@ mod retention_tests {
     }
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn retention_wal_checkpoint_fires_after_threshold() {
         // Setup: create in-memory SQLite, insert >10000 old rows
         // Act: run full prune cycle
@@ -44,6 +48,7 @@ mod retention_tests {
     }
 
     #[tokio::test]
+    #[ignore = "not yet implemented"]
     async fn retention_cancellation_stops_prune() {
         // Setup: create in-memory SQLite with many old rows
         // Act: cancel the CancellationToken after first batch
