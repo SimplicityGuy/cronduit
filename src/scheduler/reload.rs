@@ -190,6 +190,12 @@ pub async fn do_reroll(
             // Update in-memory map
             if let Some(mem_job) = jobs.get_mut(&job_id) {
                 mem_job.resolved_schedule = new_resolved;
+            } else {
+                tracing::warn!(
+                    target: "cronduit.reload",
+                    job_id,
+                    "reroll: job not in in-memory map; DB updated but scheduler will use stale schedule until next reload"
+                );
             }
 
             // Rebuild fire heap
