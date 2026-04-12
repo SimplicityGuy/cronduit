@@ -175,6 +175,8 @@
   .cd-badge--timeout { color: var(--cd-status-disabled); background: var(--cd-status-disabled-bg); }
   .cd-badge--error { color: var(--cd-status-error); background: var(--cd-status-error-bg); }
   .cd-badge--shutdown { color: var(--cd-text-secondary); background: var(--cd-bg-surface-raised); }
+  .cd-badge--random { color: var(--cd-green); background: var(--cd-green-dim); }
+  .cd-badge--disabled { color: var(--cd-status-disabled); background: var(--cd-status-disabled-bg); }
 
   .cd-btn-primary {
     background: var(--cd-green);
