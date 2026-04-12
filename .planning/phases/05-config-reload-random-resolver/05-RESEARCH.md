@@ -560,19 +560,19 @@ document.body.addEventListener('showToast', function(e) {
 | A3 | Sorting `@random` jobs by constraint severity before slot allocation improves gap compliance | Pitfall 2 | Medium -- suboptimal ordering may cause more WARN logs but doesn't break functionality |
 | A4 | `notify-debouncer-mini` 0.4 is the latest version compatible with `notify` 8.2 | Standard Stack | Low -- verified against crates.io that it depends on notify 8.x |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **`@random` with 6/7-field cron expressions (seconds/years)**
+1. **[RESOLVED] `@random` with 6/7-field cron expressions (seconds/years)**
    - What we know: `croner` supports 5/6/7-field cron. The spec examples only show 5-field.
    - What's unclear: Should `@random` work in seconds or year fields?
    - Recommendation: Support `@random` only in 5-field expressions for v1. If a 6/7-field schedule uses `@random`, reject with a clear error. This keeps the resolver simple.
 
-2. **`@random` combined with step/range syntax**
+2. **[RESOLVED] `@random` combined with step/range syntax**
    - What we know: A field like `@random` replaces the entire field position.
    - What's unclear: Can a user write `@random/2` (random starting point with step 2)?
    - Recommendation: No. `@random` is a standalone token per field. Document this limitation. Users who want partial randomization can use the re-roll API.
 
-3. **Reload tracking persistence across restarts**
+3. **[RESOLVED] Reload tracking persistence across restarts**
    - What we know: D-01 says settings page shows last reload timestamp. D-02 shows last failed attempt.
    - What's unclear: Should this survive process restarts (stored in DB) or be in-memory only?
    - Recommendation: In-memory only (via `AppState`). A restart inherently reloads config at startup, so the "last reload" resets to startup time.

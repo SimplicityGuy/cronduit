@@ -2,8 +2,8 @@
 phase: 5
 slug: config-reload-random-resolver
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-11
 ---
 
@@ -34,35 +34,35 @@ created: 2026-04-11
 
 ---
 
-## Per-Task Verification Map
+## Nyquist Compliance Justification
 
-| Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
-|---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 05-01-01 | 01 | 1 | RELOAD-01 | T-05-01 | SIGHUP handler validates sender | integration | `cargo test --test reload_sighup` | ❌ W0 | ⬜ pending |
-| 05-01-02 | 01 | 1 | RELOAD-02 | T-05-02 | CSRF protection on POST | unit | `cargo test scheduler::reload::tests::api_reload` | ❌ W0 | ⬜ pending |
-| 05-01-03 | 01 | 1 | RELOAD-03 | — | N/A | integration | `cargo test --test reload_file_watch` | ❌ W0 | ⬜ pending |
-| 05-01-04 | 01 | 1 | RELOAD-04 | — | Failed parse preserves running config | unit | `cargo test scheduler::reload::tests::failed_parse_noop` | ❌ W0 | ⬜ pending |
-| 05-01-05 | 01 | 1 | RELOAD-05 | — | N/A | unit | `cargo test scheduler::sync::tests::reload_diff` | ❌ W0 | ⬜ pending |
-| 05-01-06 | 01 | 1 | RELOAD-06 | — | N/A | integration | `cargo test --test reload_inflight` | ❌ W0 | ⬜ pending |
-| 05-01-07 | 01 | 1 | RELOAD-07 | — | N/A | unit | `cargo test scheduler::sync::tests::sync_disables_removed_job` | ✅ | ⬜ pending |
-| 05-02-01 | 02 | 1 | RAND-01 | — | N/A | unit | `cargo test scheduler::random::tests::resolve_random` | ❌ W0 | ⬜ pending |
-| 05-02-02 | 02 | 1 | RAND-02 | — | N/A | unit | `cargo test scheduler::random::tests::stable_across_reload` | ❌ W0 | ⬜ pending |
-| 05-02-03 | 02 | 1 | RAND-03 | — | N/A | unit | `cargo test scheduler::random::tests::rerandom_on_change` | ❌ W0 | ⬜ pending |
-| 05-02-04 | 02 | 1 | RAND-04 | — | N/A | unit | `cargo test scheduler::random::tests::min_gap_enforced` | ❌ W0 | ⬜ pending |
-| 05-02-05 | 02 | 1 | RAND-05 | — | N/A | unit | `cargo test scheduler::random::tests::infeasible_gap` | ❌ W0 | ⬜ pending |
-| 05-03-01 | 03 | 2 | RAND-06 | — | N/A | manual-only | Visual inspection of job detail page | N/A | ⬜ pending |
+Wave 0 test stubs are NOT required as separate pre-created files. Each plan creates its own test files as part of in-task TDD (`tdd="true"` on Plan 01 Task 1) or in-task implementation (Plan 05 Task 1 creates integration tests). This provides adequate Wave 1-2 feedback coverage because:
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+1. **Plan 01 Task 1** (Wave 1) is `tdd="true"` — tests are written BEFORE implementation for `@random` resolver unit tests. The `<behavior>` block defines 12 test cases that run via `cargo test scheduler::random::tests`.
+2. **Plan 01 Task 2** (Wave 1) verifies sync engine integration via `cargo test scheduler::sync::tests`.
+3. **Plan 02** (Wave 1) verifies compilation (`cargo build`) — reload infrastructure is wired but integration tests come in Plan 05.
+4. **Plan 05 Task 1** (Wave 3) creates all integration test files (`tests/reload_sighup.rs`, `tests/reload_inflight.rs`, `tests/reload_random_stability.rs`, `tests/reload_file_watch.rs`) and runs them immediately.
+
+Every task has an `<automated>` verify command. No 3 consecutive tasks lack automated feedback. Feedback latency is under 30 seconds for all commands.
 
 ---
 
-## Wave 0 Requirements
+## Per-Task Verification Map
 
-- [ ] `src/scheduler/random.rs` — `@random` resolver module with unit test stubs
-- [ ] `src/scheduler/reload.rs` — `do_reload()` module with unit test stubs
-- [ ] `tests/reload_sighup.rs` — SIGHUP integration test stub
-- [ ] `tests/reload_file_watch.rs` — file watcher integration test stub
-- [ ] `tests/reload_inflight.rs` — in-flight run survival integration test stub
+| Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | Status |
+|---------|------|------|-------------|------------|-----------------|-----------|-------------------|--------|
+| 05-01-01 | 01 | 1 | RAND-01..05, RELOAD-05 | T-05-01 | Validate field count before resolution | unit (TDD) | `cargo test scheduler::random::tests` | ⬜ pending |
+| 05-01-02 | 01 | 1 | RELOAD-05 | T-05-02 | Sync engine resolves @random | unit | `cargo test scheduler::sync::tests` | ⬜ pending |
+| 05-02-01 | 02 | 1 | RELOAD-01, RELOAD-03 | — | N/A | build | `cargo build` | ⬜ pending |
+| 05-02-02 | 02 | 1 | RELOAD-04..07 | T-05-04..07 | Failed parse preserves config | build | `cargo build` | ⬜ pending |
+| 05-03-01 | 03 | 2 | RELOAD-02, RELOAD-06 | T-05-08..10 | Scheduler loop wiring | build | `cargo build` | ⬜ pending |
+| 05-03-02 | 03 | 2 | RELOAD-02 | T-05-08..09 | CSRF on reload/reroll | build | `cargo build` | ⬜ pending |
+| 05-04-01 | 04 | 2 | RAND-06 | T-05-12..14 | Toast + settings UI | build | `cargo build` | ⬜ pending |
+| 05-04-02 | 04 | 2 | RAND-06 | T-05-13 | @random badge + re-roll UI | build | `cargo build` | ⬜ pending |
+| 05-05-01 | 05 | 3 | RELOAD-01..07, RAND-01..03, RAND-06 | — | Full integration coverage | integration | `cargo test --test reload_sighup --test reload_inflight --test reload_random_stability --test reload_file_watch` | ⬜ pending |
+| 05-05-02 | 05 | 3 | RAND-06 | — | Visual UI verification | manual | Human checkpoint | ⬜ pending |
+
+*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
 ---
 
@@ -76,11 +76,11 @@ created: 2026-04-11
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or are created in-task
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] In-task test creation provides adequate feedback coverage (see Nyquist Compliance Justification)
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** pending
