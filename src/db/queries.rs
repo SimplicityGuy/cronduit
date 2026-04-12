@@ -795,7 +795,7 @@ pub async fn get_log_lines(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, stream, ts, line FROM job_logs WHERE run_id = ?1 ORDER BY id DESC LIMIT ?2 OFFSET ?3",
+                "SELECT id, stream, ts, line FROM job_logs WHERE run_id = ?1 ORDER BY id ASC LIMIT ?2 OFFSET ?3",
             )
             .bind(run_id)
             .bind(limit)
@@ -823,7 +823,7 @@ pub async fn get_log_lines(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, stream, ts, line FROM job_logs WHERE run_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3",
+                "SELECT id, stream, ts, line FROM job_logs WHERE run_id = $1 ORDER BY id ASC LIMIT $2 OFFSET $3",
             )
             .bind(run_id)
             .bind(limit)
