@@ -252,7 +252,16 @@ pub async fn run_job(
         );
     }
 
-    // 7b. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
+    // 7b. Record Prometheus metrics (OPS-02, D-07).
+    let duration_secs = start.elapsed().as_secs_f64();
+    metrics::counter!("cronduit_runs_total", "job" => job.name.clone(), "status" => status_str.to_string()).increment(1);
+    metrics::histogram!("cronduit_run_duration_seconds", "job" => job.name.clone()).record(duration_secs);
+    if status_str != "success" {
+        let reason = classify_failure_reason(status_str, exec_result.error_message.as_deref());
+        metrics::counter!("cronduit_run_failures_total", "job" => job.name.clone(), "reason" => reason.as_label().to_string()).increment(1);
+    }
+
+    // 7c. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
     active_runs.write().await.remove(&run_id);
     drop(broadcast_tx);
 
@@ -268,6 +277,27 @@ pub async fn run_job(
     RunResult {
         run_id,
         status: status_str.to_string(),
+    }
+}
+
+/// Classify a run failure into one of the 6 FailureReason variants (D-05).
+///
+/// Maps error_message strings from docker_preflight, docker_pull, and docker_orphan
+/// to the closed enum. Unknown errors default to `Unknown`.
+fn classify_failure_reason(status: &str, error_msg: Option<&str>) -> FailureReason {
+    match status {
+        "timeout" => FailureReason::Timeout,
+        "failed" => FailureReason::ExitNonzero,
+        "error" => match error_msg {
+            Some(msg) if msg.starts_with("network_target_unavailable:") => {
+                FailureReason::NetworkTargetUnavailable
+            }
+            Some(msg) if msg.starts_with("image pull failed:") => FailureReason::ImagePullFailed,
+            Some(msg) if msg == "orphaned at restart" => FailureReason::Abandoned,
+            _ => FailureReason::Unknown,
+        },
+        // "cancelled" (shutdown) and any other unexpected status
+        _ => FailureReason::Unknown,
     }
 }
 
