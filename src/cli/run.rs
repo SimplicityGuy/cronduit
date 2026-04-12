@@ -134,6 +134,8 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cmd_tx,
         config_path: config_path.clone(),
         tz,
+        last_reload: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        watch_config: cfg.server.watch_config,
     };
 
     // Create Docker client (non-fatal if unavailable).

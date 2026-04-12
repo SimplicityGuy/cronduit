@@ -15,6 +15,14 @@ use tower_http::trace::TraceLayer;
 use crate::db::DbPool;
 use crate::scheduler::cmd::SchedulerCmd;
 
+/// Tracks the result of the most recent config reload for the settings page.
+#[derive(Clone)]
+pub struct ReloadState {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub status: String,
+    pub summary: String,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub started_at: chrono::DateTime<chrono::Utc>,
@@ -23,6 +31,8 @@ pub struct AppState {
     pub cmd_tx: tokio::sync::mpsc::Sender<SchedulerCmd>,
     pub config_path: std::path::PathBuf,
     pub tz: chrono_tz::Tz,
+    pub last_reload: std::sync::Arc<std::sync::Mutex<Option<ReloadState>>>,
+    pub watch_config: bool,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -45,6 +55,8 @@ pub fn router(state: AppState) -> Router {
         .route("/settings", get(handlers::settings::settings))
         .route("/health", get(handlers::health::health))
         .route("/api/jobs/{id}/run", post(handlers::api::run_now))
+        .route("/api/reload", post(handlers::api::reload))
+        .route("/api/jobs/{id}/reroll", post(handlers::api::reroll))
         .route("/static/{*path}", get(assets::static_handler))
         .route("/vendor/{*path}", get(assets::vendor_handler))
         .with_state(state)

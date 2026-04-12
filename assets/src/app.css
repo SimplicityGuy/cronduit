@@ -56,6 +56,7 @@
   /* Spacing */
   --cd-space-1: 4px;
   --cd-space-2: 8px;
+  --cd-space-3: 12px;
   --cd-space-4: 16px;
   --cd-space-6: 24px;
   --cd-space-8: 32px;
@@ -64,9 +65,14 @@
 
   /* Typography */
   --cd-text-xs: 0.65rem;
+  --cd-text-sm: 0.8rem;
   --cd-text-base: 0.9rem;
   --cd-text-lg: 1.25rem;
   --cd-text-xl: 1.5rem;
+
+  /* Radii */
+  --cd-radius-sm: 4px;
+  --cd-radius-md: 8px;
 }
 
 /* === Light mode === */

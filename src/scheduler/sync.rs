@@ -98,7 +98,6 @@ pub async fn sync_config_to_db(
     let mut unchanged: u64 = 0;
 
     // Build batch resolver input: (name, raw_schedule, existing_resolved_from_db).
-    let mut rng = rand::thread_rng();
     let mut batch_input: Vec<(String, String, Option<String>)> = Vec::new();
     for job in &config.jobs {
         let hash = compute_config_hash(job);
@@ -109,10 +108,13 @@ pub async fn sync_config_to_db(
             .map(|db_job| db_job.resolved_schedule.clone());
         batch_input.push((job.name.clone(), job.schedule.clone(), existing_resolved));
     }
-    let resolved_map: std::collections::HashMap<String, String> =
+    // Scope rng tightly to avoid Send issues with ThreadRng across awaits.
+    let resolved_map: std::collections::HashMap<String, String> = {
+        let mut rng = rand::thread_rng();
         random::resolve_random_schedules_batch(&batch_input, random_min_gap, &mut rng)
             .into_iter()
-            .collect();
+            .collect()
+    };
 
     for job in &config.jobs {
         let hash = compute_config_hash(job);
