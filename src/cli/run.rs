@@ -104,6 +104,10 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     // 7. Wire graceful shutdown + spawn scheduler + serve.
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<crate::scheduler::cmd::SchedulerCmd>(32);
 
+    let cancel = CancellationToken::new();
+    shutdown::install(cancel.clone());
+    shutdown::install_sighup(cmd_tx.clone());
+
     let state = AppState {
         started_at: chrono::Utc::now(),
         version: env!("CARGO_PKG_VERSION"),
@@ -112,8 +116,6 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         config_path: config_path.clone(),
         tz,
     };
-    let cancel = CancellationToken::new();
-    shutdown::install(cancel.clone());
 
     // Create Docker client (non-fatal if unavailable).
     let docker = match bollard::Docker::connect_with_local_defaults() {
@@ -161,6 +163,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cancel.clone(),
         cfg.server.shutdown_grace,
         cmd_rx,
+        config_path.to_path_buf(),
     );
 
     // Serve web (blocks until cancel).

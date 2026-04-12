@@ -13,6 +13,7 @@ pub mod docker_preflight;
 pub mod docker_pull;
 pub mod fire;
 pub mod log_pipeline;
+pub mod reload;
 pub mod run;
 pub mod script;
 pub mod sync;
@@ -23,6 +24,7 @@ use bollard::Docker;
 use chrono::Utc;
 use chrono_tz::Tz;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -42,6 +44,7 @@ pub struct SchedulerLoop {
     pub cancel: CancellationToken,
     pub shutdown_grace: Duration,
     pub cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
+    pub config_path: PathBuf,
 }
 
 impl SchedulerLoop {
@@ -50,9 +53,6 @@ impl SchedulerLoop {
     /// D-01: Selects over next-fire sleep, join_set reaping, and cancel token.
     /// D-02: Uses BinaryHeap<Reverse<FireEntry>> for efficient next-fire lookup.
     pub async fn run(mut self) {
-        // TODO(Phase 5): Config reload. Currently the job set is immutable for the
-        // scheduler's lifetime. Hot-reload will require rebuilding the heap and
-        // updating self.jobs via a channel or watch.
         let jobs_vec: Vec<DbJob> = self.jobs.values().cloned().collect();
         let mut heap = fire::build_initial_heap(&jobs_vec, self.tz);
         let mut join_set: JoinSet<RunResult> = JoinSet::new();
@@ -174,6 +174,30 @@ impl SchedulerLoop {
                                 );
                             }
                         }
+                        Some(cmd::SchedulerCmd::Reload { response_tx }) => {
+                            let (result, new_heap) = reload::do_reload(
+                                &self.pool,
+                                &self.config_path,
+                                &mut self.jobs,
+                                self.tz,
+                            ).await;
+                            if let Some(h) = new_heap {
+                                heap = h;
+                            }
+                            let _ = response_tx.send(result);
+                        }
+                        Some(cmd::SchedulerCmd::Reroll { job_id, response_tx }) => {
+                            let (result, new_heap) = reload::do_reroll(
+                                &self.pool,
+                                job_id,
+                                &mut self.jobs,
+                                self.tz,
+                            ).await;
+                            if let Some(h) = new_heap {
+                                heap = h;
+                            }
+                            let _ = response_tx.send(result);
+                        }
                         None => {
                             tracing::info!(target: "cronduit.scheduler", "command channel closed");
                             break;
@@ -284,6 +308,7 @@ pub fn spawn(
     cancel: CancellationToken,
     shutdown_grace: Duration,
     cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
+    config_path: PathBuf,
 ) -> JoinHandle<()> {
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
@@ -294,6 +319,7 @@ pub fn spawn(
         cancel,
         shutdown_grace,
         cmd_rx,
+        config_path,
     };
     tokio::spawn(scheduler.run())
 }

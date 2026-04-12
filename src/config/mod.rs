@@ -37,6 +37,10 @@ pub struct ServerConfig {
     pub shutdown_grace: Duration,
     #[serde(default = "default_log_retention", with = "humantime_serde")]
     pub log_retention: Duration,
+    /// Enable file watcher for automatic config reload (D-10, RELOAD-03).
+    /// Default: true. Disable with `watch_config = false` in `[server]`.
+    #[serde(default = "default_watch_config")]
+    pub watch_config: bool,
 }
 
 fn default_bind() -> String {
@@ -50,6 +54,9 @@ fn default_shutdown_grace() -> Duration {
 }
 fn default_log_retention() -> Duration {
     Duration::from_secs(60 * 60 * 24 * 90)
+}
+fn default_watch_config() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]

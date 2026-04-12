@@ -180,6 +180,7 @@ mod tests {
             timezone: "UTC".into(),
             shutdown_grace: Duration::from_secs(30),
             log_retention: Duration::from_secs(86400),
+            watch_config: true,
         }
     }
 
