@@ -54,10 +54,7 @@ command = "echo b"
 
     // Wait for debounce (500ms) + margin
     let received = tokio::time::timeout(Duration::from_secs(3), cmd_rx.recv()).await;
-    assert!(
-        received.is_ok(),
-        "should receive a command within timeout"
-    );
+    assert!(received.is_ok(), "should receive a command within timeout");
     let cmd = received.unwrap().expect("channel should not be closed");
     assert!(
         matches!(cmd, SchedulerCmd::Reload { .. }),
@@ -107,11 +104,10 @@ async fn rapid_edits_coalesced_by_debounce() {
     // There may be at most one more Reload (depending on timing), but not 5
     // Drain any remaining and count
     let mut extra_count = 0;
-    loop {
-        match tokio::time::timeout(Duration::from_millis(800), cmd_rx.recv()).await {
-            Ok(Some(_)) => extra_count += 1,
-            _ => break,
-        }
+    while let Ok(Some(_)) =
+        tokio::time::timeout(Duration::from_millis(800), cmd_rx.recv()).await
+    {
+        extra_count += 1;
     }
     assert!(
         extra_count <= 1,

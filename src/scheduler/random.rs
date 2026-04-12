@@ -13,11 +13,11 @@ use std::time::Duration;
 
 /// Valid ranges for each of the 5 standard cron fields.
 const FIELD_RANGES: [(u32, u32); 5] = [
-    (0, 59),  // minute
-    (0, 23),  // hour
-    (1, 31),  // day of month
-    (1, 12),  // month
-    (0, 6),   // day of week
+    (0, 59), // minute
+    (0, 23), // hour
+    (1, 31), // day of month
+    (1, 12), // month
+    (0, 6),  // day of week
 ];
 
 /// Minutes in a day, used for circular gap calculations.
@@ -42,11 +42,7 @@ pub fn is_random_schedule(schedule: &str) -> bool {
 /// - Non-`@random` fields pass through unchanged.
 /// - Validates the result with `croner::Cron::from_str()` and retries if invalid.
 /// - T-05-01: Rejects schedules that don't have exactly 5 fields.
-pub fn resolve_schedule(
-    raw: &str,
-    existing_resolved: Option<&str>,
-    rng: &mut impl Rng,
-) -> String {
+pub fn resolve_schedule(raw: &str, existing_resolved: Option<&str>, rng: &mut impl Rng) -> String {
     // If we have an existing resolved schedule, preserve it (stability across reloads).
     if let Some(existing) = existing_resolved {
         return existing.to_string();
@@ -126,7 +122,7 @@ fn minute_of_day(schedule: &str) -> Option<u32> {
 
 /// Circular distance between two times on a 24-hour ring.
 fn circular_distance(a: u32, b: u32) -> u32 {
-    let diff = if a > b { a - b } else { b - a };
+    let diff = a.abs_diff(b);
     diff.min(MINUTES_IN_DAY - diff)
 }
 
@@ -171,7 +167,10 @@ pub fn resolve_random_schedules_batch(
             random_jobs.push((i, name, raw, existing));
         } else {
             // Non-random: identity resolution.
-            results.push((name.clone(), resolve_schedule(raw, existing.as_deref(), rng)));
+            results.push((
+                name.clone(),
+                resolve_schedule(raw, existing.as_deref(), rng),
+            ));
         }
     }
 
@@ -206,16 +205,15 @@ pub fn resolve_random_schedules_batch(
         }
 
         // If existing resolved is provided, check if it satisfies the gap.
-        if let Some(ex) = existing.as_deref() {
-            if let Some(mod_val) = minute_of_day(ex) {
-                if has_sufficient_gap(mod_val, &allocated_slots, gap_minutes) {
-                    allocated_slots.push(mod_val);
-                    results.push(((*name).clone(), ex.to_string()));
-                    continue;
-                }
-            }
-            // Existing doesn't satisfy gap; re-resolve.
+        if let Some(ex) = existing.as_deref()
+            && let Some(mod_val) = minute_of_day(ex)
+            && has_sufficient_gap(mod_val, &allocated_slots, gap_minutes)
+        {
+            allocated_slots.push(mod_val);
+            results.push(((*name).clone(), ex.to_string()));
+            continue;
         }
+        // Existing doesn't satisfy gap or not parseable; re-resolve.
 
         // Try to find a slot that satisfies the gap constraint.
         let mut best_candidate: Option<(String, u32, u32)> = None; // (schedule, mod, min_dist)
@@ -237,7 +235,7 @@ pub fn resolve_random_schedules_batch(
                     .unwrap_or(MINUTES_IN_DAY);
                 if best_candidate
                     .as_ref()
-                    .map_or(true, |(_s, _m, d)| min_dist > *d)
+                    .is_none_or(|(_s, _m, d)| min_dist > *d)
                 {
                     best_candidate = Some((candidate, mod_val, min_dist));
                 }
@@ -267,8 +265,8 @@ pub fn resolve_random_schedules_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     fn seeded_rng() -> StdRng {
         StdRng::seed_from_u64(42)
@@ -324,11 +322,7 @@ mod tests {
         let mut rng = seeded_rng();
         // When existing_resolved matches the pattern and raw hasn't changed,
         // should return existing value.
-        let result = resolve_schedule(
-            "@random 14 * * *",
-            Some("42 14 * * *"),
-            &mut rng,
-        );
+        let result = resolve_schedule("@random 14 * * *", Some("42 14 * * *"), &mut rng);
         assert_eq!(result, "42 14 * * *");
     }
 
@@ -336,12 +330,11 @@ mod tests {
     fn stable_across_reload() {
         // Existing resolved with same raw schedule => preserved
         let mut rng = seeded_rng();
-        let result = resolve_schedule(
-            "@random @random * * *",
-            Some("15 8 * * *"),
-            &mut rng,
+        let result = resolve_schedule("@random @random * * *", Some("15 8 * * *"), &mut rng);
+        assert_eq!(
+            result, "15 8 * * *",
+            "should preserve existing resolved schedule"
         );
-        assert_eq!(result, "15 8 * * *", "should preserve existing resolved schedule");
     }
 
     #[test]
@@ -372,7 +365,13 @@ mod tests {
     fn batch_gap_enforcement() {
         let mut rng = seeded_rng();
         let jobs: Vec<(String, String, Option<String>)> = (0..3)
-            .map(|i| (format!("job-{i}"), "@random @random * * *".to_string(), None))
+            .map(|i| {
+                (
+                    format!("job-{i}"),
+                    "@random @random * * *".to_string(),
+                    None,
+                )
+            })
             .collect();
         let min_gap = Duration::from_secs(5400); // 90 minutes
 
@@ -397,7 +396,9 @@ mod tests {
                 assert!(
                     diff >= 90,
                     "jobs {} and {} are only {} minutes apart (need >= 90)",
-                    i, j, diff
+                    i,
+                    j,
+                    diff
                 );
             }
         }
@@ -408,7 +409,13 @@ mod tests {
         let mut rng = seeded_rng();
         // 30 jobs * 90min = 2700min > 1440min/day => infeasible
         let jobs: Vec<(String, String, Option<String>)> = (0..30)
-            .map(|i| (format!("job-{i}"), "@random @random * * *".to_string(), None))
+            .map(|i| {
+                (
+                    format!("job-{i}"),
+                    "@random @random * * *".to_string(),
+                    None,
+                )
+            })
             .collect();
         let min_gap = Duration::from_secs(5400); // 90 minutes
 
@@ -419,7 +426,12 @@ mod tests {
         // All should be valid cron
         for (name, schedule) in &results {
             let cron = schedule.parse::<croner::Cron>();
-            assert!(cron.is_ok(), "job {} schedule '{}' should be valid", name, schedule);
+            assert!(
+                cron.is_ok(),
+                "job {} schedule '{}' should be valid",
+                name,
+                schedule
+            );
         }
     }
 
@@ -428,7 +440,11 @@ mod tests {
         let mut rng = seeded_rng();
         let jobs = vec![
             ("fixed".to_string(), "0 14 * * *".to_string(), None),
-            ("random".to_string(), "@random @random * * *".to_string(), None),
+            (
+                "random".to_string(),
+                "@random @random * * *".to_string(),
+                None,
+            ),
         ];
         let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(0), &mut rng);
         let fixed = results.iter().find(|(n, _)| n == "fixed").unwrap();
@@ -446,7 +462,7 @@ mod tests {
 
     /// Helper: circular distance on a ring of `modulus` size
     fn circular_distance_test(a: u32, b: u32, modulus: u32) -> u32 {
-        let diff = if a > b { a - b } else { b - a };
+        let diff = a.abs_diff(b);
         diff.min(modulus - diff)
     }
 }

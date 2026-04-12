@@ -8,13 +8,13 @@ pub mod cmd;
 pub mod command;
 pub mod docker;
 // Phase 5: @random cron field resolver (RAND-01 through RAND-05).
-pub mod random;
 pub mod docker_log;
 pub mod docker_orphan;
 pub mod docker_preflight;
 pub mod docker_pull;
 pub mod fire;
 pub mod log_pipeline;
+pub mod random;
 pub mod reload;
 pub mod run;
 pub mod script;
@@ -364,6 +364,7 @@ impl SchedulerLoop {
 ///
 /// Accepts `Vec<DbJob>` and converts to `HashMap` internally for O(1) lookup.
 /// Returns a `JoinHandle` that resolves when the loop exits (on cancellation).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     pool: DbPool,
     docker: Option<Docker>,

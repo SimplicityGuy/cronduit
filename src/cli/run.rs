@@ -115,16 +115,15 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     shutdown::install_sighup(cmd_tx.clone());
 
     // File watcher for automatic config reload (D-10, RELOAD-03).
-    if cfg.server.watch_config {
-        if let Err(e) =
+    if cfg.server.watch_config
+        && let Err(e) =
             crate::scheduler::reload::spawn_file_watcher(config_path.clone(), cmd_tx.clone())
-        {
-            tracing::warn!(
-                target: "cronduit.startup",
-                error = %e,
-                "failed to start config file watcher -- file-based reload unavailable"
-            );
-        }
+    {
+        tracing::warn!(
+            target: "cronduit.startup",
+            error = %e,
+            "failed to start config file watcher -- file-based reload unavailable"
+        );
     }
 
     let state = AppState {
