@@ -120,7 +120,7 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 ### Operational Endpoints (OPS)
 
 - [ ] **OPS-01**: `GET /health` returns `200 OK` with a JSON body `{"status":"ok","db":"ok","scheduler":"running"}` when the process is healthy; the example `docker-compose.yml` healthcheck targets this endpoint
-- [ ] **OPS-02**: `GET /metrics` exposes Prometheus-format metrics including `cronduit_jobs_total`, `cronduit_runs_total{status}`, `cronduit_run_duration_seconds` (histogram), and `cronduit_run_failures_total{reason}` where `reason` is a closed enum (no unbounded label cardinality)
+- [x] **OPS-02**: `GET /metrics` exposes Prometheus-format metrics including `cronduit_jobs_total`, `cronduit_runs_total{status}`, `cronduit_run_duration_seconds` (histogram), and `cronduit_run_failures_total{reason}` where `reason` is a closed enum (no unbounded label cardinality)
 - [ ] **OPS-03**: Cronduit defaults `[server].bind` to `127.0.0.1:8080`; on startup, if the resolved bind address is non-loopback, a WARN-level log line is emitted explaining the no-auth-in-v1 stance and recommending a reverse proxy
 - [ ] **OPS-04**: An example `docker-compose.yml` is shipped in the repo with the Docker socket mounted, the config file mounted read-only, and a named volume for the SQLite database
 - [ ] **OPS-05**: The README quickstart enables a stranger to clone the repo, run `docker compose up`, and schedule a working job in under 5 minutes
@@ -259,7 +259,7 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | UI-14 | Phase 6 | Complete |
 | UI-15 | Phase 3 | Pending |
 | OPS-01 | Phase 3 | Pending |
-| OPS-02 | Phase 6 | Pending |
+| OPS-02 | Phase 6 | Complete |
 | OPS-03 | Phase 1 | Pending |
 | OPS-04 | Phase 6 | Pending |
 | OPS-05 | Phase 6 | Pending |
