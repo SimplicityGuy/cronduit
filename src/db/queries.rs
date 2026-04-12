@@ -323,7 +323,7 @@ pub async fn finalize_run(
     container_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
-    let duration_ms = start_instant.elapsed().as_millis() as i64;
+    let duration_ms = start_instant.elapsed().as_millis().min(i64::MAX as u128) as i64;
 
     match pool.writer() {
         PoolRef::Sqlite(p) => {
