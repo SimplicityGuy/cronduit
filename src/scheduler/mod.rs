@@ -7,6 +7,8 @@
 pub mod cmd;
 pub mod command;
 pub mod docker;
+// Phase 5: @random cron field resolver (RAND-01 through RAND-05).
+pub mod random;
 pub mod docker_log;
 pub mod docker_orphan;
 pub mod docker_preflight;
