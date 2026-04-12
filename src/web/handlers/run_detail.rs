@@ -99,12 +99,16 @@ async fn fetch_logs(
     run_id: i64,
     offset: i64,
 ) -> (Vec<LogLineView>, i64, bool, i64) {
-    let log_result = queries::get_log_lines(pool, run_id, LOG_PAGE_SIZE, offset)
-        .await
-        .unwrap_or(queries::Paginated {
-            items: vec![],
-            total: 0,
-        });
+    let log_result = match queries::get_log_lines(pool, run_id, LOG_PAGE_SIZE, offset).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(target: "cronduit.web", run_id, error = %e, "failed to fetch log lines");
+            queries::Paginated {
+                items: vec![],
+                total: 0,
+            }
+        }
+    };
 
     let has_older = (offset + LOG_PAGE_SIZE) < log_result.total;
     let next_offset = offset + LOG_PAGE_SIZE;
