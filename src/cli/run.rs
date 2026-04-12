@@ -184,6 +184,13 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         }
     }
 
+    // Spawn the daily retention pruner (DB-08).
+    tokio::spawn(crate::scheduler::retention::retention_pruner(
+        pool.clone(),
+        cfg.server.log_retention,
+        cancel.clone(),
+    ));
+
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(
         pool.clone(),

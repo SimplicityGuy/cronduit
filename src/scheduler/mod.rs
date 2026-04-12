@@ -16,6 +16,7 @@ pub mod fire;
 pub mod log_pipeline;
 pub mod random;
 pub mod reload;
+pub mod retention;
 pub mod run;
 pub mod script;
 pub mod sync;

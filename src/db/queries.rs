@@ -846,6 +846,103 @@ pub async fn get_log_lines(
     }
 }
 
+// ── Retention pruner queries (DB-08) ────────────────────────────────────
+
+/// Delete a batch of job_logs rows where the associated run ended before the cutoff.
+/// Returns the number of rows deleted. Deletes logs BEFORE runs (FK safety).
+pub async fn delete_old_logs_batch(
+    pool: &DbPool,
+    cutoff: &str,
+    batch_size: i64,
+) -> Result<i64, sqlx::Error> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            let result = sqlx::query(
+                "DELETE FROM job_logs WHERE rowid IN (
+                    SELECT jl.rowid FROM job_logs jl
+                    INNER JOIN job_runs jr ON jl.run_id = jr.id
+                    WHERE jr.end_time IS NOT NULL AND jr.end_time < ?1
+                    LIMIT ?2
+                )",
+            )
+            .bind(cutoff)
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+        PoolRef::Postgres(p) => {
+            let result = sqlx::query(
+                "DELETE FROM job_logs WHERE id IN (
+                    SELECT jl.id FROM job_logs jl
+                    INNER JOIN job_runs jr ON jl.run_id = jr.id
+                    WHERE jr.end_time IS NOT NULL AND jr.end_time < $1
+                    LIMIT $2
+                )",
+            )
+            .bind(cutoff)
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+    }
+}
+
+/// Delete a batch of job_runs rows that ended before the cutoff and have no remaining logs.
+pub async fn delete_old_runs_batch(
+    pool: &DbPool,
+    cutoff: &str,
+    batch_size: i64,
+) -> Result<i64, sqlx::Error> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            let result = sqlx::query(
+                "DELETE FROM job_runs WHERE rowid IN (
+                    SELECT jr.rowid FROM job_runs jr
+                    WHERE jr.end_time IS NOT NULL AND jr.end_time < ?1
+                    AND NOT EXISTS (SELECT 1 FROM job_logs jl WHERE jl.run_id = jr.id)
+                    LIMIT ?2
+                )",
+            )
+            .bind(cutoff)
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+        PoolRef::Postgres(p) => {
+            let result = sqlx::query(
+                "DELETE FROM job_runs WHERE id IN (
+                    SELECT jr.id FROM job_runs jr
+                    WHERE jr.end_time IS NOT NULL AND jr.end_time < $1
+                    AND NOT EXISTS (SELECT 1 FROM job_logs jl WHERE jl.run_id = jr.id)
+                    LIMIT $2
+                )",
+            )
+            .bind(cutoff)
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+    }
+}
+
+/// Issue WAL checkpoint on SQLite to reclaim space after large deletes.
+/// No-op on Postgres (auto-vacuum handles it).
+pub async fn wal_checkpoint(pool: &DbPool) -> Result<(), sqlx::Error> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                .execute(p)
+                .await?;
+            Ok(())
+        }
+        PoolRef::Postgres(_) => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
