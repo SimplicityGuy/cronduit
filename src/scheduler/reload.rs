@@ -4,15 +4,17 @@
 //! do_reload(), which parses config, syncs to DB, and rebuilds the fire heap.
 //! RELOAD-04: Failed reloads leave the running config untouched.
 
-use std::collections::BinaryHeap;
 use std::cmp::Reverse;
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{BinaryHeap, HashMap};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::config;
 use crate::db::DbPool;
 use crate::db::queries::DbJob;
-use crate::scheduler::cmd::{ReloadResult, ReloadStatus};
+use crate::scheduler::cmd::{ReloadResult, ReloadStatus, SchedulerCmd};
 use crate::scheduler::fire;
 use crate::scheduler::sync;
 use chrono_tz::Tz;
@@ -211,4 +213,86 @@ pub async fn do_reroll(
             None,
         ),
     }
+}
+
+/// Spawn a file watcher task for the config file (D-09, D-10, RELOAD-03).
+///
+/// Uses manual tokio debounce (500ms) per D-09. Editor atomic saves
+/// (write-then-rename) generate multiple events that the debounce absorbs.
+///
+/// D-10: Logs startup message "watching config file for changes".
+/// Pitfall 6: Keeps the `Watcher` alive inside the spawned task.
+pub fn spawn_file_watcher(
+    config_path: PathBuf,
+    cmd_tx: tokio::sync::mpsc::Sender<SchedulerCmd>,
+) -> anyhow::Result<()> {
+    let (notify_tx, mut notify_rx) =
+        tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(16);
+
+    let mut watcher = RecommendedWatcher::new(
+        move |res| {
+            let _ = notify_tx.blocking_send(res);
+        },
+        NotifyConfig::default(),
+    )?;
+
+    // Watch the parent directory to catch rename-based atomic saves.
+    let watch_path = config_path
+        .parent()
+        .unwrap_or(&config_path)
+        .to_path_buf();
+    watcher.watch(&watch_path, RecursiveMode::NonRecursive)?;
+
+    let config_filename = config_path
+        .file_name()
+        .map(|f| f.to_os_string())
+        .unwrap_or_default();
+
+    tracing::info!(
+        target: "cronduit.reload",
+        path = %config_path.display(),
+        "watching config file for changes"
+    );
+
+    tokio::spawn(async move {
+        let _watcher = watcher; // Keep watcher alive (Pitfall 6)
+        let mut debounce_active = false;
+
+        loop {
+            tokio::select! {
+                Some(event_result) = notify_rx.recv() => {
+                    if let Ok(event) = event_result {
+                        // Only trigger on events that affect our config file.
+                        let affects_config = event.paths.iter().any(|p| {
+                            p.file_name().map(|f| f == config_filename).unwrap_or(false)
+                        });
+                        if affects_config {
+                            debounce_active = true;
+                        }
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(500)), if debounce_active => {
+                    debounce_active = false;
+                    tracing::debug!(
+                        target: "cronduit.reload",
+                        "file change detected, triggering reload"
+                    );
+                    let (resp_tx, _) = tokio::sync::oneshot::channel();
+                    if cmd_tx
+                        .send(SchedulerCmd::Reload { response_tx: resp_tx })
+                        .await
+                        .is_err()
+                    {
+                        tracing::debug!(
+                            target: "cronduit.reload",
+                            "scheduler channel closed, stopping file watcher"
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(())
 }
