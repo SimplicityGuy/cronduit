@@ -14,6 +14,10 @@ async fn test_app() -> axum::Router {
 
     let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel(32);
 
+    let metrics_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .build_recorder()
+        .handle();
+
     let state = AppState {
         started_at: chrono::Utc::now(),
         version: "test",
@@ -22,6 +26,7 @@ async fn test_app() -> axum::Router {
         config_path: std::path::PathBuf::from("/test/config.toml"),
         tz: chrono_tz::Tz::UTC,
         last_reload: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        metrics_handle,
         watch_config: false,
         active_runs: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };

@@ -15,6 +15,30 @@ use tokio_util::sync::CancellationToken;
 
 use super::RunResult;
 use super::command::{self, RunStatus};
+
+/// Closed-enum failure reasons for the cronduit_run_failures_total metric (D-05).
+/// Cardinality fixed at 6 values -- never add unbounded labels.
+pub enum FailureReason {
+    ImagePullFailed,
+    NetworkTargetUnavailable,
+    Timeout,
+    ExitNonzero,
+    Abandoned,
+    Unknown,
+}
+
+impl FailureReason {
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            Self::ImagePullFailed => "image_pull_failed",
+            Self::NetworkTargetUnavailable => "network_target_unavailable",
+            Self::Timeout => "timeout",
+            Self::ExitNonzero => "exit_nonzero",
+            Self::Abandoned => "abandoned",
+            Self::Unknown => "unknown",
+        }
+    }
+}
 use super::log_pipeline::{self, DEFAULT_BATCH_SIZE, DEFAULT_CHANNEL_CAPACITY, LogLine, LogReceiver};
 use crate::db::DbPool;
 use crate::db::queries::{DbJob, finalize_run, insert_log_batch, insert_running_run};

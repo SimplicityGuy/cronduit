@@ -126,6 +126,10 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         );
     }
 
+    // Initialize Prometheus metrics recorder (OPS-02).
+    let metrics_handle = crate::telemetry::setup_metrics();
+    metrics::gauge!("cronduit_scheduler_up").set(1.0);
+
     let active_runs = std::sync::Arc::new(
         tokio::sync::RwLock::new(std::collections::HashMap::new()),
     );
@@ -138,6 +142,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         config_path: config_path.clone(),
         tz,
         last_reload: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        metrics_handle,
         watch_config: cfg.server.watch_config,
         active_runs: active_runs.clone(),
     };

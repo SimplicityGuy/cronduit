@@ -108,6 +108,10 @@ rand = "0.8"
 # Hex encoding for CSRF tokens
 hex = "0.4"
 
+# Metrics (OPS-02)
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
+
 # SSE streaming
 async-stream = "0.3"
 
