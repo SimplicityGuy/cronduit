@@ -304,7 +304,7 @@ fn classify_failure_reason(status: &str, error_msg: Option<&str>) -> FailureReas
                 FailureReason::NetworkTargetUnavailable
             }
             Some(msg) if msg.starts_with("image pull failed:") => FailureReason::ImagePullFailed,
-            Some(msg) if msg == "orphaned at restart" => FailureReason::Abandoned,
+            Some("orphaned at restart") => FailureReason::Abandoned,
             _ => FailureReason::Unknown,
         },
         // "cancelled" (shutdown) and any other unexpected status
