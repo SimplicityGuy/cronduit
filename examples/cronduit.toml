@@ -1,11 +1,11 @@
-# examples/cronduit.toml — canonical example config.
+# examples/cronduit.toml -- Cronduit quickstart configuration.
 #
-# This file is copied into the Docker image at /etc/cronduit/config.toml
-# by the multi-stage Dockerfile (Plan 07). `just dev` and `just check-config`
-# also reference this exact path.
+# This file ships two example jobs that demonstrate both execution types:
+#   1. A command job that runs every minute (instant feedback)
+#   2. A Docker container job that runs every 5 minutes
 #
 # SECURITY:
-#   * Never commit plaintext secrets. Use env-var references ($\{VAR}) and set
+#   * Never commit plaintext secrets. Use env-var references (${VAR}) and set
 #     the variables at runtime (docker-compose `environment:` block, or
 #     a .env file mounted into the container).
 #   * Mount this file read-only (`:ro`) in docker-compose.
@@ -13,11 +13,10 @@
 #     a reverse proxy with auth.
 
 [server]
-bind = "127.0.0.1:8080"
-database_url = "sqlite:///data/cronduit.db"
+bind = "0.0.0.0:8080"
 timezone = "UTC"
-shutdown_grace = "30s"
 log_retention = "90d"
+shutdown_grace = "30s"
 
 [defaults]
 image = "alpine:latest"
@@ -27,45 +26,21 @@ timeout = "5m"
 random_min_gap = "0s"
 
 # ------------------------------------------------------------
-# Example jobs (Phase 1 parses these; Phase 2 actually runs them)
+# Quickstart jobs
 # ------------------------------------------------------------
 
-# A local command job. Runs every 15 minutes.
+# A local command job. Runs every minute for instant feedback.
 [[jobs]]
-name = "health-probe"
-schedule = "*/15 * * * *"
-command = "curl -sf https://example.com/health"
-timeout = "30s"
+name = "echo-timestamp"
+schedule = "*/1 * * * *"
+command = "date '+%Y-%m-%d %H:%M:%S -- Cronduit is running!'"
 
-# An inline script job. Runs hourly.
+# An ephemeral Docker container job. Runs every 5 minutes.
+# Pulls alpine:latest and prints a greeting. `delete = true` removes the
+# container after completion.
 [[jobs]]
-name = "backup-index"
-schedule = "0 * * * *"
-script = """
-#!/bin/sh
-set -eu
-echo "building backup index at $(date -u +%FT%TZ)"
-find /data -type f -mtime -1 | wc -l
-"""
-timeout = "2m"
-
-# An ephemeral Docker container job. Runs daily at 03:15 in the server tz.
-[[jobs]]
-name = "nightly-backup"
-schedule = "15 3 * * *"
-image = "restic/restic:latest"
-network = "container:vpn"
-volumes = [
-    "/data:/data:ro",
-    "/backup:/backup",
-]
-timeout = "30m"
-
-# [jobs.env]
-# To pass secrets to Docker container jobs, set environment variables in
-# the operator environment and reference them with ${VAR} syntax. Cronduit
-# interpolates at parse time and wraps values in SecretString. If the
-# variable is unset, `cronduit check` fails with a clear error.
-#
-# Example (uncomment and set RESTIC_PASSWORD at runtime):
-# RESTIC_PASSWORD = "${RESTIC_PASSWORD}"
+name = "alpine-hello"
+schedule = "*/5 * * * *"
+image = "alpine:latest"
+command = "echo 'Hello from an Alpine container!'"
+delete = true
