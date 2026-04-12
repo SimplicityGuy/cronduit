@@ -74,11 +74,7 @@ pub async fn do_reload(
             );
 
             // 3. Rebuild in-memory jobs map (RELOAD-06: in-flight runs hold clones)
-            *jobs = sync_result
-                .jobs
-                .iter()
-                .map(|j| (j.id, j.clone()))
-                .collect();
+            *jobs = sync_result.jobs.iter().map(|j| (j.id, j.clone())).collect();
 
             // 4. Rebuild fire heap with new job set
             let new_heap = fire::build_initial_heap(&sync_result.jobs, tz);
@@ -138,7 +134,7 @@ pub async fn do_reroll(
                     error_message: Some("Job not found".to_string()),
                 },
                 None,
-            )
+            );
         }
         Err(e) => {
             return (
@@ -151,7 +147,7 @@ pub async fn do_reroll(
                     error_message: Some(format!("DB error: {e}")),
                 },
                 None,
-            )
+            );
         }
     };
 
@@ -250,10 +246,7 @@ pub fn spawn_file_watcher(
     )?;
 
     // Watch the parent directory to catch rename-based atomic saves.
-    let watch_path = config_path
-        .parent()
-        .unwrap_or(&config_path)
-        .to_path_buf();
+    let watch_path = config_path.parent().unwrap_or(&config_path).to_path_buf();
     watcher.watch(&watch_path, RecursiveMode::NonRecursive)?;
 
     let config_filename = config_path

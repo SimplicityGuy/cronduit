@@ -152,7 +152,10 @@ mod tests {
         let input = "# reference ${NONEXISTENT} in a comment\nkey = \"value\"";
         let (out, errs) = interpolate(input);
         assert!(errs.is_empty(), "comment ${{VAR}} should not trigger error");
-        assert!(out.contains("${NONEXISTENT}"), "comment should be preserved verbatim");
+        assert!(
+            out.contains("${NONEXISTENT}"),
+            "comment should be preserved verbatim"
+        );
     }
 
     #[test]
@@ -163,7 +166,10 @@ mod tests {
         }
         let input = "key = \"value\" # see ${NONEXISTENT}";
         let (out, errs) = interpolate(input);
-        assert!(errs.is_empty(), "inline comment ${{VAR}} should not trigger error");
+        assert!(
+            errs.is_empty(),
+            "inline comment ${{VAR}} should not trigger error"
+        );
         assert!(out.contains("${NONEXISTENT}"));
     }
 }

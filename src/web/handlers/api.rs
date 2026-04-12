@@ -176,15 +176,16 @@ pub async fn reload(
                 let mut headers = axum::http::HeaderMap::new();
                 headers.insert("HX-Refresh", "true".parse().unwrap());
 
-                (HxResponseTrigger::normal([event]), headers, axum::Json(json_body)).into_response()
+                (
+                    HxResponseTrigger::normal([event]),
+                    headers,
+                    axum::Json(json_body),
+                )
+                    .into_response()
             }
-            Err(_) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response()
-            }
+            Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response(),
         },
-        Err(_) => {
-            (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response()
-        }
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response(),
     }
 }
 
@@ -263,12 +264,8 @@ pub async fn reroll(
 
                 (HxResponseTrigger::normal([event]), headers, StatusCode::OK).into_response()
             }
-            Err(_) => {
-                (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response()
-            }
+            Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response(),
         },
-        Err(_) => {
-            (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response()
-        }
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response(),
     }
 }

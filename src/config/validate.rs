@@ -89,7 +89,13 @@ fn check_schedule(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
         job.schedule
             .split_whitespace()
             .enumerate()
-            .map(|(i, f)| if f == "@random" { RANDOM_FALLBACKS.get(i).copied().unwrap_or("0") } else { f })
+            .map(|(i, f)| {
+                if f == "@random" {
+                    RANDOM_FALLBACKS.get(i).copied().unwrap_or("0")
+                } else {
+                    f
+                }
+            })
             .collect::<Vec<_>>()
             .join(" ")
     } else {

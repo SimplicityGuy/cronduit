@@ -9,12 +9,12 @@ use std::io::Write;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
+use cronduit::config::parse_and_validate;
 use cronduit::db::DbPool;
-use cronduit::db::queries::{get_enabled_jobs, get_job_by_name, DbJob};
+use cronduit::db::queries::{DbJob, get_enabled_jobs, get_job_by_name};
 use cronduit::scheduler::cmd::ReloadStatus;
 use cronduit::scheduler::reload::do_reload;
 use cronduit::scheduler::sync::sync_config_to_db;
-use cronduit::config::parse_and_validate;
 
 async fn setup_pool() -> DbPool {
     let pool = DbPool::connect("sqlite::memory:").await.unwrap();
@@ -77,13 +77,7 @@ async fn random_schedule_stable_across_unchanged_reload() {
     // 3. Reload with SAME config (no changes)
     let enabled = get_enabled_jobs(&pool).await.unwrap();
     let mut jobs: HashMap<i64, DbJob> = enabled.into_iter().map(|j| (j.id, j)).collect();
-    let (result, _) = do_reload(
-        &pool,
-        config_file.path(),
-        &mut jobs,
-        chrono_tz::UTC,
-    )
-    .await;
+    let (result, _) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
 
     assert_eq!(result.status, ReloadStatus::Ok);
 
@@ -118,13 +112,7 @@ async fn random_schedule_rerandomized_on_change() {
 
     let enabled = get_enabled_jobs(&pool).await.unwrap();
     let mut jobs: HashMap<i64, DbJob> = enabled.into_iter().map(|j| (j.id, j)).collect();
-    let (result, _) = do_reload(
-        &pool,
-        config_file.path(),
-        &mut jobs,
-        chrono_tz::UTC,
-    )
-    .await;
+    let (result, _) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
 
     assert_eq!(result.status, ReloadStatus::Ok);
     assert_eq!(result.updated, 1, "job-a should be updated");

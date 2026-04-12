@@ -104,9 +104,7 @@ async fn rapid_edits_coalesced_by_debounce() {
     // There may be at most one more Reload (depending on timing), but not 5
     // Drain any remaining and count
     let mut extra_count = 0;
-    while let Ok(Some(_)) =
-        tokio::time::timeout(Duration::from_millis(800), cmd_rx.recv()).await
-    {
+    while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(800), cmd_rx.recv()).await {
         extra_count += 1;
     }
     assert!(

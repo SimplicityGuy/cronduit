@@ -9,12 +9,12 @@ use std::io::Write;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
+use cronduit::config::parse_and_validate;
 use cronduit::db::DbPool;
-use cronduit::db::queries::{get_enabled_jobs, get_job_by_name, DbJob};
+use cronduit::db::queries::{DbJob, get_enabled_jobs, get_job_by_name};
 use cronduit::scheduler::cmd::ReloadStatus;
 use cronduit::scheduler::reload::do_reload;
 use cronduit::scheduler::sync::sync_config_to_db;
-use cronduit::config::parse_and_validate;
 
 async fn setup_pool() -> DbPool {
     let pool = DbPool::connect("sqlite::memory:").await.unwrap();
@@ -84,18 +84,15 @@ async fn reload_creates_updates_disables_jobs() {
     let mut jobs: HashMap<i64, DbJob> = enabled.into_iter().map(|j| (j.id, j)).collect();
 
     // 4. Call do_reload
-    let (result, new_heap) = do_reload(
-        &pool,
-        config_file.path(),
-        &mut jobs,
-        chrono_tz::UTC,
-    )
-    .await;
+    let (result, new_heap) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
 
     // 5. Assert ReloadResult counts
     assert_eq!(result.status, ReloadStatus::Ok);
     assert_eq!(result.added, 1, "job-c should be added");
-    assert_eq!(result.updated, 1, "job-a should be updated (schedule changed)");
+    assert_eq!(
+        result.updated, 1,
+        "job-a should be updated (schedule changed)"
+    );
     assert_eq!(result.disabled, 1, "job-b should be disabled");
     assert!(result.error_message.is_none());
     assert!(new_heap.is_some(), "heap should be rebuilt on success");
@@ -131,21 +128,12 @@ async fn reload_with_parse_error_leaves_config_untouched() {
         .expect("initial sync");
 
     let enabled_before = get_enabled_jobs(&pool).await.unwrap();
-    let mut jobs: HashMap<i64, DbJob> = enabled_before
-        .iter()
-        .map(|j| (j.id, j.clone()))
-        .collect();
+    let mut jobs: HashMap<i64, DbJob> = enabled_before.iter().map(|j| (j.id, j.clone())).collect();
 
     // Write invalid TOML
     std::fs::write(config_file.path(), "this is [[[invalid toml").expect("write bad config");
 
-    let (result, new_heap) = do_reload(
-        &pool,
-        config_file.path(),
-        &mut jobs,
-        chrono_tz::UTC,
-    )
-    .await;
+    let (result, new_heap) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
 
     // RELOAD-04: Failed reload leaves running config untouched
     assert_eq!(result.status, ReloadStatus::Error);

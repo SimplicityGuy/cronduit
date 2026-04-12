@@ -8,12 +8,12 @@ use std::io::Write;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 
+use cronduit::config::parse_and_validate;
 use cronduit::db::DbPool;
-use cronduit::db::queries::{get_enabled_jobs, get_run_by_id, insert_running_run, DbJob};
+use cronduit::db::queries::{DbJob, get_enabled_jobs, get_run_by_id, insert_running_run};
 use cronduit::scheduler::cmd::ReloadStatus;
 use cronduit::scheduler::reload::do_reload;
 use cronduit::scheduler::sync::sync_config_to_db;
-use cronduit::config::parse_and_validate;
 
 async fn setup_pool() -> DbPool {
     let pool = DbPool::connect("sqlite::memory:").await.unwrap();
@@ -64,13 +64,7 @@ async fn inflight_run_survives_reload() {
 
     // 3. Call do_reload with the same config
     let mut jobs: HashMap<i64, DbJob> = enabled.into_iter().map(|j| (j.id, j)).collect();
-    let (result, _) = do_reload(
-        &pool,
-        config_file.path(),
-        &mut jobs,
-        chrono_tz::UTC,
-    )
-    .await;
+    let (result, _) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
 
     assert_eq!(result.status, ReloadStatus::Ok);
 

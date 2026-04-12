@@ -7,13 +7,13 @@
 //! T-02-03: `config_json` excludes SecretString env values -- only env key
 //! names appear, never secret values.
 
+use super::random;
 use crate::config::hash::compute_config_hash;
 use crate::config::{Config, JobConfig};
 use crate::db::DbPool;
 use crate::db::queries::{
     DbJob, disable_missing_jobs, get_enabled_jobs, get_job_by_name, upsert_job,
 };
-use super::random;
 use std::time::Duration;
 
 /// Result of a config sync operation.
@@ -131,10 +131,7 @@ pub async fn sync_config_to_db(
             .get(&job.name)
             .cloned()
             .unwrap_or_else(|| job.schedule.clone());
-        let timeout_secs = job
-            .timeout
-            .unwrap_or(Duration::from_secs(3600))
-            .as_secs() as i64;
+        let timeout_secs = job.timeout.unwrap_or(Duration::from_secs(3600)).as_secs() as i64;
 
         // Use the cached DB lookup from the first pass instead of fetching again.
         let existing = existing_cache.remove(&job.name).flatten();
@@ -262,7 +259,9 @@ mod tests {
             ],
         };
 
-        let result = sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
+        let result = sync_config_to_db(&pool, &config, Duration::from_secs(0))
+            .await
+            .unwrap();
         assert_eq!(result.inserted, 2);
         assert_eq!(result.updated, 0);
         assert_eq!(result.disabled, 0);
@@ -288,7 +287,9 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("job-a", "*/5 * * * *", Some("echo a"), None)],
         };
-        sync_config_to_db(&pool, &config1, Duration::from_secs(0)).await.unwrap();
+        sync_config_to_db(&pool, &config1, Duration::from_secs(0))
+            .await
+            .unwrap();
 
         let before = get_job_by_name(&pool, "job-a").await.unwrap().unwrap();
 
@@ -300,7 +301,9 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("job-a", "*/5 * * * *", Some("echo changed"), None)],
         };
-        let result = sync_config_to_db(&pool, &config2, Duration::from_secs(0)).await.unwrap();
+        let result = sync_config_to_db(&pool, &config2, Duration::from_secs(0))
+            .await
+            .unwrap();
         assert_eq!(result.inserted, 0);
         assert_eq!(result.updated, 1);
 
@@ -322,7 +325,9 @@ mod tests {
                 make_job("remove", "*/5 * * * *", Some("echo remove"), None),
             ],
         };
-        sync_config_to_db(&pool, &config1, Duration::from_secs(0)).await.unwrap();
+        sync_config_to_db(&pool, &config1, Duration::from_secs(0))
+            .await
+            .unwrap();
 
         // Second sync with "remove" absent.
         let config2 = Config {
@@ -330,7 +335,9 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("keep", "*/5 * * * *", Some("echo keep"), None)],
         };
-        let result = sync_config_to_db(&pool, &config2, Duration::from_secs(0)).await.unwrap();
+        let result = sync_config_to_db(&pool, &config2, Duration::from_secs(0))
+            .await
+            .unwrap();
         assert_eq!(result.disabled, 1);
         assert_eq!(result.jobs.len(), 1);
 
@@ -351,13 +358,17 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("job-a", "*/5 * * * *", Some("echo a"), None)],
         };
-        sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
+        sync_config_to_db(&pool, &config, Duration::from_secs(0))
+            .await
+            .unwrap();
         let before = get_job_by_name(&pool, "job-a").await.unwrap().unwrap();
 
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         // Same config, should be a no-op.
-        let result = sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
+        let result = sync_config_to_db(&pool, &config, Duration::from_secs(0))
+            .await
+            .unwrap();
         assert_eq!(result.inserted, 0);
         assert_eq!(result.updated, 0);
         assert_eq!(result.disabled, 0);
@@ -396,7 +407,9 @@ mod tests {
             }],
         };
 
-        sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
+        sync_config_to_db(&pool, &config, Duration::from_secs(0))
+            .await
+            .unwrap();
         let job = get_job_by_name(&pool, "with-env").await.unwrap().unwrap();
 
         // config_json should contain the key name but NOT the secret value.
@@ -417,7 +430,9 @@ mod tests {
                 make_job("b", "*/5 * * * *", Some("echo b"), None),
             ],
         };
-        sync_config_to_db(&pool, &config, Duration::from_secs(0)).await.unwrap();
+        sync_config_to_db(&pool, &config, Duration::from_secs(0))
+            .await
+            .unwrap();
 
         // Remove "b".
         let config2 = Config {
@@ -425,7 +440,9 @@ mod tests {
             defaults: None,
             jobs: vec![make_job("a", "*/5 * * * *", Some("echo a"), None)],
         };
-        sync_config_to_db(&pool, &config2, Duration::from_secs(0)).await.unwrap();
+        sync_config_to_db(&pool, &config2, Duration::from_secs(0))
+            .await
+            .unwrap();
 
         let enabled = get_enabled_jobs(&pool).await.unwrap();
         assert_eq!(enabled.len(), 1);
