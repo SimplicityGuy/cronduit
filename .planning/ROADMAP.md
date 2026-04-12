@@ -197,11 +197,11 @@ Plans:
 **Plans**: 5 plans (3 waves)
 
 Plans:
-- [ ] 05-01-PLAN.md — @random resolver module with TDD + SchedulerCmd extension + sync engine wiring (Wave 1)
-- [ ] 05-02-PLAN.md — Reload infrastructure: do_reload(), SIGHUP handler, file watcher, watch_config (Wave 1)
-- [ ] 05-03-PLAN.md — Scheduler loop Reload/Reroll branches + reload/reroll API handlers + routes (Wave 2)
-- [ ] 05-04-PLAN.md — UI surfaces: toast JS update, settings page enhancement, @random badge, job detail resolved schedule + re-roll (Wave 2)
-- [ ] 05-05-PLAN.md — Integration tests (reload diff, in-flight survival, @random stability) + visual checkpoint (Wave 3)
+- [x] 05-01-PLAN.md — @random resolver module with TDD + SchedulerCmd extension + sync engine wiring (Wave 1)
+- [x] 05-02-PLAN.md — Reload infrastructure: do_reload(), SIGHUP handler, file watcher, watch_config (Wave 1)
+- [x] 05-03-PLAN.md — Scheduler loop Reload/Reroll branches + reload/reroll API handlers + routes (Wave 2)
+- [x] 05-04-PLAN.md — UI surfaces: toast JS update, settings page enhancement, @random badge, job detail resolved schedule + re-roll (Wave 2)
+- [x] 05-05-PLAN.md — Integration tests (reload diff, in-flight survival, @random stability) + visual checkpoint (Wave 3)
 
 ---
 
