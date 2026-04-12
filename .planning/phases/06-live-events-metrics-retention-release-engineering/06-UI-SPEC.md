@@ -1,7 +1,8 @@
 ---
 phase: 6
 slug: live-events-metrics-retention-release-engineering
-status: draft
+status: approved
+reviewed_at: 2026-04-12
 shadcn_initialized: false
 preset: none
 created: 2026-04-12
@@ -135,7 +136,7 @@ Replaces the static log viewer on the Run Detail page when the run status is `ru
 
 **SSE event: `skip_marker`** -- inserted when broadcast::Lagged(n) is received:
 ```html
-<div style="font-size:var(--cd-text-sm);color:var(--cd-status-disabled);padding:var(--cd-space-2) var(--cd-space-4);text-align:center;font-style:italic">
+<div style="font-size:var(--cd-text-xs);color:var(--cd-status-disabled);padding:var(--cd-space-2) var(--cd-space-4);text-align:center;font-style:italic">
   [skipped {N} lines -- reload page for full log]
 </div>
 ```
