@@ -64,6 +64,22 @@ jobs:
       - name: Install cross-compile targets (arm64 cells only)
         if: matrix.arch == 'arm64'
         run: just install-targets
+      # Pre-pull testcontainers images from Google's public Docker Hub mirror
+      # and retag locally. Avoids the anonymous Docker Hub pull rate limit
+      # (100/6h per IP) that intermittently breaks the test matrix, since both
+      # amd64 and arm64 cells run on ubuntu-latest and pull the same images.
+      # mirror.gcr.io has much higher anonymous rate limits and is transparent
+      # to testcontainers-rs because bollard finds the retagged image locally
+      # before attempting an upstream pull.
+      - name: Pre-pull testcontainers images via mirror.gcr.io
+        run: |
+          set -euo pipefail
+          for image in postgres:11-alpine alpine:latest; do
+            echo "::group::Pre-pull ${image}"
+            docker pull "mirror.gcr.io/library/${image}"
+            docker tag "mirror.gcr.io/library/${image}" "${image}"
+            echo "::endgroup::"
+          done
       - run: just nextest
       - run: just schema-diff
 
