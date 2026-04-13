@@ -74,8 +74,36 @@ async fn retention_pruner_emits_startup_log_on_spawn() {
 
     let handle = tokio::spawn(pruner_future);
 
-    // Give the task ~50ms to emit its startup log, then cancel so it exits cleanly.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // WR-02 fix: bound-poll the capture buffer instead of a fixed wall-clock
+    // sleep. A 50 ms budget is a hope, not a bound: under CI starvation the
+    // spawned task can be delayed arbitrarily long before its first poll, and
+    // the test would then flake as "retention pruner did not emit startup log"
+    // even though the fix is correct. Poll every 10 ms and give up after 5 s
+    // (the real signal: the startup line is synchronous and runs before the
+    // first `.await`, so it lands essentially immediately once the task is
+    // actually polled). We cannot use `tokio::time::pause()`/`advance()` here
+    // because the test is gated on a real tracing subscriber writer.
+    let start = std::time::Instant::now();
+    loop {
+        {
+            let buf = captured.0.lock().unwrap();
+            if std::str::from_utf8(&buf)
+                .map(|s| s.contains("retention pruner started"))
+                .unwrap_or(false)
+            {
+                break;
+            }
+        }
+        if start.elapsed() > Duration::from_secs(5) {
+            let buf = captured.0.lock().unwrap().clone();
+            panic!(
+                "retention pruner did not emit startup log within 5s; \
+                 captured so far: {:?}",
+                String::from_utf8_lossy(&buf)
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     cancel.cancel();
 
     // Bound the join so a regression can't hang the suite.
