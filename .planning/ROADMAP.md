@@ -257,10 +257,10 @@ Plans:
 **Plans**: 4 plans (3 waves)
 
 Plans:
-- [ ] 07-01-PLAN.md — docker-compose.yml SECURITY comment + 06-VERIFICATION.md overrides block (D-01, D-02; Wave 1)
-- [ ] 07-02-PLAN.md — REQUIREMENTS.md 4-column Evidence rewrite + bulk bookkeeping flip (D-03..D-08; Wave 3; depends on 01 + 03)
-- [ ] 07-03-PLAN.md — 05-VERIFICATION.md re_verification annotation + status flip (D-09..D-12, D-15; Wave 2; depends on 04)
-- [ ] 07-04-PLAN.md — tests/reload_api.rs HX-Refresh HTTP-layer regression test (D-13 ack, D-14, D-16 ack; Wave 1)
+- [x] 07-01-PLAN.md — docker-compose.yml SECURITY comment + 06-VERIFICATION.md overrides block (D-01, D-02; Wave 1)
+- [x] 07-02-PLAN.md — REQUIREMENTS.md 4-column Evidence rewrite + bulk bookkeeping flip (D-03..D-08; Wave 3; depends on 01 + 03)
+- [x] 07-03-PLAN.md — 05-VERIFICATION.md re_verification annotation + status flip (D-09..D-12, D-15; Wave 2; depends on 04)
+- [x] 07-04-PLAN.md — tests/reload_api.rs HX-Refresh HTTP-layer regression test (D-13 ack, D-14, D-16 ack; Wave 1)
 
 ---
 
@@ -270,21 +270,31 @@ Plans:
 
 **Depends on**: Phase 7 (cleanup must be in place so the binary the user tests reflects the final v1.0 state, including the docker-compose decision)
 
-**Requirements**: UI-05, UI-06, UI-09, UI-12 (Phase 3 visual validation closes outstanding human-needed items); OPS-05, UI-14 (Phase 6 quickstart e2e + SSE live streaming user-confirm)
+**Requirements**: UI-05, UI-06, UI-09, UI-12 (Phase 3 visual validation closes outstanding human-needed items); OPS-05, UI-14 (Phase 6 quickstart e2e + SSE live streaming user-confirm); **plus three gaps logged in `07-UAT.md` after Phase 7 UAT on 2026-04-13**:
+  - `echo-timestamp` quickstart job fails instantly — `date` binary does not exist in the distroless runtime, `Command::new("date")` returns ENOENT. Bundled example is broken for every new quickstart user.
+  - `hello-world` quickstart job fails instantly — bollard "hyper legacy client: client error (Connect)" reaching `/var/run/docker.sock` from inside the nonroot (UID 65532) distroless container. Compose mounts the socket but the connect still fails.
+  - `07-05` Job Detail Run History auto-refresh cannot be browser-UAT'd until at least one of the two example jobs can reach a sustained RUNNING state long enough to observe the HTMX conditional polling transition. Deferred from Phase 7 per Plan 07-05 D-16; joins this phase's human-needed batch.
 
 **Success Criteria** (what must be TRUE):
   1. `03-HUMAN-UAT.md` has all four visual UAT items recorded as `result: pass` (or `issue` with severity) by the user: terminal-green theme rendering, dark/light mode toggle persistence, Run Now toast, ANSI log rendering with stderr distinction.
   2. A new `06-HUMAN-UAT.md` (or extension of an existing UAT file) records the user-run quickstart end-to-end test: clone → `docker compose -f examples/docker-compose.yml up -d` → dashboard loads → `echo-timestamp` job fires within ~1 minute of starting. Result captured as pass/fail/issue.
   3. The same UAT file records the SSE live log streaming validation: trigger a long-running job → open Run Detail → LIVE badge visible → log lines stream in real time → on completion the view transitions to the static log viewer without a page reload. Result captured.
-  4. Any failures discovered during UAT walkthrough get either a small follow-up fix in this phase OR a documented v1.1 backlog entry — no silent gaps left at archive time.
+  4. `examples/cronduit.toml` ships at least one command/script job AND one docker job that actually succeed on a fresh `docker compose up` against the distroless runtime image. The `echo-timestamp` gap (`date` → ENOENT) is closed either by swapping the example to a binary that exists in distroless, by rebasing the runtime on a minimal-shell image, or by converting the example into a `script =` job that invokes an inline shell from a static binary. Fix is committed and a new cold-start smoke test verifies both example jobs reach a terminal `success` state within two minutes of boot.
+  5. The `hello-world` docker-job gap is closed: bollard inside the cronduit container can reach `/var/run/docker.sock` at startup, a startup pre-flight logs a clear `docker daemon unreachable` warning if it cannot, and the example image pulls + runs cleanly under the compose quickstart. Root cause documented in an 08-level SUMMARY.md.
+  6. Once criteria 4 and 5 pass, the Plan 07-05 Job Detail Run History auto-refresh browser UAT runs end-to-end and records `result: pass` (or issue) in `07-UAT.md`: 10+ Run Now clicks on a real job, RUNNING → terminal transitions without manual reload within ~2s of each underlying completion, and the network tab shows polling stops once the list is idle.
+  7. Any failures discovered during UAT walkthrough get either a small follow-up fix in this phase OR a documented v1.1 backlog entry — no silent gaps left at archive time.
 
 **Pitfalls addressed** (from PITFALLS.md):
 - Pitfall: shipping UI features as "verified" without operator visual validation. Project memory captures this as a hard rule. Phase 8 closes the gap retroactively for the human-needed items in Phases 3 and 6.
+- Pitfall: shipping quickstart examples whose bundled demo jobs cannot actually run out of the box. Phase 6 UAT caught three; Phase 7 UAT caught two more. Phase 8 must make the quickstart runnable end-to-end.
 
 **Plans**: TBD (will be sized by `/gsd-plan-phase 8`)
 
 Plans:
-- [ ] 08-01-PLAN.md — TBD
+- [ ] 08-01-PLAN.md — TBD (visual UAT walkthrough + SSE live-stream UAT)
+- [ ] 08-02-PLAN.md — TBD (fix echo-timestamp: replace broken `date` example with a distroless-compatible job, add cold-start smoke test for both example jobs)
+- [ ] 08-03-PLAN.md — TBD (fix hello-world docker.sock Connect: investigate nonroot UID 65532 socket permission, add startup "docker daemon unreachable" pre-flight log)
+- [ ] 08-04-PLAN.md — TBD (Plan 07-05 browser UAT — run Job Detail auto-refresh + polling-stop tests after 08-02 + 08-03 unblock a sustained RUNNING state)
 
 ---
 

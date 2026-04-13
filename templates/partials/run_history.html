@@ -1,3 +1,14 @@
+{#
+  Polling wrapper (07-05): when any run is RUNNING, carry hx-trigger="every 2s"
+  on this outer <div> so HTMX polls /partials/jobs/{job_id}/runs and re-swaps
+  the whole wrapper via outerHTML. Once all runs are terminal, the next render
+  omits the trigger and polling stops naturally. The pagination buttons below
+  target #run-history, not this wrapper, so they are unaffected.
+#}
+<div id="run-history-poll-wrapper"
+     hx-get="/partials/jobs/{{ job_id }}/runs"
+     hx-swap="outerHTML"
+     {% if any_running %}hx-trigger="every 2s"{% endif %}>
 {% if runs.is_empty() %}
 <div style="padding:var(--cd-space-6);text-align:center;color:var(--cd-text-secondary);font-size:var(--cd-text-base)">
   No runs yet.
@@ -66,3 +77,4 @@
   </div>
 </div>
 {% endif %}
+</div>{# /#run-history-poll-wrapper #}
