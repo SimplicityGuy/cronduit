@@ -3,7 +3,7 @@ phase: 06-live-events-metrics-retention-release-engineering
 verified: 2026-04-13T00:00:00Z
 status: passed
 score: 5/5 wave-1 must-haves verified
-overrides_applied: 0
+overrides_applied: 1
 re_verification:
   previous_status: human_needed
   previous_score: 4/5
@@ -32,6 +32,11 @@ requirements_deferred:
     addressed_in: Phase 8 (v1.0 Final Human UAT Validation)
     reason: "The 'stranger under 5 minutes' contract requires a human to run docker compose up on a fresh clone with Docker daemon + GHCR pull; Phase 8 owns the final human UAT pass"
     evidence: ".planning/REQUIREMENTS.md line 126 reassigns OPS-05 to Phase 8 gap closure"
+overrides:
+  - must_have: "example docker-compose.yml uses expose: (not ports:) for the web UI"
+    reason: "Phase 6 Plan 04 D-12 explicitly chose ports: 8080:8080 for quickstart accessibility so a stranger running `docker compose up` reaches the web UI at http://localhost:8080 immediately without any additional configuration; this directly backs the OPS-05 5-minute quickstart promise in the ROADMAP. The file ships with a prominent SECURITY comment block (strengthened in Phase 7 D-02) that warns about the unauthenticated v1 UI, references THREAT_MODEL.md, and shows an exact expose: replacement snippet for production deployments behind a reverse proxy. The deviation is intentional and fully documented in-place."
+    accepted_by: "SimplicityGuy"
+    accepted_at: "2026-04-13T20:45:03Z"
 ---
 
 # Phase 6: Live Events, Metrics, Retention & Release Engineering — Gap Closure Re-Verification
