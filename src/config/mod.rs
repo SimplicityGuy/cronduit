@@ -47,7 +47,12 @@ fn default_bind() -> String {
     "127.0.0.1:8080".into()
 }
 fn default_db_url() -> SecretString {
-    SecretString::from("sqlite:///data/cronduit.db")
+    // Docker quickstart sets DATABASE_URL=sqlite:///data/cronduit.db via compose.
+    // Local dev falls back to a writable path relative to CWD so `cargo run`
+    // and `cronduit check` work without extra setup.
+    let url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "sqlite://./cronduit.db?mode=rwc".to_string());
+    SecretString::from(url)
 }
 fn default_shutdown_grace() -> Duration {
     Duration::from_secs(30)

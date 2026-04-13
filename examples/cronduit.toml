@@ -17,6 +17,10 @@ bind = "0.0.0.0:8080"
 timezone = "UTC"
 log_retention = "90d"
 shutdown_grace = "30s"
+# database_url is omitted -- the Rust default reads DATABASE_URL from the
+# environment (honored by examples/docker-compose.yml) and falls back to
+# `sqlite://./cronduit.db?mode=rwc` for local dev. Override explicitly here
+# if you want a different database without touching the environment.
 
 [defaults]
 image = "alpine:latest"
@@ -36,11 +40,12 @@ schedule = "*/1 * * * *"
 command = "date '+%Y-%m-%d %H:%M:%S -- Cronduit is running!'"
 
 # An ephemeral Docker container job. Runs every 5 minutes.
-# Pulls alpine:latest and prints a greeting. `delete = true` removes the
+# Uses Docker's canonical hello-world image, which prints a greeting from its
+# built-in ENTRYPOINT (no command override needed -- JobConfig requires exactly
+# one of `command`, `script`, or `image`). `delete = true` removes the
 # container after completion.
 [[jobs]]
-name = "alpine-hello"
+name = "hello-world"
 schedule = "*/5 * * * *"
-image = "alpine:latest"
-command = "echo 'Hello from an Alpine container!'"
+image = "hello-world:latest"
 delete = true
