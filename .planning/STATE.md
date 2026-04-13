@@ -99,6 +99,10 @@ Decisions are logged in `.planning/PROJECT.md` Key Decisions table. Recent settl
 - [Phase 06]: Release workflow uses docker/build-push-action@v6 directly for GHA cache integration, not justfile
 - [Phase 06]: README SECURITY-first structure with 3-step quickstart, THREAT_MODEL with four models
 
+### Roadmap Evolution
+
+- Phase 9 added: CI/CD Improvements (2026-04-13)
+
 ### Pending Todos
 
 None yet. Capture ideas via `/gsd-add-todo`.
