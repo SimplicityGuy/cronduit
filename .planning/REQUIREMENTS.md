@@ -122,8 +122,8 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 - [ ] **OPS-01**: `GET /health` returns `200 OK` with a JSON body `{"status":"ok","db":"ok","scheduler":"running"}` when the process is healthy; the example `docker-compose.yml` healthcheck targets this endpoint
 - [x] **OPS-02**: `GET /metrics` exposes Prometheus-format metrics including `cronduit_jobs_total`, `cronduit_runs_total{status}`, `cronduit_run_duration_seconds` (histogram), and `cronduit_run_failures_total{reason}` where `reason` is a closed enum (no unbounded label cardinality)
 - [ ] **OPS-03**: Cronduit defaults `[server].bind` to `127.0.0.1:8080`; on startup, if the resolved bind address is non-loopback, a WARN-level log line is emitted explaining the no-auth-in-v1 stance and recommending a reverse proxy
-- [x] **OPS-04**: An example `docker-compose.yml` is shipped in the repo with the Docker socket mounted, the config file mounted read-only, and a named volume for the SQLite database
-- [x] **OPS-05**: The README quickstart enables a stranger to clone the repo, run `docker compose up`, and schedule a working job in under 5 minutes
+- [ ] **OPS-04**: An example `docker-compose.yml` is shipped in the repo with the Docker socket mounted, the config file mounted read-only, and a named volume for the SQLite database (gap closure: ports: vs expose: deviation reassigned to Phase 7)
+- [ ] **OPS-05**: The README quickstart enables a stranger to clone the repo, run `docker compose up`, and schedule a working job in under 5 minutes (gap closure: human UAT validation reassigned to Phase 8)
 
 ## v2 Requirements
 
@@ -261,13 +261,14 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | OPS-01 | Phase 3 | Pending |
 | OPS-02 | Phase 6 | Complete |
 | OPS-03 | Phase 1 | Pending |
-| OPS-04 | Phase 6 | Complete |
-| OPS-05 | Phase 6 | Complete |
+| OPS-04 | Phase 6 → Phase 7 (gap closure) | Pending |
+| OPS-05 | Phase 6 → Phase 8 (gap closure) | Pending |
 
 **Coverage:**
 - v1 requirements: 86 total
 - Mapped to phases: 86
 - Unmapped: 0 ✓
+- **Note (2026-04-12):** The traceability table reflects the *original* phase assignment for code-level work. The per-phase `*-VERIFICATION.md` reports document actual satisfaction; 81 requirements are documented as SATISFIED in those reports but the master checkboxes are not yet flipped — this is the bookkeeping debt that **Phase 7** will close. OPS-04 and OPS-05 are reassigned because the audit flagged a deviation (ports: vs expose:) and pending human UAT respectively.
 
 **Distribution by phase:**
 - Phase 1 (Foundation, Security Posture & Persistence Base): 29 requirements
@@ -275,8 +276,10 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 - Phase 3 (Read-Only Web UI & Health Endpoint): 15 requirements
 - Phase 4 (Docker Executor & container-network Differentiator): 11 requirements
 - Phase 5 (Config Reload & `@random` Resolver): 13 requirements
-- Phase 6 (Live Events, Metrics, Retention & Release Engineering): 5 requirements
+- Phase 6 (Live Events, Metrics, Retention & Release Engineering): 5 requirements (3 originally; OPS-04, OPS-05 reassigned to gap-closure phases)
+- Phase 7 (v1.0 Cleanup & Bookkeeping): closes OPS-04 partial + bookkeeping debt for the 81 requirements satisfied in code but unchecked in this table
+- Phase 8 (v1.0 Final Human UAT Validation): closes OPS-05 + Phase 3 / Phase 6 human-needed visual items
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-09 after roadmap creation — traceability table populated with full 86/86 mapping*
+*Last updated: 2026-04-12 after `/gsd-audit-milestone` v1.0 audit and `/gsd-plan-milestone-gaps` — OPS-04 and OPS-05 reassigned to gap-closure Phases 7 and 8.*
