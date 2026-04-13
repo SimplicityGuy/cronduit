@@ -51,9 +51,9 @@ open http://localhost:8080
 You should see two jobs in the dashboard:
 
 - **echo-timestamp** (command job) -- runs every minute, prints the current date
-- **alpine-hello** (Docker job) -- runs every 5 minutes, pulls `alpine:latest` and echoes a greeting
+- **hello-world** (Docker job) -- runs every 5 minutes, pulls `hello-world:latest` and prints Docker's canonical intro greeting
 
-The echo job fires within 60 seconds, giving you instant feedback that Cronduit is working. The alpine job demonstrates Docker container execution with automatic cleanup (`delete = true`).
+The echo job fires within 60 seconds, giving you instant feedback that Cronduit is working. The hello-world job demonstrates Docker container execution with automatic cleanup (`delete = true`).
 
 ---
 
