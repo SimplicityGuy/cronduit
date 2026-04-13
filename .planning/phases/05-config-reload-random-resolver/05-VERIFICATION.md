@@ -1,7 +1,7 @@
 ---
 phase: 05-config-reload-random-resolver
 verified: 2026-04-12T02:00:00Z
-status: gaps_found
+status: "code_complete, human_needed"
 score: 10/13 must-haves verified
 gaps:
   - truth: "An explicit re-randomize request (Re-roll Schedule button) generates a NEW concrete value for the job's resolved_schedule"
@@ -41,6 +41,29 @@ human_verification:
   - test: "Full UI visual checkpoint per 05-05-SUMMARY.md Task 2"
     expected: "All 13 checklist items pass: @random badge on dashboard, resolved schedule on job detail, Re-roll button, settings reload card, config watcher badge WATCHING, toast auto-dismiss (5s success) and persistent error dismiss"
     why_human: "Visual layout and interactive behavior cannot be verified programmatically"
+re_verification:
+  re_verified_at: "2026-04-13T21:03:34Z"
+  re_verifier: "Claude (Phase 7)"
+  status_change:
+    from: "gaps_found"
+    to: "code_complete, human_needed"
+  gap_resolutions:
+    - gap: "do_reroll stub -- RAND-03 explicit re-randomize was a no-op (original gap 1)"
+      closed_by: "PR #9 (commit 8b69cb8)"
+      fix: "src/scheduler/reload.rs:170-172 -- do_reroll now calls `let mut rng = rand::thread_rng(); crate::scheduler::random::resolve_schedule(&job.schedule, None, &mut rng)`, replacing the stub that cloned job.resolved_schedule"
+      regression: "tests/reload_random_stability.rs exercises @random stability across reloads; manual re-roll visual confirmation is deferred to Phase 8 human UAT"
+    - gap: "do_reload() ReloadResult unchanged count hardcoded to 0 (original gap 2)"
+      closed_by: "PR #9 (commit 8b69cb8)"
+      fix: "src/scheduler/reload.rs:88 -- `unchanged: sync_result.unchanged,` now forwards the real sync-engine count to the ReloadResult, replacing the previous hardcoded `unchanged: 0` line"
+      regression: "existing tests/reload_sighup.rs exercises the ReloadResult plumbing end-to-end through do_reload()"
+    - gap: "Visual checkpoint (Plan 05 Task 2) -- UI surfaces not operator-confirmed (original gap 3)"
+      closed_by: "deferred"
+      fix: "Phase 8 human UAT owns the visual checkpoint walkthrough (terminal-green theme, @random badge, Re-roll button, settings reload card, toast behavior). No code work remains."
+      regression: "human-only -- Phase 8 scope; tracked in 08 phase planning, not Phase 7"
+    - gap: "Settings page Reload Config card does not auto-refresh after POST /api/reload (filed in 05-UAT.md section 5)"
+      closed_by: "PR #9 (commit 8b69cb8)"
+      fix: "src/web/handlers/api.rs:175-181 -- reload handler response now includes `HX-Refresh: true` header so HTMX triggers a full-page refresh after a successful reload, surfacing the new Last Reload timestamp without a manual refresh (live tree: `headers.insert(\"HX-Refresh\", \"true\".parse().unwrap())` at line 181; range widened from plan-cited 175-177 to cover the HxEvent + header block in the current tree)"
+      regression: "tests/reload_api.rs::reload_response_includes_hx_refresh_header (added in Phase 7 Plan 04) asserts `HX-Refresh: true` on the reload response at the HTTP handler level via `tower::ServiceExt::oneshot`"
 ---
 
 # Phase 5: Config Reload & @random Resolver Verification Report
