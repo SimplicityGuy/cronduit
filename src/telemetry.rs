@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -41,19 +43,84 @@ pub fn init(format: LogFormat) {
 ///
 /// Must be called once at startup, after tracing init but before any metrics macros are used.
 /// Returns a `PrometheusHandle` that renders the `/metrics` endpoint response.
+///
+/// GAP-1 fix (06-06-PLAN.md): every cronduit metric family is eagerly described at
+/// install time so the Prometheus exporter renders HELP/TYPE lines from boot, even
+/// before a single sync or run has incremented the underlying counters/gauges. Without
+/// describe_*, the exporter lazily registers on first observation and `cronduit_jobs_total`
+/// could silently disappear from `/metrics` output despite being `.set()` in sync.rs.
 pub fn setup_metrics() -> PrometheusHandle {
-    let builder = PrometheusBuilder::new()
-        .set_buckets_for_metric(
-            Matcher::Full("cronduit_run_duration_seconds".to_string()),
-            &[1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1800.0, 3600.0],
-        )
-        .expect("valid bucket config");
+    // WR-01 fix: memoize the installed PrometheusHandle via OnceLock so repeated
+    // calls (e.g. multiple integration tests in the same test binary) always
+    // return the same handle that is actually attached to the global
+    // `metrics::` facade. The previous fallback branch (`build_recorder().handle()`)
+    // silently returned a detached handle that rendered an empty body because
+    // facade-routed `describe_*`/`gauge!`/`counter!`/`histogram!` calls went to
+    // the already-installed global recorder, not the detached one. Memoization
+    // also preserves the configured histogram buckets on every call, which the
+    // old fallback silently dropped.
+    static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
-    match builder.install_recorder() {
-        Ok(handle) => handle,
-        Err(_) => {
-            tracing::warn!("metrics recorder already installed, building detached handle");
-            PrometheusBuilder::new().build_recorder().handle()
-        }
-    }
+    HANDLE
+        .get_or_init(|| {
+            let handle = PrometheusBuilder::new()
+                .set_buckets_for_metric(
+                    Matcher::Full("cronduit_run_duration_seconds".to_string()),
+                    &[1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1800.0, 3600.0],
+                )
+                .expect("valid bucket config")
+                .install_recorder()
+                .expect("metrics recorder not yet installed");
+
+            // GAP-1: eagerly describe all cronduit metric families so the Prometheus
+            // exporter renders HELP/TYPE lines from boot (not just after first observation).
+            //
+            // Note: in `metrics-exporter-prometheus` 0.18, `describe_*` only populates the
+            // HELP/TYPE metadata table. The exporter will not render a metric family in
+            // the `/metrics` body until that family has also been *registered* in the
+            // underlying registry via a handle construction. We achieve that by calling
+            // the `gauge!`/`counter!`/`histogram!` macros (which return a handle and
+            // register the metric) paired with a zero-valued observation so the metric
+            // exists in the registry from boot. Later `.set()`/`.increment()` calls in
+            // sync.rs / run.rs overwrite or accumulate on top of this zero baseline.
+            //
+            // For metrics that normally carry labels (runs_total, run_duration_seconds,
+            // run_failures_total) we register a base family with zero labels — this
+            // installs the HELP/TYPE lines in the render output; labeled samples appear
+            // once the first labeled observation is recorded in run.rs.
+            metrics::describe_gauge!(
+                "cronduit_scheduler_up",
+                "1 if the cronduit scheduler loop is running, 0 otherwise"
+            );
+            metrics::describe_gauge!(
+                "cronduit_jobs_total",
+                "Number of enabled jobs currently configured"
+            );
+            metrics::describe_counter!(
+                "cronduit_runs_total",
+                "Total job runs completed, labeled by job name and terminal status"
+            );
+            metrics::describe_histogram!(
+                "cronduit_run_duration_seconds",
+                "Duration of completed job runs in seconds, labeled by job name"
+            );
+            metrics::describe_counter!(
+                "cronduit_run_failures_total",
+                "Total job run failures, labeled by closed-enum reason"
+            );
+
+            // Force registration of each family in the Prometheus registry by creating a
+            // handle (and, where a zero baseline is semantically safe, recording it).
+            // Without this step the describe_* metadata is stored but the exporter has
+            // nothing to attach HELP/TYPE lines to and the families silently disappear
+            // from /metrics body until their first observation.
+            metrics::gauge!("cronduit_scheduler_up").set(0.0);
+            metrics::gauge!("cronduit_jobs_total").set(0.0);
+            metrics::counter!("cronduit_runs_total").increment(0);
+            metrics::histogram!("cronduit_run_duration_seconds").record(0.0);
+            metrics::counter!("cronduit_run_failures_total").increment(0);
+
+            handle
+        })
+        .clone()
 }

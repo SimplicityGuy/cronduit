@@ -1,5 +1,5 @@
 ---
-status: testing
+status: complete
 phase: 06-live-events-metrics-retention-release-engineering
 source:
   - 06-01-SUMMARY.md
@@ -7,145 +7,160 @@ source:
   - 06-03-SUMMARY.md
   - 06-04-SUMMARY.md
   - 06-05-SUMMARY.md
-started: 2026-04-13T02:00:17Z
-updated: 2026-04-13T02:16:00Z
+started: 2026-04-13T18:09:07Z
+updated: 2026-04-13T18:32:00Z
 ---
 
 ## Current Test
 
-[paused — fixing 3 diagnosed bugs before resuming]
+[testing complete]
 
 ## Tests
 
 ### 1. Cold Start Smoke Test
 expected: |
   Kill any running cronduit process. Delete/move any existing SQLite DB file so startup is truly cold. Run `cargo run -- run --config examples/cronduit.toml` (or the equivalent binary). The process boots without errors, applies migrations, logs "scheduler started" / "retention pruner started" / "metrics recorder installed" (or equivalent), binds the HTTP server, and `curl http://127.0.0.1:8080/health` returns 200.
-result: issue
-reported: |
-  cargo run -- run --config examples/cronduit.toml
-      Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.45s
-       Running `target/debug/cronduit run --config examples/cronduit.toml`
-  examples/cronduit.toml: error: [[jobs]] `alpine-hello` must declare exactly one of `command`, `script`, or `image` (found 2)
-
-  1 error(s)
-severity: blocker
-follow_up: |
-  After fixing alpine-hello, a SECOND failure surfaced: `Error: unable to open database file`.
-  Root cause: default_db_url() in src/config/mod.rs:49-51 returns `sqlite:///data/cronduit.db`,
-  a path that only exists inside the Docker image. Tracked as separate gap below.
+result: pass
 
 ### 2. Prometheus /metrics Endpoint
 expected: |
   With cronduit running, `curl -s http://127.0.0.1:8080/metrics` returns Prometheus text format with Content-Type `text/plain`. Body contains `cronduit_scheduler_up 1`, `cronduit_jobs_total` gauge, and the metric families `cronduit_runs_total`, `cronduit_run_duration_seconds`, `cronduit_run_failures_total`. After at least one job has run, `cronduit_runs_total{...,status="success"}` should have incremented.
-result: blocked
-blocked_by: prior-phase
-reason: "User reported: blocked — cronduit cannot boot due to Test 1 config validation failure, so no /metrics endpoint is reachable."
+result: issue
+reported: |
+  After a successful run, `/metrics` body contains `cronduit_scheduler_up 1`,
+  `cronduit_runs_total{job="sse-test-job",status="success"} 1`, and the
+  `cronduit_run_duration_seconds` histogram — but `cronduit_jobs_total` gauge is
+  absent. (run_failures_total counter reasonably absent before any failure, but
+  jobs_total is documented as set at sync time.)
+severity: major
 
 ### 3. SSE Live Log Streaming on Run Detail
 expected: |
   Configure a job that runs long enough to observe (e.g., `sh -c 'for i in 1 2 3 4 5; do echo line $i; sleep 1; done'`). Trigger it (schedule or Run Now). Open the Run Detail page while it's running: a `LIVE` badge is visible and log lines appear in real time without refreshing the page (auto-scrolling). When the run completes, the live viewer is swapped out for a static log viewer via HTMX OOB swap — no full page reload, all 5 lines remain visible.
-result: issue
-reported: "User reported during test setup: clicking Run Now on the Job Detail page does not refresh or navigate — the toast may fire, but the page stays on Job Detail with no indication a new run was created. User must manually reload to see the run appear."
-severity: major
+result: pass
 
 ### 4. docker-compose Quickstart
 expected: |
-  From a clean checkout: `cd examples && docker compose up`. The cronduit container starts, mounts the host Docker socket, binds `127.0.0.1:8080` (or the documented bind), and serves the UI at http://localhost:8080/. The two quickstart jobs (`echo-timestamp` every minute, `alpine-hello` every 5 minutes) appear in the UI and produce successful run rows with log output within their cadence. No crash loops, no missing-volume errors.
-result: [pending]
+  From a clean checkout: `cd examples && docker compose up`. The cronduit container starts, mounts the host Docker socket, binds `127.0.0.1:8080` (or the documented bind), and serves the UI at http://localhost:8080/. The two quickstart jobs (`echo-timestamp` every minute, `alpine-hello`/`hello-world` every 5 minutes) appear in the UI and produce successful run rows with log output within their cadence. No crash loops, no missing-volume errors.
+result: issue
+reported: |
+  `docker compose up` starts the container (port 8080 mapped, container healthy) but
+  `curl localhost:8080` returns `curl: (52) Empty reply from server`. Container logs
+  show `"bind":"127.0.0.1:8080"` and `"job_count":1` (not 2). Root cause:
+  examples/docker-compose.yml:18 mounts `./cronduit-uat.toml` (a test scratch file)
+  instead of `./cronduit.toml`, and examples/cronduit-uat.toml:2 binds to
+  `127.0.0.1:8080` — unreachable from Docker's published host port, which forwards
+  to the container's eth0 interface, not its loopback.
+severity: blocker
 
 ### 5. README Security-First Structure
 expected: |
   Open `README.md`. The first H2 is a SECURITY section (covering bind default, Docker socket exposure, no auth in v1, reverse-proxy guidance). Quickstart comes after Security. The file contains a mermaid architecture diagram (not ASCII art), configuration reference for all three job types (command/script/docker), and a monitoring section listing the Prometheus metric names from plan 02.
-result: [pending]
+result: pass
 
 ### 6. THREAT_MODEL.md Coverage
 expected: |
   Open `THREAT_MODEL.md`. Four threat models are present with full sections: (1) Docker socket exposure, (2) untrusted web client, (3) config file tampering, (4) malicious container image. Each model has Threat / Attack Vector / Mitigations / Residual Risk / Recommendations. A consolidated STRIDE summary table is at the end. No "TBD" markers remain.
-result: [pending]
+result: pass
 
 ### 7. Retention Pruner Wired at Startup
 expected: |
   At cronduit startup (Test 1), tracing output on the `cronduit.retention` target confirms the retention pruner task spawned with the configured `log_retention` duration. The task is visible as a running tokio task (no panic, no immediate exit). Exact 24h behavior is not tested live — documentation says "prune fires 24h after startup, skipping initial tick."
-result: [pending]
+result: issue
+reported: |
+  User ran `cargo run -- run` and the startup logs contain traces from cronduit.sync,
+  cronduit.startup, cronduit.reload, cronduit::web, and cronduit.scheduler — but
+  zero lines from the `cronduit.retention` target. Verified in code: retention_pruner
+  IS spawned at src/cli/run.rs:187-189, but src/scheduler/retention.rs never emits
+  a startup log. Its first tracing::info! on the cronduit.retention target happens
+  inside run_prune_cycle (line 43), and the loop skips the initial tick, so no
+  retention log surfaces until ~24h after startup. Operators have no way to
+  confirm the pruner is wired up at boot time.
+severity: minor
 
 ### 8. Release Workflow File
 expected: |
   `.github/workflows/release.yml` exists and is structurally valid YAML. Workflow triggers on `v*` tag push, uses `docker/build-push-action@v6`, builds `linux/amd64,linux/arm64`, injects OCI labels (source, description, licenses, version, revision), invokes `git-cliff` for changelog, and creates a GitHub Release with the changelog body. `cliff.toml` exists with conventional commit parsers for feat/fix/refactor/perf/test/docs/ci. `justfile` has a `release` recipe.
-result: [pending]
+result: pass
 
 ## Summary
 
 total: 8
-passed: 0
-issues: 2
-pending: 5
+passed: 5
+issues: 3
+pending: 0
 skipped: 0
-blocked: 1
 
 ## Gaps
 
-- id: GAP-1
-  truth: "The documented quickstart command `cargo run -- run --config examples/cronduit.toml` must boot cronduit successfully on a clean checkout."
+- truth: "After startup (config sync), /metrics must expose `cronduit_jobs_total` gauge reflecting the number of configured jobs, as documented in plan 02 SUMMARY (src/scheduler/sync.rs: 'cronduit_jobs_total gauge after sync')."
   status: failed
-  reason: |
-    examples/cronduit.toml:41-46 — the `alpine-hello` job declares BOTH `image = "alpine:latest"`
-    AND `command = "echo 'Hello from an Alpine container!'"`. `JobConfig` in src/config/mod.rs:74-94
-    exposes `command`, `script`, and `image` as three mutually-exclusive backend selectors
-    (the validator enforces exactly-one), and there is no `args` / `docker_cmd` field to override
-    a container's CMD. An image job that wants specific output must bake it into the image.
-  severity: blocker
-  test: 1
-  fix: |
-    Change `alpine-hello` to use `hello-world:latest` (the canonical Docker intro image — prints
-    a visible greeting from its built-in ENTRYPOINT, no command override needed), and rename
-    the job to `hello-world` for clarity. Drop the `command` line.
-  artifacts:
-    - examples/cronduit.toml
-  missing: []
-
-- id: GAP-2
-  truth: "Running cronduit locally via `cargo run -- run --config examples/cronduit.toml` must open its SQLite database without requiring /data to exist on the host."
-  status: failed
-  reason: |
-    src/config/mod.rs:49-51 — default_db_url() returns `sqlite:///data/cronduit.db`. /data is a
-    Docker-image convention (see examples/docker-compose.yml:19 which mounts `cronduit-data:/data`),
-    not a path that exists on developer machines. examples/cronduit.toml does not set an explicit
-    `database_url`, so it falls through to this default and dies with `error returned from database:
-    (code: 14) unable to open database file`. The first five Phase 6 tests that require a running
-    cronduit are all blocked behind this.
-  severity: blocker
-  test: 1
-  fix: |
-    Add an explicit `database_url` line to examples/cronduit.toml using the env-var interpolation
-    pattern the project already supports: `database_url = "${DATABASE_URL}"`. examples/docker-compose.yml
-    already exports `DATABASE_URL=sqlite:///data/cronduit.db` at line 22, so the Docker path is
-    unchanged. Add a README snippet showing local dev:
-    `DATABASE_URL=sqlite://./cronduit.db?mode=rwc cargo run -- run --config examples/cronduit.toml`.
-    This is the pattern CLAUDE.md documents: env-var interpolation, no `${VAR:-default}` syntax.
-  artifacts:
-    - examples/cronduit.toml
-    - README.md
-  missing: []
-
-- id: GAP-3
-  truth: "Clicking Run Now on a Job Detail page must give the user visible confirmation that the run was created — either by refreshing the page to show the new run row, or by navigating to the new Run Detail page."
-  status: failed
-  reason: |
-    src/web/handlers/api.rs:26-76 — the `run_now` handler returns `(HxResponseTrigger::normal([event]),
-    StatusCode::OK)` with only a `showToast` HX-Trigger event. No HX-Refresh, no HX-Redirect. Compare
-    to the reload handler at src/web/handlers/api.rs:175-177 and the schedule-refresh handler at
-    src/web/handlers/api.rs:259-262, both of which correctly emit `HX-Refresh: true` after state
-    changes. This is the same class of bug that Phase 5 UAT filed against the reload button and PR #9
-    fixed in-place — the Run Now button was simply never covered by that fix.
+  reason: "User reported: /metrics body after a successful sse-test-job run contains scheduler_up, runs_total, and run_duration_seconds histogram, but cronduit_jobs_total gauge is absent. Counter families that lazily register on first observation are acceptable, but jobs_total should be set at config sync time and therefore present from startup."
   severity: major
-  test: 3
-  fix: |
-    Add `HX-Refresh: true` to the run_now handler's success response, matching the pattern already
-    established at lines 175-177 and 259-262 of the same file. This is the minimal fix: after the
-    Run Now POST, HTMX will reload the current page (Job Detail), and the new run row will appear
-    in the runs list. A full HX-Redirect to /runs/{new_run_id} would be nicer but requires the
-    scheduler command channel to return the new run_id back through a oneshot, which is a larger
-    refactor. HX-Refresh is consistent with the reload card pattern and unblocks UAT Test 3.
+  test: 2
+  artifacts: []
+  missing: []
+
+- truth: "The Job Detail Run History card must auto-refresh while runs are in-flight so completed runs transition from RUNNING to SUCCESS/FAILED without a manual page reload."
+  status: failed
+  reason: "User reported mid-UAT: clicking Run Now ~15 times in succession correctly appends new RUNNING rows (thanks to the earlier HX-Refresh fix), but the Run History stays frozen at RUNNING after the jobs finish — only a manual browser reload shows them transitioning to SUCCESS. Screenshot: ~15 RUNNING rows stacked on top of three SUCCESS rows several seconds after completion."
+  severity: major
+  test: out-of-band (filed during Test 4 setup)
+  routed_to: .planning/phases/07-v1-cleanup-bookkeeping/07-05-PLAN.md
   artifacts:
-    - src/web/handlers/api.rs
+    - src/web/handlers/job_detail.rs
+    - templates/pages/job_detail.html
+  missing: []
+
+- truth: "`docker compose up` from the documented quickstart (`cd examples && docker compose up`) must serve the Cronduit UI at http://localhost:8080/ with the two documented quickstart jobs (echo-timestamp, alpine-hello/hello-world) visible."
+  status: failed
+  reason: |
+    examples/docker-compose.yml:18 mounts `./cronduit-uat.toml:/etc/cronduit/config.toml:ro`
+    instead of `./cronduit.toml`. cronduit-uat.toml:2 sets `bind = "127.0.0.1:8080"`,
+    which inside a Docker container is only reachable from within that container —
+    Docker's `-p 8080:8080` port publishing forwards to the container's eth0
+    interface, not its loopback, so the host sees `curl: (52) Empty reply from server`.
+    The container logs confirm this: `"bind":"127.0.0.1:8080"` and `"job_count":1`
+    (cronduit-uat.toml has one sse-test-job, not the two documented quickstart jobs).
+    cronduit-uat.toml appears to be a local testing scratch file that should not
+    be referenced by the quickstart docker-compose.yml.
+  severity: blocker
+  test: 4
+  fix_sketch: |
+    1. Change examples/docker-compose.yml:18 to mount `./cronduit.toml` (the
+       file that already has `bind = "0.0.0.0:8080"` at line 16 and the two
+       documented quickstart jobs).
+    2. Either delete examples/cronduit-uat.toml if it is purely a local dev
+       artifact, or keep it but rename with a `.local.toml` suffix and add to
+       .gitignore so it cannot leak into the quickstart path again.
+    3. Consider adding a CI smoke that actually brings up the quickstart
+       compose file and asserts `curl -sSf localhost:8080/health` returns 200 —
+       this class of bug (config mount path + inner bind) is exactly what the
+       cold-start smoke test was meant to catch but can only catch against the
+       file the quickstart actually mounts.
+  artifacts:
+    - examples/docker-compose.yml
+    - examples/cronduit-uat.toml
+    - examples/cronduit.toml
+  missing: []
+
+- truth: "At cronduit startup, the retention pruner must emit a tracing log on the `cronduit.retention` target confirming the task was spawned with the configured `log_retention` duration, so operators can verify on boot that retention is wired up (without waiting 24h for the first prune cycle)."
+  status: failed
+  reason: |
+    retention_pruner() IS spawned at src/cli/run.rs:187-189 — verified in code —
+    but src/scheduler/retention.rs never emits a tracing log at task-spawn time.
+    Its first info-level trace on the cronduit.retention target is at line 43
+    inside run_prune_cycle ("retention prune cycle started"), and the scheduler
+    loop skips the initial tick, so the first retention log does not surface
+    until ~24h after startup. User startup logs confirm this: cronduit.sync,
+    cronduit.startup, cronduit.reload, cronduit::web, and cronduit.scheduler
+    all emit at boot; cronduit.retention emits nothing. Functional behavior is
+    correct (the task is running), but observability is broken — an operator
+    cannot tell from boot-time logs whether retention is wired up.
+  severity: minor
+  test: 7
+  fix_sketch: |
+    Add a single `tracing::info!(target: "cronduit.retention", retention_secs = ?retention.as_secs(), "retention pruner started")` line at the top of retention_pruner() in src/scheduler/retention.rs, before the interval loop. Mirror the scheduler's existing "scheduler started" pattern.
+  artifacts:
+    - src/scheduler/retention.rs
   missing: []

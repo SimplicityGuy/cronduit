@@ -15,6 +15,15 @@ const WAL_CHECKPOINT_THRESHOLD: i64 = 10_000;
 /// Runs on a 24-hour interval from startup (not wall-clock aligned).
 /// Checks `CancellationToken` between batches for graceful shutdown.
 pub async fn retention_pruner(pool: DbPool, retention: Duration, cancel: CancellationToken) {
+    // GAP-2 fix (06-06-PLAN.md): emit a boot-time log on target cronduit.retention
+    // so operators can confirm from startup logs that retention is wired up, without
+    // waiting 24h for the first prune cycle to fire its own log line.
+    tracing::info!(
+        target: "cronduit.retention",
+        retention_secs = retention.as_secs(),
+        "retention pruner started"
+    );
+
     let mut interval = tokio::time::interval(Duration::from_secs(86400));
     // Skip the initial immediate tick -- first prune after 24 hours.
     interval.tick().await;

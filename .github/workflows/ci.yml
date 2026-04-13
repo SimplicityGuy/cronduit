@@ -64,6 +64,22 @@ jobs:
       - name: Install cross-compile targets (arm64 cells only)
         if: matrix.arch == 'arm64'
         run: just install-targets
+      # Pre-pull testcontainers images from Google's public Docker Hub mirror
+      # and retag locally. Avoids the anonymous Docker Hub pull rate limit
+      # (100/6h per IP) that intermittently breaks the test matrix, since both
+      # amd64 and arm64 cells run on ubuntu-latest and pull the same images.
+      # mirror.gcr.io has much higher anonymous rate limits and is transparent
+      # to testcontainers-rs because bollard finds the retagged image locally
+      # before attempting an upstream pull.
+      - name: Pre-pull testcontainers images via mirror.gcr.io
+        run: |
+          set -euo pipefail
+          for image in postgres:11-alpine alpine:latest; do
+            echo "::group::Pre-pull ${image}"
+            docker pull "mirror.gcr.io/library/${image}"
+            docker tag "mirror.gcr.io/library/${image}" "${image}"
+            echo "::endgroup::"
+          done
       - run: just nextest
       - run: just schema-diff
 
@@ -106,3 +122,95 @@ jobs:
         env:
           REPO_OWNER: ${{ github.repository_owner }}
         run: just image-push "$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')/cronduit:sha-${GITHUB_SHA:0:7}"
+
+  compose-smoke:
+    name: quickstart compose smoke (examples/docker-compose.yml)
+    runs-on: ubuntu-latest
+    # GAP-3.4 (06-07-PLAN.md): bring up the quickstart compose file the stranger
+    # following the README would use, and assert /health returns 200. Builds a local
+    # cronduit:ci image from the PR checkout (NOT stale ghcr :latest) and rewrites
+    # the committed compose file in-place in the runner's ephemeral workspace so
+    # the smoke test exercises the PR's code, not the previous main build.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local cronduit:ci image from PR checkout
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: cronduit:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Rewrite compose to use locally-built cronduit:ci image
+        run: |
+          # The committed compose file references ghcr.io/simplicityguy/cronduit:latest
+          # so end users pulling from README get the published image. On CI we swap it
+          # for the locally-built PR image so the smoke test validates PR code, not
+          # stale main. This rewrite happens in the runner's ephemeral workspace only
+          # and is NEVER committed.
+          sed -i 's|ghcr.io/simplicityguy/cronduit:latest|cronduit:ci|g' examples/docker-compose.yml
+          grep -q 'image: cronduit:ci' examples/docker-compose.yml || {
+            echo "ERROR: sed rewrite did not produce 'image: cronduit:ci' in compose file"
+            exit 1
+          }
+
+      - name: docker compose up -d
+        working-directory: examples
+        run: docker compose -f docker-compose.yml up -d
+
+      - name: Wait for /health (max 30s)
+        run: |
+          set -eu
+          for i in $(seq 1 30); do
+            if curl -sSf http://localhost:8080/health >/tmp/health.json 2>/dev/null; then
+              echo "health responded after ${i}s"
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ERROR: /health never responded after 30s"
+          docker compose -f examples/docker-compose.yml logs
+          exit 1
+
+      - name: Assert /health body contains status:ok
+        run: |
+          set -eu
+          body=$(curl -sSf http://localhost:8080/health)
+          echo "health body: $body"
+          echo "$body" | grep -q '"status":"ok"' || {
+            echo "ERROR: /health body missing status:ok"
+            exit 1
+          }
+
+      - name: Assert dashboard lists both quickstart jobs
+        run: |
+          set -eu
+          dash=$(curl -sSf http://localhost:8080/)
+          echo "$dash" | grep -q 'echo-timestamp' || {
+            echo "ERROR: dashboard missing echo-timestamp job"
+            echo "$dash"
+            exit 1
+          }
+          echo "$dash" | grep -q 'hello-world' || {
+            echo "ERROR: dashboard missing hello-world job"
+            echo "$dash"
+            exit 1
+          }
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose -f examples/docker-compose.yml logs
+
+      - name: Tear down compose stack
+        if: always()
+        working-directory: examples
+        run: docker compose -f docker-compose.yml down -v

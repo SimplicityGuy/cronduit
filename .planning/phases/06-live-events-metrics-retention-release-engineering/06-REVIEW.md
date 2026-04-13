@@ -1,165 +1,233 @@
 ---
 phase: 06-live-events-metrics-retention-release-engineering
-reviewed: 2026-04-12T12:00:00Z
+reviewed: 2026-04-13T00:00:00Z
 depth: standard
-files_reviewed: 22
+files_reviewed: 6
 files_reviewed_list:
-  - assets/vendor/htmx-ext-sse.js
-  - Cargo.toml
-  - examples/prometheus.yml
-  - src/cli/run.rs
-  - src/db/queries.rs
-  - src/scheduler/mod.rs
-  - src/scheduler/retention.rs
-  - src/scheduler/run.rs
-  - src/scheduler/sync.rs
   - src/telemetry.rs
-  - src/web/handlers/metrics.rs
-  - src/web/handlers/mod.rs
-  - src/web/handlers/run_detail.rs
-  - src/web/handlers/sse.rs
-  - src/web/mod.rs
-  - templates/base.html
-  - templates/pages/run_detail.html
-  - templates/partials/static_log_viewer.html
-  - tests/health_endpoint.rs
+  - src/scheduler/retention.rs
   - tests/metrics_endpoint.rs
   - tests/retention_integration.rs
-  - tests/scheduler_integration.rs
-  - tests/sse_streaming.rs
+  - .github/workflows/ci.yml
+  - .gitignore
 findings:
   critical: 0
-  warning: 5
-  info: 4
-  total: 9
+  warning: 2
+  info: 5
+  total: 7
 status: issues_found
 ---
 
-# Phase 6: Code Review Report
+# Phase 6 Gap-Closure Code Review Report
 
-**Reviewed:** 2026-04-12T12:00:00Z
+**Reviewed:** 2026-04-13
 **Depth:** standard
-**Files Reviewed:** 22
+**Files Reviewed:** 6
 **Status:** issues_found
 
 ## Summary
 
-Phase 6 adds SSE log streaming, Prometheus metrics, retention pruning, and supporting infrastructure. The core implementations are solid: SSE streaming properly handles broadcast channel semantics (lagged subscribers, closed channels), metrics are wired through the `metrics` facade correctly, and the retention pruner uses batched deletes with cancellation checks between batches.
+Scope is the Phase 6 gap-closure work for plans 06-06 (metrics `describe_*` + retention startup log + tests) and 06-07 (`.gitignore` UAT pattern + compose-smoke CI job). Earlier plans 06-01..06-05 are already merged and out of scope. This review overwrites the prior 06-REVIEW.md from the original phase run.
 
-Key concerns: (1) the `setup_metrics()` function will panic if called more than once (affects tests), (2) the `format_log_line_html` function in `sse.rs` has a subtle HTML attribute injection via the `stderr_class` variable trimming, (3) three test files contain only `todo!()` stubs that will panic at runtime, and (4) the `duration_ms` cast in `finalize_run` can overflow for very long-running jobs.
+Overall the changes are small, well-motivated, and correctly targeted at the gaps identified in the UAT post-mortem. No critical bugs or security issues were found. Two warnings are worth attention:
+
+1. A pre-existing latent bug in `setup_metrics()`'s fallback path (detached handle will not render facade-recorded metrics). It is not introduced by 06-06 but the new eager-observe code now silently depends on the happy-path arm being taken.
+2. The `retention_pruner_emits_startup_log_on_spawn` test relies on a 50 ms wall-clock sleep as its "give the task time to emit" signal, which is vulnerable to CI starvation; a deterministic replacement is suggested.
+
+The remaining items are informational: CI hardening opportunities (SHA pinning, `down -v` teardown, debuggability of the `/health` wait loop), a style nit about log-target consistency, and a footgun note about `DbPool::connect("sqlite::memory:")` for future tests in the same file.
+
+The CI `compose-smoke` job itself looks sound: `sed -i` operates on a committed repo file (no user input — no injection surface), there is an explicit post-rewrite guard (`grep -q 'image: cronduit:ci'`), secrets are not exposed (job inherits the top-level `contents: read` only and has no `packages: write`), and teardown runs under `if: always()` after log-dump-on-failure.
 
 ## Warnings
 
-### WR-01: `setup_metrics()` panics on double-call -- unsafe for test harness
+### WR-01: `setup_metrics()` fallback path returns a handle that will not render facade-recorded metrics
 
-**File:** `src/telemetry.rs:52`
-**Issue:** `install_recorder()` returns `Err` if a recorder is already installed (global singleton). The `.expect()` call will panic. In integration tests (`tests/health_endpoint.rs:17`), each test builds its own `PrometheusHandle` via `build_recorder().handle()` rather than `install_recorder()`, which works but creates an inconsistency: the test handle is disconnected from the global recorder. If any test calls `setup_metrics()` twice (or two tests run in the same process), the second call panics.
-**Fix:** Use `try_install_recorder()` and handle the error gracefully, or use `build_recorder()` + `handle()` pattern consistently and set the global recorder with `once_cell`/`std::sync::Once`:
+**File:** `src/telemetry.rs:58-64`
+
+**Issue:**
 ```rust
-pub fn setup_metrics() -> PrometheusHandle {
-    let builder = PrometheusBuilder::new()
-        .set_buckets_for_metric(
-            Matcher::Full("cronduit_run_duration_seconds".to_string()),
-            &[1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1800.0, 3600.0],
-        )
-        .expect("valid bucket config");
-
-    match builder.install_recorder() {
-        Ok(handle) => handle,
-        Err(_) => {
-            tracing::warn!("metrics recorder already installed, building detached handle");
-            PrometheusBuilder::new().build_recorder().handle()
-        }
-    }
-}
-```
-
-### WR-02: `duration_ms` cast can overflow for multi-day runs
-
-**File:** `src/db/queries.rs:326`
-**Issue:** `start_instant.elapsed().as_millis()` returns `u128`, cast to `i64`. A job running longer than ~24.8 days (2^63 ms) will overflow, producing a negative duration in the database. While unlikely for most cron jobs, a misconfigured timeout (or the 1-year fallback timeout at `src/scheduler/run.rs:121`) makes this reachable.
-**Fix:** Cap the value before casting:
-```rust
-let duration_ms = start_instant.elapsed().as_millis().min(i64::MAX as u128) as i64;
-```
-
-### WR-03: Three test files are entirely `todo!()` stubs -- will panic on any test run
-
-**File:** `tests/metrics_endpoint.rs:19`, `tests/retention_integration.rs:15`, `tests/sse_streaming.rs:14`
-**Issue:** All test functions in these three files contain only `todo!()` macros. Running `cargo test` will compile them (they are `#[tokio::test]`), and if any test runner selects them, they will panic at runtime. This is especially problematic because CI will report these as test failures, not skips.
-**Fix:** Either implement the tests, or mark them with `#[ignore]` so they are compiled but not run by default:
-```rust
-#[tokio::test]
-#[ignore = "not yet implemented"]
-async fn metrics_endpoint_returns_prometheus_format() {
-    todo!("Implement metrics endpoint format test")
-}
-```
-
-### WR-04: `run_detail` handler silently swallows database errors in `fetch_logs`
-
-**File:** `src/web/handlers/run_detail.rs:102-107`
-**Issue:** The `fetch_logs` function uses `.unwrap_or()` to silently replace database errors with an empty result. This means a database connectivity issue will render an empty log view with no indication of failure -- the user will see "No log output" instead of an error message. The `get_run_by_id` call on line 136 correctly propagates errors with `INTERNAL_SERVER_ERROR`.
-**Fix:** Propagate the error or log it:
-```rust
-let log_result = match queries::get_log_lines(pool, run_id, LOG_PAGE_SIZE, offset).await {
-    Ok(r) => r,
-    Err(e) => {
-        tracing::error!(target: "cronduit.web", run_id, error = %e, "failed to fetch log lines");
-        queries::Paginated { items: vec![], total: 0 }
+let handle = match builder.install_recorder() {
+    Ok(handle) => handle,
+    Err(_) => {
+        tracing::warn!("metrics recorder already installed, building detached handle");
+        PrometheusBuilder::new().build_recorder().handle()
     }
 };
 ```
+If `install_recorder()` fails because a global recorder is already installed (which happens whenever a single test binary calls `setup_metrics()` twice), the fallback constructs a brand-new `Recorder` locally via `build_recorder()` and returns *its* handle. That handle is not wired into the global `metrics::` facade. The subsequent `describe_*!` / `gauge!(…).set(…)` / `counter!(…).increment(0)` / `histogram!(…).record(0.0)` calls on lines 82–112 all route through the global facade (= the *already-installed* recorder from the first call), not the detached one. The returned handle therefore renders an empty body, and the eagerly described metric families (the whole point of GAP-1) will not appear in it.
 
-### WR-05: Log viewer ordered DESC but appends SSE lines in arrival order
+This is a pre-existing bug that the 06-06 GAP-1 fix now silently depends on. In practice the only caller that hits this branch is the new integration test `metrics_families_described_from_boot`, and it runs once per test binary, so the `Ok(handle)` arm is taken and the bug is invisible. But it is a latent footgun: any future test added to `tests/metrics_endpoint.rs` that also calls `setup_metrics()` will see an empty render plus a confusing "metrics recorder already installed" warning and will fail for reasons that look nothing like "the global recorder is singleton".
 
-**File:** `src/db/queries.rs:798` and `src/web/handlers/sse.rs:46`
-**Issue:** The database query `get_log_lines` orders logs by `id DESC` (most recent first), but the SSE handler appends new lines via `beforeend` swap (most recent last). When a live run completes and the `run_complete` event triggers a swap to the static log viewer (which re-fetches from DB ordered DESC), the log order will visually flip. Users watching a live run will see logs in chronological order, then after completion the view swaps to reverse-chronological.
-**Fix:** Either change the DB query to `ORDER BY id ASC` for consistency with the live view, or reverse the SSE display order. Since chronological (ASC) is the more natural reading order for logs:
-```sql
--- In get_log_lines:
-ORDER BY id ASC LIMIT ?2 OFFSET ?3
+**Fix:** Either make the fallback explicit (`panic!` so tests fail loudly instead of silently rendering blank) or memoize the handle via `OnceLock` so repeated calls return the same handle that *is* attached to the global recorder:
+```rust
+use std::sync::OnceLock;
+static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+
+pub fn setup_metrics() -> PrometheusHandle {
+    HANDLE
+        .get_or_init(|| {
+            let handle = PrometheusBuilder::new()
+                .set_buckets_for_metric(
+                    Matcher::Full("cronduit_run_duration_seconds".to_string()),
+                    &[1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1800.0, 3600.0],
+                )
+                .expect("valid bucket config")
+                .install_recorder()
+                .expect("metrics recorder not yet installed");
+            // ... describe_* and zero-obs calls here ...
+            handle
+        })
+        .clone()
+}
 ```
-
-## Info
-
-### IN-01: Unused `notify` dependency in Cargo.toml
-
-**File:** `Cargo.toml:121`
-**Issue:** The `notify = "8.2"` dependency is listed at the top level alongside `mime_guess`, but in the reviewed files the file watcher is referenced via `crate::scheduler::reload::spawn_file_watcher` which is not in the reviewed file set. If `notify` is used only in the reload module this is fine, but it appears alongside `mime_guess` without a comment grouping, which may indicate it was added opportunistically.
-**Fix:** Add a comment clarifying the dependency's purpose, consistent with the other groupings in `Cargo.toml`:
-```toml
-# File watching for config reload (D-10)
-notify = "8.2"
-```
-
-### IN-02: `container_id_for_finalize` stores `image_digest`, not container ID
-
-**File:** `src/scheduler/run.rs:190`
-**Issue:** The variable `container_id_for_finalize` is assigned from `docker_result.image_digest`, but the database column and `finalize_run` parameter are named `container_id`. This naming mismatch will confuse future maintainers -- either the variable stores a container ID or an image digest, and the names should agree.
-**Fix:** Rename to match what is actually stored, or fix the assignment to use the actual container ID if available.
-
-### IN-03: Vendored htmx-ext-sse.js lacks version annotation
-
-**File:** `assets/vendor/htmx-ext-sse.js:1`
-**Issue:** The vendored SSE extension has no version number, commit hash, or source URL in its header comment. Per the project constraints, HTMX assets are vendored (not loaded from CDN), so knowing the exact version is important for security audits and upgrade planning.
-**Fix:** Add a version comment at the top of the file:
-```javascript
-/* htmx-ext-sse v2.x.x - vendored from https://github.com/bigskysoftware/htmx-extensions */
-```
-
-### IN-04: `examples/prometheus.yml` suggests `!include` which is not standard Prometheus syntax
-
-**File:** `examples/prometheus.yml:5`
-**Issue:** The comment suggests using `!include examples/prometheus.yml` which is a YAML tag, not a Prometheus configuration directive. Prometheus does not support `!include`. Users following this instruction will get a configuration error.
-**Fix:** Update the comment to reflect the correct usage:
-```yaml
-# Copy the job definition below into your existing prometheus.yml
-# under the `scrape_configs:` section.
-```
+The memoized form also prevents the "fallback builds a recorder without the configured histogram buckets" silent regression that the current fallback branch has.
 
 ---
 
-_Reviewed: 2026-04-12T12:00:00Z_
+### WR-02: `retention_pruner_emits_startup_log_on_spawn` uses a wall-clock sleep that can race under CI starvation
+
+**File:** `tests/retention_integration.rs:75-79`
+
+**Issue:**
+```rust
+let handle = tokio::spawn(pruner_future);
+
+// Give the task ~50ms to emit its startup log, then cancel so it exits cleanly.
+tokio::time::sleep(Duration::from_millis(50)).await;
+cancel.cancel();
+```
+The test spawns `retention_pruner`, sleeps 50 ms, cancels, joins. The implicit contract is "the startup `tracing::info!` must have emitted before we look at the captured buffer". In practice the spawned task will almost always be polled within 50 ms on a healthy runner, emit the line (which runs before the first `.await`), and park on `interval.tick()` by the time we cancel. But under CI load (GitHub shared runners can stall arbitrarily long), a 50 ms budget is not a bound, it is a hope. When this test flakes, the failure will look like "retention pruner did not emit startup log" despite the fix being correct.
+
+**Fix:** Replace the fixed sleep with a bounded poll against the captured buffer:
+```rust
+let handle = tokio::spawn(pruner_future);
+
+let start = std::time::Instant::now();
+loop {
+    {
+        let buf = captured.0.lock().unwrap();
+        if std::str::from_utf8(&buf)
+            .map(|s| s.contains("retention pruner started"))
+            .unwrap_or(false)
+        {
+            break;
+        }
+    }
+    if start.elapsed() > Duration::from_secs(5) {
+        panic!(
+            "retention pruner did not emit startup log within 5s; \
+             captured so far: {:?}",
+            captured.0.lock().unwrap()
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(10)).await;
+}
+cancel.cancel();
+```
+This turns a brittle 50 ms race into a 5 s upper bound while keeping the happy-path latency to ~10 ms. Note you cannot use `tokio::time::pause()` + `advance()` here because the test is gated on a real tracing subscriber writer, not virtual time.
+
+## Info
+
+### IN-01: CI third-party actions pinned by tag, not commit SHA
+
+**File:** `.github/workflows/ci.yml:119-134`
+
+**Issue:** The new `compose-smoke` job adds `docker/build-push-action@v6` pinned by tag. The rest of the workflow is likewise tag-pinned (`actions/checkout@v4`, `docker/setup-buildx-action@v3`, `docker/setup-qemu-action@v3`, `Swatinem/rust-cache@v2`, `extractions/setup-just@v2`, `taiki-e/install-action@v2`, `dtolnay/rust-toolchain@stable`). Tag pinning is vulnerable to the actions-tag-repoint supply-chain class (a maintainer or attacker force-pushes `v6` to a malicious SHA; the next CI run executes that code with whatever secrets the job has).
+
+This specific job builds and `docker load`s an image from the PR checkout and runs `docker compose up` against it on the runner. Blast radius is limited (no `packages: write`, no `GITHUB_TOKEN` beyond the default read-only) but still real.
+
+**Fix:** Pin every third-party action to a full 40-char commit SHA with the tag as a comment:
+```yaml
+- uses: docker/build-push-action@2634353e9bccb8ab31e9e35c0a5a7d0ba3d25a80 # v6.9.0
+```
+This is a workflow-wide hardening, not specific to the new job; flag it for a follow-up issue rather than blocking 06-07.
+
+---
+
+### IN-02: `compose-smoke` tears down with `-v` even on failure, losing state useful for post-mortem
+
+**File:** `.github/workflows/ci.yml:197-200`
+
+**Issue:**
+```yaml
+- name: Tear down compose stack
+  if: always()
+  working-directory: examples
+  run: docker compose -f docker-compose.yml down -v
+```
+`down -v` destroys named volumes. On a green run this is what you want (ephemeral runner anyway). On a red run, the teardown fires *after* the `Dump compose logs on failure` step, so logs are preserved — good. But if a future failure mode required inspecting the SQLite volume (e.g., suspected migration corruption), the teardown has already wiped it. Since GitHub runners are themselves ephemeral, `down -v` is not strictly necessary for cleanup.
+
+**Fix:** Drop `-v` from the teardown step; ephemeral-runner teardown handles volume cleanup implicitly:
+```yaml
+run: docker compose -f docker-compose.yml down
+```
+Very minor. The current behavior is defensible (matches the default `docker compose down -v` most homelab users run).
+
+---
+
+### IN-03: `/health` wait loop discards `curl` stderr, reducing debuggability on failure
+
+**File:** `.github/workflows/ci.yml:153-166`
+
+**Issue:**
+```bash
+for i in $(seq 1 30); do
+  if curl -sSf http://localhost:8080/health >/tmp/health.json 2>/dev/null; then
+    echo "health responded after ${i}s"
+    cat /tmp/health.json
+    exit 0
+  fi
+  sleep 1
+done
+echo "ERROR: /health never responded after 30s"
+docker compose -f examples/docker-compose.yml logs
+exit 1
+```
+When the polling loop fails, the diagnostic output is only "ERROR: /health never responded after 30s" followed by compose logs. There is no indication whether the service was reachable-but-5xx, unreachable (port not published), or a DNS failure, because `curl`'s stderr (the actually useful line) is redirected to `/dev/null` inside the loop.
+
+**Fix:** On loop exhaustion, do one more `curl -v` without `-f` and without stderr suppression, and emit `docker compose ps`, before calling `docker compose logs`:
+```bash
+echo "ERROR: /health never responded after 30s"
+echo "--- final curl attempt (verbose) ---"
+curl -v http://localhost:8080/health || true
+echo "--- docker compose ps ---"
+docker compose -f examples/docker-compose.yml ps
+echo "--- docker compose logs ---"
+docker compose -f examples/docker-compose.yml logs
+exit 1
+```
+Strictly a debuggability improvement, not a bug.
+
+---
+
+### IN-04: Retention pruner startup log uses inconsistent message framing vs. its siblings
+
+**File:** `src/scheduler/retention.rs:21-25,37,49-53,149-154`
+
+**Issue:** Most log lines in this module use identifier-underscore phrasing ("retention prune cycle started", "retention prune cycle completed", "retention_pruner shutting down"). The new startup line uses a different style ("retention pruner started" — space in the noun, not symmetric with `"retention_pruner shutting down"`). This is purely cosmetic but operators grep for these strings.
+
+**Fix:** Pick one style and use it consistently. E.g.:
+```rust
+tracing::info!(
+    target: "cronduit.retention",
+    retention_secs = retention.as_secs(),
+    "retention_pruner started"
+);
+```
+so "retention_pruner started" / "retention_pruner shutting down" / "retention prune cycle started" / "retention prune cycle completed" form a consistent family. The GAP-2 closure test asserts `output.contains("retention pruner started")` (line 95) and would need to be updated in lockstep. Non-blocking.
+
+---
+
+### IN-05: `DbPool::connect("sqlite::memory:")` creates two disjoint in-memory databases — fine for this test, footgun for future ones
+
+**File:** `tests/retention_integration.rs:57-59`
+
+**Issue:** `DbPool::connect("sqlite::memory:")` (via `src/db/mod.rs::connect_sqlite`) opens *two* separate `SqlitePool`s against the same URL, one for writes (`max_connections = 1`) and one for reads (`max_connections = 8`). For a `:memory:` URL each of those pools gets its own isolated in-memory database — they do not share state. The current test does not care, because it cancels before the first interval tick and never touches the DB, but any future test in this file that actually exercises `queries::delete_old_logs_batch` through the `DbPool` returned by `DbPool::connect("sqlite::memory:")` will write through the write pool and then read `0` rows back through the read pool.
+
+**Fix:** No action needed for the current test. When the `#[ignore]`d retention tests later in this file are implemented, use a shared-cache URL (`"sqlite:file:test_<unique>?mode=memory&cache=shared"`) or a temp-file SQLite to avoid the write-pool/read-pool split-brain. Worth a `// NOTE:` comment above the `sqlite::memory:` line so the next author is warned.
+
+---
+
+_Reviewed: 2026-04-13_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
