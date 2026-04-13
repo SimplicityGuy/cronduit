@@ -1,8 +1,38 @@
 # Cronduit quickstart -- run `docker compose up` to get started.
 #
-# This exposes port 8080 for immediate access. For production deployments,
-# replace `ports:` with `expose:` and put Cronduit behind a reverse proxy
-# with authentication (Traefik, Caddy, nginx basic auth, etc.).
+# ============================================================================
+# SECURITY: READ BEFORE DEPLOYING
+# ============================================================================
+# This example binds `ports: - "8080:8080"` so a stranger following the
+# README quickstart can reach the web UI at http://localhost:8080 without
+# additional configuration. That convenience has a cost:
+#
+#   * The v1 web UI ships UNAUTHENTICATED. Anyone who can reach port 8080
+#     on the host can view every job, trigger Run Now, and reload the
+#     config. Default Cronduit (outside this example) binds 127.0.0.1:8080
+#     and logs a loud WARN if you change it to a non-loopback address.
+#   * With `ports:`, Docker publishes 8080 on ALL host interfaces by
+#     default. If this host is reachable from the public internet, the
+#     web UI is reachable from the public internet.
+#   * The Cronduit container mounts the host Docker socket
+#     (`/var/run/docker.sock`). Code execution inside Cronduit is
+#     effectively root-equivalent on the host. See `THREAT_MODEL.md` at
+#     the repo root for the full threat model (Docker Socket, Untrusted
+#     Client, Config Tamper, Malicious Image).
+#
+# For ANY deployment beyond "I am the only person on this loopback
+# interface," replace the `ports:` stanza below with `expose:` and put
+# Cronduit behind a reverse proxy with authentication (Traefik, Caddy,
+# nginx basic auth, etc.). The `expose:` replacement looks like this:
+#
+#     # ports:
+#     #   - "8080:8080"
+#     expose:
+#       - "8080"
+#
+# With `expose:`, the container still listens on 8080 but the port is
+# NOT published on the host -- only other containers on the same Docker
+# network (e.g., your reverse proxy) can reach it.
 #
 # Prerequisites: Docker with Compose v2+
 # Usage: docker compose -f examples/docker-compose.yml up -d
