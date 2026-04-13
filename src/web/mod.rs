@@ -57,6 +57,10 @@ pub fn router(state: AppState) -> Router {
             get(handlers::job_detail::job_detail),
         )
         .route(
+            "/partials/jobs/{job_id}/runs",
+            get(handlers::job_detail::job_runs_partial),
+        )
+        .route(
             "/jobs/{job_id}/runs/{run_id}",
             get(handlers::run_detail::run_detail),
         )
