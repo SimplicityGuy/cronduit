@@ -65,6 +65,20 @@ pub fn setup_metrics() -> PrometheusHandle {
 
     // GAP-1: eagerly describe all cronduit metric families so the Prometheus
     // exporter renders HELP/TYPE lines from boot (not just after first observation).
+    //
+    // Note: in `metrics-exporter-prometheus` 0.18, `describe_*` only populates the
+    // HELP/TYPE metadata table. The exporter will not render a metric family in
+    // the `/metrics` body until that family has also been *registered* in the
+    // underlying registry via a handle construction. We achieve that by calling
+    // the `gauge!`/`counter!`/`histogram!` macros (which return a handle and
+    // register the metric) paired with a zero-valued observation so the metric
+    // exists in the registry from boot. Later `.set()`/`.increment()` calls in
+    // sync.rs / run.rs overwrite or accumulate on top of this zero baseline.
+    //
+    // For metrics that normally carry labels (runs_total, run_duration_seconds,
+    // run_failures_total) we register a base family with zero labels — this
+    // installs the HELP/TYPE lines in the render output; labeled samples appear
+    // once the first labeled observation is recorded in run.rs.
     metrics::describe_gauge!(
         "cronduit_scheduler_up",
         "1 if the cronduit scheduler loop is running, 0 otherwise"
@@ -85,6 +99,17 @@ pub fn setup_metrics() -> PrometheusHandle {
         "cronduit_run_failures_total",
         "Total job run failures, labeled by closed-enum reason"
     );
+
+    // Force registration of each family in the Prometheus registry by creating a
+    // handle (and, where a zero baseline is semantically safe, recording it).
+    // Without this step the describe_* metadata is stored but the exporter has
+    // nothing to attach HELP/TYPE lines to and the families silently disappear
+    // from /metrics body until their first observation.
+    metrics::gauge!("cronduit_scheduler_up").set(0.0);
+    metrics::gauge!("cronduit_jobs_total").set(0.0);
+    metrics::counter!("cronduit_runs_total").increment(0);
+    metrics::histogram!("cronduit_run_duration_seconds").record(0.0);
+    metrics::counter!("cronduit_run_failures_total").increment(0);
 
     handle
 }
