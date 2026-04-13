@@ -776,22 +776,25 @@ Extracted from `./CLAUDE.md` and memory rules — the planner must verify all Ph
 
 **Confirm before execution:** The planner should quickly spot-check A4 (code path of `Docker` handle through `docker_pull.rs`) and A5 (the TLS behavior of busybox wget on the current alpine:3 tag) via a one-shot `docker run` verification during planning. The rest can proceed on documented convention.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does `POST=1` in docker-socket-proxy include `DELETE` verbs?**
    - What we know: The proxy's README describes POST as "write operations" but doesn't explicitly enumerate DELETE.
    - What's unclear: `DELETE /containers/{id}` is the method cronduit uses to remove containers (DOCKER-06). Need to confirm this hits the same allowlist as POST.
    - Recommendation: In the secure compose file, add a one-line comment noting this and verify during `compose-smoke` secure-axis runs. If `delete = true` jobs fail with 403, the allowlist needs explicit `DELETE=1` or similar — verify via the smoke test before declaring victory.
+   - **RESOLVED (2026-04-13):** Per the `tecnativa/docker-socket-proxy` README (https://github.com/Tecnativa/docker-socket-proxy), each HTTP verb is a **separate** environment flag: `POST=1` enables POST verbs only; `DELETE=1` is a distinct permission. Bollard's `remove_container` call (invoked when a job has `delete = true`) issues `DELETE /containers/{id}`, so `POST=1` alone is **insufficient** for the quickstart `hello-world` job. **Action:** add `DELETE=1` to the `dockerproxy` environment block in `examples/docker-compose.secure.yml`, and propagate to CONTEXT.md as **D-29**. Fallback if the smoke test still fails: check the socket-proxy container logs for the exact denied verb and expand the allowlist incrementally. This is implemented in Plan 08-02 Task 2 (allowlist + acceptance criterion) and validated in Plan 08-04's `compose-smoke-secure` matrix axis (the `hello-world` job with `delete = true` must reach `status=success`).
 
 2. **Should `cronduit_docker_reachable` re-check happen on every config reload, or only when docker jobs exist in the new config?**
    - What we know: D-13 says "startup and on explicit config reload."
    - What's unclear: If the new config has zero docker jobs, the ping is wasted effort. If docker jobs are added, the ping is useful.
    - Recommendation: Always re-ping on reload. The cost is a single HTTP request to `/_ping` (<10ms typical); the benefit is a consistent gauge that reflects current daemon reachability regardless of job mix. Simpler than conditional logic.
+   - **RESOLVED (2026-04-13):** Per D-13, the pre-flight ping fires on startup and on explicit config reload (SIGHUP or API-triggered). It does **not** fire per-job — the gauge is a coarse liveness signal, not a per-run check. Conditional logic (skip the ping when no docker jobs exist in the new config) is explicitly **not** adopted: the gauge must reflect current daemon state regardless of whether any job currently needs it, so alerting rules on `cronduit_docker_reachable == 0` fire consistently. Plan 08-03 wires the ping at startup only; the reload hook is a separate follow-on task tracked in D-13's scope and is not a Phase 8 plan task.
 
 3. **Should the secure compose file bind `127.0.0.1:8080:8080` or stay `0.0.0.0:8080:8080` like the simple variant?**
    - What we know: Phase 6 D-12 / Phase 7 D-01 locked `ports: 8080:8080` (= `0.0.0.0:8080`) for the simple quickstart. The secure variant is the "production/defense-in-depth" recipe.
    - What's unclear: Should the secure variant tighten the bind to loopback as well? That would make the secure recipe a true "production template" — socket proxy + loopback bind + reverse proxy expected.
    - Recommendation: Bind the secure variant to `127.0.0.1:8080:8080` and document that reverse proxies see loopback. This makes the security story internally consistent: simple = accessible, secure = defense-in-depth. Requires a comment block explaining the bind change to users copy-pasting between the two files.
+   - **RESOLVED (2026-04-13):** Keep `ports: "8080:8080"` (= `0.0.0.0:8080`) in **both** compose files — consistent with the Phase 7 D-01 override that kept the quickstart accessible from the operator's local workstation without requiring a `.env` file edit. The secure variant's defense-in-depth is the `docker-socket-proxy` sidecar (narrow allowlist, no host socket mount in the cronduit service), **not** the bind address. Operators running `docker-compose.secure.yml` behind a reverse proxy can flip to loopback via `.env` override (`CRONDUIT_BIND=127.0.0.1:8080` or a compose override file); the SECURITY comment block in Plan 08-02 Task 2 documents this pattern. Rationale: changing the bind between the two files would break the copy-paste promise between quickstart variants, and the socket-proxy's network-level isolation (cronduit can only reach allowlisted Docker API endpoints over the private bridge network) is the stronger control. See Phase 7 D-01 for the original 0.0.0.0 bind decision.
 
 ## Code Examples
 

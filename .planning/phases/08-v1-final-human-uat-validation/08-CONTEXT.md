@@ -249,6 +249,19 @@ Phase 8 is the last gate before v1.0 archive — scope discipline matters.
   shipping v1.0. The milestone audit already accepted Phase 6/7 as complete — Phase 8
   is closing the last door, not reopening all the others.
 
+### Socket-proxy allowlist (resolves RESEARCH Q1)
+
+- **D-29:** The `docker-socket-proxy` environment allowlist in
+  `examples/docker-compose.secure.yml` must include **`DELETE=1`** in addition to
+  `CONTAINERS=1`, `IMAGES=1`, and `POST=1` (D-10 baseline). Rationale: bollard's
+  `remove_container` call (fired when a job has `delete = true`, e.g. the `hello-world`
+  quickstart job) issues `DELETE /containers/{id}`. Per the `tecnativa/docker-socket-proxy`
+  README, HTTP verbs are separate permission flags — `POST=1` enables POST verbs only
+  and does **not** imply DELETE. Without this flag the Phase 8 `compose-smoke-secure`
+  CI axis fails at the `hello-world` step, blocking the Wave 3 human UAT walkthrough.
+  Source: https://github.com/Tecnativa/docker-socket-proxy (env var reference).
+  Resolves 08-RESEARCH.md Open Question Q1.
+
 ### Claude's Discretion
 
 - **Plan ordering / wave assignment.** The four work streams (runtime rebase, compose
