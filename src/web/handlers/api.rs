@@ -56,16 +56,20 @@ pub async fn run_now(
                 "Run Now requested via API"
             );
 
-            // 4. Return 200 with HX-Trigger for toast (D-10)
-            // The showToast event carries {message, level} in the detail,
-            // matching the JS listener in base.html.
+            // 4. Return 200 with HX-Trigger for toast (D-10) + HX-Refresh so the
+            // Job Detail page reloads and the newly queued run appears in the
+            // run list without a manual refresh. Matches the reload/reroll
+            // handler pattern in this module.
             let event = HxEvent::new_with_data(
                 "showToast",
                 json!({"message": format!("Run queued: {}", job.name), "level": "info"}),
             )
             .expect("toast event serialization");
 
-            (HxResponseTrigger::normal([event]), StatusCode::OK).into_response()
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("HX-Refresh", "true".parse().unwrap());
+
+            (HxResponseTrigger::normal([event]), headers, StatusCode::OK).into_response()
         }
         Err(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
