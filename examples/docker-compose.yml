@@ -3,7 +3,7 @@
 # ============================================================================
 # SECURITY: READ BEFORE DEPLOYING
 # ============================================================================
-# This example binds `ports: - "8080:8080"` so a stranger following the
+# This example binds `ports: - "8080:8080"` so an operator following the
 # README quickstart can reach the web UI at http://localhost:8080 without
 # additional configuration. That convenience has a cost:
 #
