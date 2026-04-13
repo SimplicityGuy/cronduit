@@ -43,6 +43,7 @@ struct JobDetailPage {
     total_runs: i64,
     page: i64,
     total_pages: i64,
+    any_running: bool,
     csrf_token: String,
 }
 
@@ -54,6 +55,11 @@ struct RunHistoryPartial {
     total_runs: i64,
     page: i64,
     total_pages: i64,
+    /// When true, the wrapper carries `hx-trigger="every 2s"` so the Run History
+    /// card auto-refreshes while any run is in the RUNNING state. Once all runs
+    /// are terminal (SUCCESS/FAILED/TIMEOUT/CANCELLED), the wrapper re-renders
+    /// without the trigger and polling stops naturally via HTMX outerHTML swap.
+    any_running: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +173,8 @@ pub async fn job_detail(
         })
         .collect();
 
+    let any_running = runs.iter().any(|r| r.status == "running");
+
     if is_htmx {
         RunHistoryPartial {
             job_id,
@@ -174,6 +182,7 @@ pub async fn job_detail(
             total_runs: run_result.total,
             page,
             total_pages,
+            any_running,
         }
         .into_web_template()
         .into_response()
@@ -206,11 +215,78 @@ pub async fn job_detail(
             total_runs: run_result.total,
             page,
             total_pages,
+            any_running,
             csrf_token,
         }
         .into_web_template()
         .into_response()
     }
+}
+
+/// GET /partials/jobs/:job_id/runs
+///
+/// Always renders the Run History partial (regardless of HX-Request header),
+/// so HTMX can poll this URL for live updates of run status transitions. The
+/// partial response carries `hx-trigger="every 2s"` on its wrapper element
+/// only while at least one run is in the RUNNING state, so an idle Job Detail
+/// page does not poll indefinitely (closes the Phase 6 UAT issue filed against
+/// Test 4 of `.planning/phases/06-.../06-UAT.md`).
+pub async fn job_runs_partial(
+    State(state): State<AppState>,
+    Path(job_id): Path<i64>,
+    Query(params): Query<PaginationParams>,
+) -> impl IntoResponse {
+    // Ensure the job exists — return 404 for unknown IDs so polling against a
+    // deleted job cleanly terminates rather than rendering an empty table.
+    match queries::get_job_by_id(&state.pool, job_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    let page = params.page.max(1);
+    let offset = (page - 1) * RUNS_PER_PAGE;
+
+    let run_result = queries::get_run_history(&state.pool, job_id, RUNS_PER_PAGE, offset)
+        .await
+        .unwrap_or(queries::Paginated {
+            items: vec![],
+            total: 0,
+        });
+
+    let total_pages = ((run_result.total as f64) / RUNS_PER_PAGE as f64).ceil() as i64;
+    let total_pages = total_pages.max(1);
+
+    let runs: Vec<RunHistoryView> = run_result
+        .items
+        .into_iter()
+        .map(|r| {
+            let status = r.status.to_lowercase();
+            let status_label = status.to_uppercase();
+            RunHistoryView {
+                id: r.id,
+                status,
+                status_label,
+                trigger: r.trigger,
+                start_time: r.start_time,
+                duration_display: format_duration_ms(r.duration_ms),
+                exit_code: r.exit_code,
+            }
+        })
+        .collect();
+
+    let any_running = runs.iter().any(|r| r.status == "running");
+
+    RunHistoryPartial {
+        job_id,
+        runs,
+        total_runs: run_result.total,
+        page,
+        total_pages,
+        any_running,
+    }
+    .into_web_template()
+    .into_response()
 }
 
 #[cfg(test)]
