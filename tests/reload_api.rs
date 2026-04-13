@@ -71,9 +71,7 @@ async fn build_test_app() -> Router {
         last_reload: Arc::new(Mutex::new(None::<ReloadState>)),
         watch_config: false,
         metrics_handle,
-        active_runs: Arc::new(tokio::sync::RwLock::new(
-            std::collections::HashMap::new(),
-        )),
+        active_runs: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
     Router::new()

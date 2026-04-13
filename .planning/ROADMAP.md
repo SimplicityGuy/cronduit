@@ -257,10 +257,10 @@ Plans:
 **Plans**: 4 plans (3 waves)
 
 Plans:
-- [ ] 07-01-PLAN.md — docker-compose.yml SECURITY comment + 06-VERIFICATION.md overrides block (D-01, D-02; Wave 1)
-- [ ] 07-02-PLAN.md — REQUIREMENTS.md 4-column Evidence rewrite + bulk bookkeeping flip (D-03..D-08; Wave 3; depends on 01 + 03)
-- [ ] 07-03-PLAN.md — 05-VERIFICATION.md re_verification annotation + status flip (D-09..D-12, D-15; Wave 2; depends on 04)
-- [ ] 07-04-PLAN.md — tests/reload_api.rs HX-Refresh HTTP-layer regression test (D-13 ack, D-14, D-16 ack; Wave 1)
+- [x] 07-01-PLAN.md — docker-compose.yml SECURITY comment + 06-VERIFICATION.md overrides block (D-01, D-02; Wave 1)
+- [x] 07-02-PLAN.md — REQUIREMENTS.md 4-column Evidence rewrite + bulk bookkeeping flip (D-03..D-08; Wave 3; depends on 01 + 03)
+- [x] 07-03-PLAN.md — 05-VERIFICATION.md re_verification annotation + status flip (D-09..D-12, D-15; Wave 2; depends on 04)
+- [x] 07-04-PLAN.md — tests/reload_api.rs HX-Refresh HTTP-layer regression test (D-13 ack, D-14, D-16 ack; Wave 1)
 
 ---
 
