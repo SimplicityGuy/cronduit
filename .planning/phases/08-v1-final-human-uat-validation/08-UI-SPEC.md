@@ -1,10 +1,11 @@
 ---
 phase: 08
 slug: v1-final-human-uat-validation
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-04-13
+reviewed_at: 2026-04-13
 spec_kind: regression-baseline
 ---
 
@@ -479,12 +480,12 @@ verify that each dimension cites the canonical source (`design/DESIGN_SYSTEM.md`
 than introducing a new value. The checker MUST flag any cell in the tables above
 that contains a value not traceable to one of those sources.
 
-- [ ] Dimension 1 Copywriting: PASS (frozen — every string traced to a template file or Phase 3/6 decision)
-- [ ] Dimension 2 Visuals: PASS (frozen — every component contract traced to a template file)
-- [ ] Dimension 3 Color: PASS (frozen — every value traced to `design/DESIGN_SYSTEM.md` § 2)
-- [ ] Dimension 4 Typography: PASS (frozen — every value traced to `design/DESIGN_SYSTEM.md` § 3)
-- [ ] Dimension 5 Spacing: PASS (frozen — every value traced to `design/DESIGN_SYSTEM.md` § 4)
-- [ ] Dimension 6 Registry Safety: PASS (not applicable — no third-party registry)
+- [x] Dimension 1 Copywriting: PASS (frozen — every string traced to a template file or Phase 3/6 decision)
+- [x] Dimension 2 Visuals: PASS (frozen — every component contract traced to a template file)
+- [x] Dimension 3 Color: PASS (frozen — every value traced to `design/DESIGN_SYSTEM.md` § 2)
+- [x] Dimension 4 Typography: PASS (frozen — every value traced to `design/DESIGN_SYSTEM.md` § 3)
+- [x] Dimension 5 Spacing: PASS (frozen — every value traced to `design/DESIGN_SYSTEM.md` § 4)
+- [x] Dimension 6 Registry Safety: PASS (not applicable — no third-party registry)
 
-**Approval:** pending (checker to upgrade to `approved YYYY-MM-DD` after verifying
-the citation chain above)
+**Approval:** approved 2026-04-13 (checker verified citation chain — all 6 dimensions PASS;
+two informational observations recorded but non-blocking)
