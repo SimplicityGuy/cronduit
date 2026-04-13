@@ -85,3 +85,9 @@ Temporary Items
 *.db-shm
 bin/tailwindcss
 .sqlx/tmp/
+
+# UAT / local scratch configs under examples/ -- never committed. Phase 6 UAT
+# regression (06-07-PLAN.md GAP-3) leaked examples/cronduit-uat.toml into the
+# quickstart path by replacing the docker-compose mount; this pattern prevents
+# that class of regression.
+examples/*-uat.toml
