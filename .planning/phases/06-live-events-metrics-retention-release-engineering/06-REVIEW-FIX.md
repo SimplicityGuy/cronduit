@@ -1,59 +1,43 @@
 ---
 phase: 06-live-events-metrics-retention-release-engineering
-fixed_at: 2026-04-12T12:15:00Z
+fixed_at: 2026-04-13T00:00:00Z
 review_path: .planning/phases/06-live-events-metrics-retention-release-engineering/06-REVIEW.md
 iteration: 1
-findings_in_scope: 5
-fixed: 5
+findings_in_scope: 2
+fixed: 2
 skipped: 0
 status: all_fixed
 ---
 
-# Phase 6: Code Review Fix Report
+# Phase 6 Gap-Closure Code Review Fix Report
 
-**Fixed at:** 2026-04-12T12:15:00Z
-**Source review:** .planning/phases/06-live-events-metrics-retention-release-engineering/06-REVIEW.md
+**Fixed at:** 2026-04-13
+**Source review:** `.planning/phases/06-live-events-metrics-retention-release-engineering/06-REVIEW.md`
 **Iteration:** 1
 
+This report overwrites the prior 06-REVIEW-FIX.md from the original phase run, matching the 06-REVIEW.md overwrite noted in the review summary. Scope is the Phase 6 gap-closure work for plans 06-06 and 06-07 only; earlier plans 06-01..06-05 are already merged and out of scope.
+
 **Summary:**
-- Findings in scope: 5
-- Fixed: 5
+- Findings in scope: 2 (WR-01, WR-02) — Critical + Warning scope; 5 Info findings out of scope without `--all` flag
+- Fixed: 2
 - Skipped: 0
 
 ## Fixed Issues
 
-### WR-01: `setup_metrics()` panics on double-call -- unsafe for test harness
+### WR-01: `setup_metrics()` fallback path returns a handle that will not render facade-recorded metrics
 
 **Files modified:** `src/telemetry.rs`
-**Commit:** acb2df9
-**Applied fix:** Changed `install_recorder().expect()` to a `match` that falls back to `build_recorder().handle()` with a warning log when a recorder is already installed. This prevents panics when multiple tests or call sites invoke `setup_metrics()`.
+**Commit:** 71a03a6
+**Applied fix:** Replaced the `install_recorder() -> build_recorder().handle()` fallback with a `OnceLock<PrometheusHandle>`-memoized installer. The first call eagerly installs the recorder with the configured histogram buckets, runs every `describe_*` / zero-observation call through the global `metrics::` facade, and stores the resulting handle; subsequent calls return a clone of that same handle. This eliminates the latent footgun where the fallback branch returned a detached handle disconnected from the global facade (rendering an empty body), and also prevents the silent histogram-bucket-config regression the old fallback had. Verified with `cargo check --all-targets` (clean, no warnings).
 
-### WR-02: `duration_ms` cast can overflow for multi-day runs
+### WR-02: `retention_pruner_emits_startup_log_on_spawn` uses a wall-clock sleep that can race under CI starvation
 
-**Files modified:** `src/db/queries.rs`
-**Commit:** a65d98a
-**Applied fix:** Added `.min(i64::MAX as u128)` cap before the `as i64` cast on `start_instant.elapsed().as_millis()`, preventing negative duration values for extremely long-running jobs.
-
-### WR-03: Three test files are entirely `todo!()` stubs -- will panic on any test run
-
-**Files modified:** `tests/metrics_endpoint.rs`, `tests/retention_integration.rs`, `tests/sse_streaming.rs`
-**Commit:** f54eb37
-**Applied fix:** Added `#[ignore = "not yet implemented"]` attribute to all 13 `todo!()` test stubs across all three files. Tests will compile but not run by default, preventing CI panics while keeping them visible via `cargo test -- --ignored`.
-
-### WR-04: `run_detail` handler silently swallows database errors in `fetch_logs`
-
-**Files modified:** `src/web/handlers/run_detail.rs`
-**Commit:** 0b0eb7c
-**Applied fix:** Replaced `.unwrap_or()` with a `match` block that logs the error via `tracing::error!` with run_id and error context before falling back to an empty result. Database failures are now observable in logs.
-
-### WR-05: Log viewer ordered DESC but appends SSE lines in arrival order
-
-**Files modified:** `src/db/queries.rs`
-**Commit:** 2d8f682
-**Applied fix:** Changed `ORDER BY id DESC` to `ORDER BY id ASC` in both the SQLite and PostgreSQL branches of `get_log_lines`. Log display is now consistently chronological, matching the SSE live streaming order and preventing a visual flip when transitioning from live to static log view.
+**Files modified:** `tests/retention_integration.rs`
+**Commit:** 9b54a50
+**Applied fix:** Replaced the fixed `tokio::time::sleep(Duration::from_millis(50))` with a bounded-poll loop that scans the captured tracing buffer for `"retention pruner started"` every 10 ms and panics after 5 s with the captured contents included in the diagnostic message. Happy-path latency stays ~10 ms (the startup line is synchronous and runs before the first `.await`, so it lands essentially immediately once the task is actually polled); the upper bound is now explicit and large enough to survive GitHub shared-runner starvation. Verified via `cargo test --test retention_integration retention_pruner_emits_startup_log_on_spawn` (1 passed, 0.02 s).
 
 ---
 
-_Fixed: 2026-04-12T12:15:00Z_
+_Fixed: 2026-04-13_
 _Fixer: Claude (gsd-code-fixer)_
 _Iteration: 1_
