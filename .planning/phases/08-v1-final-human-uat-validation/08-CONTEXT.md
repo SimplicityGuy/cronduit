@@ -142,7 +142,7 @@ Phase 8 is the last gate before v1.0 archive — scope discipline matters.
   every execution type:
   1. `echo-timestamp` — **command**, `*/1 * * * *`, runs `date '+%Y-%m-%d %H:%M:%S -- Cronduit is running!'`.
      Instant heartbeat; proves command execution end-to-end on the alpine runtime.
-  2. `http-healthcheck` — **command**, `*/5 * * * *`, runs `wget -q -S --spider https://example.com 2>&1 | head -10`.
+  2. `http-healthcheck` — **command**, `*/5 * * * *`, runs `wget -q -S --spider https://www.google.com 2>&1 | head -10`.
      Realistic uptime canary; validates DNS + egress from the container; uses busybox wget
      (already present in alpine). `2>&1 | head -10` captures the response headers into
      cronduit's stdout log.
@@ -478,9 +478,9 @@ None — `todo match-phase 8` returned 0 matches.
   — preserve the exact current string from `examples/cronduit.toml` line 40 so the UAT
   "heartbeat" screenshots stay recognizable between Phase 6 and Phase 8.
 
-- **http-healthcheck target URL.** Use `https://example.com` — the IANA reserved example
-  domain, stable, minimal, no ethical issue with automated probing. Not `google.com`,
-  not a Cronduit-hosted endpoint.
+- **http-healthcheck target URL.** Use `https://www.google.com` — a large, stable public
+  endpoint that reliably exercises DNS + TLS + HTTP on every v1 runner. Operators are
+  expected to swap this for their own uptime target when adopting the example.
 
 - **disk-usage script body.** Must handle the "/data not mounted" case cleanly so local
   dev runs without the compose volume don't silently fail. `du -sh /data 2>/dev/null ||
