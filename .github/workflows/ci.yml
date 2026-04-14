@@ -267,9 +267,9 @@ jobs:
             }
           done
 
-          echo "polling run history for every job (budget ${BUDGET_SECS}s, interval ${POLL_INTERVAL}s)"
-          deadline=$(( $(date +%s) + BUDGET_SECS ))
+          echo "polling run history for every job (per-job budget ${BUDGET_SECS}s, interval ${POLL_INTERVAL}s)"
           for name in $JOBS; do
+            deadline=$(( $(date +%s) + BUDGET_SECS ))  # per-job budget: avoids first slow job starving later ones
             id=$(echo "$jobs_json" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id')
             while :; do
               now=$(date +%s)
