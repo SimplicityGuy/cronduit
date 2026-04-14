@@ -20,7 +20,14 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # IMAGE_NAME is computed in the "Compute lowercase image name" step below.
+  # ghcr.io (and the OCI spec) require all-lowercase repository names, but
+  # ${{ github.repository }} preserves the original case of the GitHub owner
+  # (e.g., "SimplicityGuy/cronduit"). The first v1.0.0 tag push failed with
+  # `invalid tag "ghcr.io/SimplicityGuy/cronduit:1.0.0": repository name
+  # must be lowercase` for exactly this reason. The step below derives a
+  # lowercased value once and exports it into $GITHUB_ENV so every later
+  # step sees the same ${{ env.IMAGE_NAME }} without re-running `tr`.
 
 jobs:
   release:
@@ -31,6 +38,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Full history for git-cliff
+
+      - name: Compute lowercase image name
+        # Derive IMAGE_NAME=<lowercase-owner>/<lowercase-repo> from the
+        # $REPO env var and export to $GITHUB_ENV so later steps see it
+        # via ${{ env.IMAGE_NAME }}. github.repository is a server-
+        # controlled identifier (strict owner/repo format), but we route
+        # it through an env var anyway to follow the project-wide "never
+        # interpolate ${{ }} directly into run: commands" rule.
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          echo "IMAGE_NAME=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Extract version from tag
         id: version
