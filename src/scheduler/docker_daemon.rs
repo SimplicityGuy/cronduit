@@ -42,7 +42,7 @@ pub async fn preflight_ping(docker: Option<&Docker>) {
         tracing::warn!(
             target: "cronduit.docker",
             error = "docker client not initialized",
-            "docker daemon unreachable: client init failed. cronduit will keep scheduling command/script jobs; docker jobs will fail until the daemon is reachable. remediation: check /var/run/docker.sock mount, group_add / DOCKER_GID, or use examples/docker-compose.secure.yml on macOS.",
+            "docker daemon unreachable: client init failed. cronduit will keep scheduling command/script jobs; docker jobs will fail. remediation: set DOCKER_GID to the host docker group (Linux: `stat -c %g /var/run/docker.sock`; Rancher Desktop macOS: 102). See README Troubleshooting.",
         );
         update_reachable_gauge(false);
         return;
@@ -60,7 +60,7 @@ pub async fn preflight_ping(docker: Option<&Docker>) {
             tracing::warn!(
                 target: "cronduit.docker",
                 error = %err,
-                "docker daemon unreachable. cronduit will keep scheduling command/script jobs; docker jobs will fail until the daemon is reachable. remediation: check /var/run/docker.sock mount, group_add / DOCKER_GID, or use examples/docker-compose.secure.yml on macOS."
+                "docker daemon unreachable. cronduit will keep scheduling command/script jobs; docker jobs will fail. remediation: set DOCKER_GID to the host docker group (Linux: `stat -c %g /var/run/docker.sock`; Rancher Desktop macOS: 102). See README Troubleshooting."
             );
             update_reachable_gauge(false);
         }

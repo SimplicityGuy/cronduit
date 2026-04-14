@@ -177,6 +177,17 @@ jobs:
             exit 1
           }
 
+      - name: Derive DOCKER_GID from runner's docker.sock
+        # Explicit derivation makes the default-compose axis robust against
+        # ubuntu-latest image bumps that change the docker group GID. The
+        # secure-compose axis doesn't need this (its socket-proxy runs as
+        # root in its own container), but exporting DOCKER_GID unconditionally
+        # is a no-op there since nothing reads it.
+        run: |
+          DG=$(stat -c %g /var/run/docker.sock)
+          echo "DOCKER_GID=${DG}" >> "$GITHUB_ENV"
+          echo "derived DOCKER_GID=${DG}"
+
       - name: docker compose up -d
         working-directory: examples
         env:

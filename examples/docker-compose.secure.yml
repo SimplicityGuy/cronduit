@@ -10,18 +10,24 @@
 # (networks, volumes, exec into containers, daemon info, swarm, system prune).
 #
 # Use this file when:
-#   * You are running on macOS / Docker Desktop. Inside the Linux VM the socket
-#     is root-owned and host GID mapping is unreliable, so the host-GID
-#     approach from `docker-compose.yml` cannot work. The socket-proxy sidecar
-#     mounts the socket in ITS OWN root-owned container and exposes an HTTP
-#     allowlist to cronduit over a private Docker network.
-#   * You want defense-in-depth. Even a compromised cronduit (code execution
-#     via a malicious config reload, a bug in the web UI, etc.) cannot pivot
-#     to the full Docker API and root the host. Compromise is bounded to the
-#     allowlisted verbs.
+#   * You are running on macOS + Docker Desktop. The socket GID inside the
+#     Docker Desktop VM is not stable across releases, so the `group_add`
+#     alignment in `docker-compose.yml` is brittle there. The socket-proxy
+#     sidecar mounts the socket inside its OWN root-owned container and
+#     exposes an HTTP allowlist to cronduit over a private Docker network —
+#     no host GID alignment required.
+#   * You want defense-in-depth on any platform. Even a compromised cronduit
+#     (code execution via a malicious config reload, a bug in the web UI,
+#     etc.) cannot pivot to the full Docker API and root the host — the
+#     compromise is bounded to the allowlisted verbs.
 #   * You are fronting Cronduit with a reverse proxy and want the HTTP listener
 #     on loopback only. Replace `ports: - "8080:8080"` below with `expose: - "8080"`
 #     and put your proxy in a container on the `cronduit-net` network.
+#
+# On macOS + Rancher Desktop, BOTH compose files work — the default variant
+# needs `export DOCKER_GID=102` (the VM-side docker group GID), and this
+# secure variant needs no environment variables at all. Pick the default
+# when you want simpler wiring, pick this one for defense-in-depth.
 #
 # See THREAT_MODEL.md in the repo root for the full threat surface. See
 # `examples/docker-compose.yml` for the simpler single-container variant.

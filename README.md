@@ -262,6 +262,58 @@ just check-config examples/cronduit.toml
 
 ---
 
+## Troubleshooting
+
+### Docker jobs fail with "no Docker client" or "Socket not found"
+
+Cronduit pings the Docker daemon once at startup and exposes the result as a Prometheus gauge:
+
+```bash
+curl -sS http://localhost:8080/metrics | grep cronduit_docker_reachable
+# cronduit_docker_reachable 1   <- daemon reachable, docker jobs will work
+# cronduit_docker_reachable 0   <- preflight failed, docker jobs will error
+```
+
+If the gauge is `0` and you see a `cronduit.docker` WARN log line at startup, the cause is almost always a mismatch between cronduit's supplementary group and the host Docker group.
+
+**Derive the right `DOCKER_GID`:**
+
+| Host | Command | Typical value |
+|------|---------|---------------|
+| Linux | `stat -c %g /var/run/docker.sock` | `999` (default) |
+| macOS + Rancher Desktop | *fixed value* (VM-side docker group) | **`102`** |
+| macOS + Docker Desktop | *unstable, varies by release* | use `docker-compose.secure.yml` instead |
+
+Export the value and restart the stack:
+
+```bash
+export DOCKER_GID=102          # for Rancher Desktop on macOS
+docker compose -f examples/docker-compose.yml down -v
+docker compose -f examples/docker-compose.yml up -d
+curl -sS http://localhost:8080/metrics | grep cronduit_docker_reachable
+```
+
+### Command/script jobs fail with "No such file or directory"
+
+The Cronduit runtime image is based on `alpine:3` and ships busybox `date`, `wget`, `du`, `df`, and `/bin/sh`. If your command references a binary that isn't in busybox (e.g. `curl`, `jq`, `bash`), either install it via a custom Dockerfile that extends `ghcr.io/simplicityguy/cronduit:latest`, or rewrite the job as a `script = ` that invokes the busybox equivalent.
+
+### Web UI unreachable / `/health` times out
+
+Check that the compose stack is actually up (`docker compose ps`) and that nothing else is bound to port 8080. The default bind is `0.0.0.0:8080` inside the example compose files; cronduit emits a loud WARN at startup if you bind to a non-loopback address without a reverse proxy (see the Security section above).
+
+### I want to validate before I run anything
+
+Use `cronduit check` to parse your config and surface errors without starting the scheduler:
+
+```bash
+docker run --rm \
+  -v $PWD/examples/cronduit.toml:/etc/cronduit/config.toml:ro \
+  ghcr.io/simplicityguy/cronduit:latest \
+  cronduit check /etc/cronduit/config.toml
+```
+
+---
+
 ## Contributing
 
 1. Create a feature branch (`gsd/...` or `feat/...`)

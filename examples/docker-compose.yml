@@ -38,20 +38,30 @@
 # runtime image. To let the non-root cronduit user read /var/run/docker.sock,
 # this file uses a `group_add` stanza that joins the cronduit process to the
 # host docker group. The `DOCKER_GID` environment variable overrides the
-# default (999); derive yours on Linux with:
+# default (999). Derive the correct value for your host:
 #
-#     stat -c %g /var/run/docker.sock
+#   Linux:
+#     export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
 #
-# then either export `DOCKER_GID=<value>` in your shell, or set it in a
-# `.env` file next to this compose file. Example:
+#   macOS + Rancher Desktop:
+#     export DOCKER_GID=102   # the VM-side docker group GID inside lima
+#
+# You can also set it via a `.env` file next to this compose file:
 #
 #     # .env
 #     DOCKER_GID=998
 #
-# On macOS / Docker Desktop the socket inside the Linux VM is root-owned with
-# no stable host-side GID mapping -- `group_add` cannot fix that. macOS users
-# should use `examples/docker-compose.secure.yml` instead, which runs a
-# docker-socket-proxy sidecar and does not rely on host GID alignment.
+# macOS + Docker Desktop: the socket GID inside the Docker Desktop VM is not
+# stable across releases, so `group_add` alignment is brittle there. Use
+# `examples/docker-compose.secure.yml` instead — it runs a docker-socket-proxy
+# sidecar (as root) that mediates Docker API access through a narrow allowlist
+# and does not rely on host GID alignment.
+#
+# Verifying the mount: after `docker compose up -d`, run
+# `curl -sS http://localhost:8080/metrics | grep cronduit_docker_reachable`.
+# A value of `1` means bollard pinged the daemon successfully; `0` means the
+# startup preflight failed (wrong DOCKER_GID, missing mount, daemon down).
+# See README Troubleshooting for the full diagnostic flow.
 #
 # Prerequisites: Docker with Compose v2+
 # Usage: docker compose -f examples/docker-compose.yml up -d
