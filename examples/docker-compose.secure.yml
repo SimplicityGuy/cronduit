@@ -84,6 +84,9 @@ services:
 
   cronduit:
     image: ghcr.io/simplicityguy/cronduit:latest
+    # No group_add needed: Docker API traffic flows through dockerproxy (no
+    # direct socket mount). The cronduit user is UID 1000, matching the /data
+    # volume ownership set in the Dockerfile.
     depends_on:
       - dockerproxy
     ports:
