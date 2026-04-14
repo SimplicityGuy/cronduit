@@ -243,8 +243,11 @@ update_dockerfile_base() {
     # nonroot variant of debian12 on each docker build), so we only update the
     # rust:<N.M>-slim-bookworm tag by looking up the latest minor on Docker Hub.
 
+    # Rule 1 fix: the original 'FROM[^r]*rust:...' regex fails because the
+    # word 'platform' in `FROM --platform=$BUILDPLATFORM rust:...` contains a
+    # lowercase 'r'. Match the `rust:<ver>-slim-bookworm` substring directly.
     local current_rust
-    current_rust=$(grep -Eo 'FROM[^r]*rust:[0-9]+\.[0-9]+(\.[0-9]+)?-slim-bookworm' Dockerfile | head -1 | grep -Eo 'rust:[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
+    current_rust=$(grep -Eo 'rust:[0-9]+\.[0-9]+(\.[0-9]+)?-slim-bookworm' Dockerfile | head -1 | grep -Eo 'rust:[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
     if [[ -z "$current_rust" ]]; then
         print_warning "No 'rust:<version>-slim-bookworm' line found in Dockerfile — skipping"
         return
@@ -321,8 +324,12 @@ update_tailwind_version() {
         filter='^v3\.[0-9]+\.[0-9]+$'
     fi
 
+    # Rule 1 fix: the Tailwind repo has hundreds of tags and the default
+    # `gh api .../tags` returns only the first 30 (all v4.x in 2026), so
+    # grepping for v3.x would return nothing. Use --paginate to walk every
+    # page until we find a match (bounded by gh's page cap).
     local latest_tw
-    latest_tw=$(gh api repos/tailwindlabs/tailwindcss/tags --jq '.[].name' 2>/dev/null \
+    latest_tw=$(gh api --paginate repos/tailwindlabs/tailwindcss/tags --jq '.[].name' 2>/dev/null \
         | grep -E "$filter" \
         | sed 's/^v//' \
         | sort -V \
