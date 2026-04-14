@@ -1,10 +1,11 @@
 # examples/cronduit.toml -- Cronduit quickstart configuration.
 #
-# This file ships four example jobs covering every execution type:
+# This file ships five example jobs covering every execution type:
 #   1. echo-timestamp (command) - every minute, instant heartbeat
 #   2. http-healthcheck (command) - every 5 minutes, uptime canary
 #   3. disk-usage (script) - every 15 minutes, script-job demo on /data
-#   4. hello-world (docker) - every 5 minutes, ephemeral container demo
+#   4. hello-world (docker) - every 5 minutes, [defaults] merge + cmd demo
+#   5. hello-world-container (docker) - every 5 minutes, per-job override demo
 #
 # SECURITY:
 #   * Never commit plaintext secrets. Use env-var references (${VAR}) and set
@@ -36,19 +37,22 @@ random_min_gap = "0s"
 # ------------------------------------------------------------
 # Quickstart jobs
 # ------------------------------------------------------------
-# Four jobs covering every execution type so a new operator can see
+# Five jobs covering every execution type so a new operator can see
 # commands, scripts, and Docker containers run out of the box:
 #
-#   1. echo-timestamp   -- command   (every 1 min) instant heartbeat
-#   2. http-healthcheck -- command   (every 5 min) realistic uptime canary
-#   3. disk-usage       -- script    (every 15 min) /data volume inspector
-#   4. hello-world      -- docker    (every 5 min) ephemeral container demo
+#   1. echo-timestamp         -- command (every 1 min)  instant heartbeat
+#   2. http-healthcheck       -- command (every 5 min)  realistic uptime canary
+#   3. disk-usage             -- script  (every 15 min) /data volume inspector
+#   4. hello-world            -- docker  (every 5 min)  [defaults] merge + cmd override
+#   5. hello-world-container  -- docker  (every 5 min)  per-job override demo
 #
-# All four run against the alpine:3 cronduit runtime image shipped in
-# Phase 8. The command/script jobs rely on busybox applets (date, wget,
-# du, df, /bin/sh); the docker job requires the host Docker socket mount
-# in docker-compose.yml (or the docker-socket-proxy sidecar in
-# docker-compose.secure.yml).
+# Command/script jobs run inside the cronduit runtime image (alpine:3)
+# and rely on busybox applets (date, wget, du, df, /bin/sh). Docker jobs
+# require the host Docker socket mount in docker-compose.yml (or the
+# docker-socket-proxy sidecar in docker-compose.secure.yml). Jobs 4 and 5
+# are both docker-type but demonstrate opposite sides of the [defaults]
+# merge semantics -- job 4 inherits every docker-only field from
+# [defaults]; job 5 overrides them per-job.
 
 # 1. Instant heartbeat. Runs every minute so you see it in the dashboard
 #    within ~60s of `docker compose up`.
@@ -77,12 +81,54 @@ du -sh /data 2>/dev/null || echo "/data not mounted"
 df -h /data 2>/dev/null || true
 """
 
-# 4. Ephemeral Docker container demo. Pulls hello-world:latest and runs it;
-#    `delete = true` removes the container on completion. Requires the
-#    Docker socket mount (docker-compose.yml) or the socket-proxy sidecar
-#    (docker-compose.secure.yml).
+# 4. Docker job demonstrating BOTH the [defaults] merge path (CONF-03/
+#    CONF-06) AND the per-job `cmd` override. This block deliberately
+#    omits `image`, `network`, `delete`, and `timeout` so they are
+#    inherited from [defaults] (alpine:latest on the bridge network,
+#    cronduit-removes-after-run, 5m timeout). The `cmd = [...]` line
+#    overrides alpine:latest's (empty) baked-in CMD so the container
+#    actually prints something visible in the run logs -- alpine without
+#    an explicit cmd would exit immediately with no output. Run
+#    `cronduit check examples/cronduit.toml` to validate; confirm on the
+#    web UI that the job shows up as type=docker with image=alpine:latest
+#    and that a run emits `Hello from cronduit defaults!` to stdout.
+#    Requires the Docker socket mount (docker-compose.yml) or the
+#    socket-proxy sidecar (docker-compose.secure.yml).
 [[jobs]]
 name = "hello-world"
 schedule = "*/5 * * * *"
+cmd = ["echo", "Hello from cronduit defaults!"]
+
+# 5. Docker job demonstrating per-job field overrides winning over [defaults]
+#    (CONF-06). Contrast with `hello-world` above (job 4): job 4 inherits
+#    every docker-only field from [defaults], so its block is just name +
+#    schedule + cmd. This one sets `image` and `delete` per-job, proving that
+#    explicit values always take precedence over the [defaults] section.
+#
+#    Image: `hello-world:latest` is Docker's canonical demo image -- it has
+#    a baked-in CMD that prints the familiar "Hello from Docker!" message,
+#    so no `cmd` line is needed here (unlike job 4, which needs an explicit
+#    cmd because alpine:latest has no default CMD at all). This contrast is
+#    deliberate and demonstrates both sides of the CMD story in one example.
+#
+#    `delete = false`: the operator intent is "keep the container after the
+#    run so I can `docker logs <id>` or `docker inspect <id>` and poke at
+#    why the last run behaved the way it did." This is the opposite choice
+#    from [defaults].delete = true, which sweeps containers after each run.
+#
+#    KNOWN GAP (v1.0): the executor currently always force-removes containers
+#    regardless of this field. The `delete` value flows through JobConfig ->
+#    serialize_config_json -> DockerJobConfig correctly (verified by the
+#    parity test in src/config/defaults.rs), but `cleanup_container` in
+#    src/scheduler/docker.rs does not yet branch on it. `delete = false` is
+#    therefore a no-op today -- the container is removed on every run.
+#    A follow-up issue will wire the executor branch; this example ships the
+#    intent now so the TOML surface is locked and the fix is drop-in later.
+#    See .planning/quick/260414-gbf-.../SUMMARY.md under "Known Gap /
+#    Follow-up" for the full story and the moby#8441 constraint that
+#    explains why cronduit's cleanup path is non-trivial.
+[[jobs]]
+name = "hello-world-container"
+schedule = "*/5 * * * *"
 image = "hello-world:latest"
-delete = true
+delete = false

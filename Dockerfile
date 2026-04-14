@@ -81,8 +81,18 @@ RUN set -eux; \
 # for the full decision log (D-01..D-06) on this walk-back.
 FROM alpine:3
 
-# Static OCI labels. Dynamic labels (version, revision) are injected via --label
-# in the GitHub Actions docker/build-push-action step.
+# Static OCI labels -- fallback for local `docker build .` outside the
+# release workflow. The three labels below are the ones GitHub Container
+# Registry recognizes on the package page:
+#   org.opencontainers.image.source       -> "Connected to repository" link
+#   org.opencontainers.image.description  -> subtitle under the package name
+#   org.opencontainers.image.licenses     -> license badge in the sidebar
+# At release time, docker/metadata-action@v5 in .github/workflows/release.yml
+# generates a fuller label + annotation set (title, vendor, version,
+# revision, created, url) and writes them to BOTH the per-platform image
+# configs and the top-level manifest INDEX, which is what GHCR reads for
+# multi-arch images. See:
+# https://docs.github.com/packages/working-with-a-github-packages-registry/working-with-the-container-registry#labelling-container-images
 LABEL org.opencontainers.image.source="https://github.com/SimplicityGuy/cronduit"
 LABEL org.opencontainers.image.description="Self-hosted Docker-native cron scheduler with a web UI"
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"

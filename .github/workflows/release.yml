@@ -80,23 +80,59 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract Docker metadata (labels, tags, annotations)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Tag templates replace the hand-rolled multi-tag list below. The
+          # type=semver entries derive semver-aware tags from the pushed git
+          # tag (v1.0.0 -> 1.0.0, 1.0, 1). type=raw,value=latest keeps the
+          # floating latest tag pointed at every release.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+          # Labels GitHub Container Registry recognizes for the package page:
+          #   - org.opencontainers.image.source       (Connected to repository)
+          #   - org.opencontainers.image.description  (package subtitle)
+          #   - org.opencontainers.image.licenses     (sidebar license badge)
+          # revision, version, created, url are auto-populated by
+          # metadata-action from repo context. `source` is ALSO auto-populated,
+          # but we emit it explicitly below as belt-and-suspenders: if auto-
+          # population ever silently fails (image-name parsing quirk, version
+          # drift), the explicit value still lands on the image. metadata-action
+          # deduplicates by key, so there is no risk of two conflicting values.
+          labels: |
+            org.opencontainers.image.title=Cronduit
+            org.opencontainers.image.description=Self-hosted Docker-native cron scheduler with a web UI
+            org.opencontainers.image.licenses=MIT OR Apache-2.0
+            org.opencontainers.image.vendor=SimplicityGuy
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          # Annotations are written to the manifest INDEX (and per-platform
+          # manifests) rather than the image config. GHCR's "Connected to
+          # repository" link for multi-arch images reads the index manifest,
+          # so org.opencontainers.image.source MUST be present here, not
+          # only as a label on the platform images. metadata-action emits an
+          # `index:` prefix internally so the value lands on the top-level
+          # manifest list -- do not add the prefix manually.
+          annotations: |
+            org.opencontainers.image.title=Cronduit
+            org.opencontainers.image.description=Self-hosted Docker-native cron scheduler with a web UI
+            org.opencontainers.image.licenses=MIT OR Apache-2.0
+            org.opencontainers.image.vendor=SimplicityGuy
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.minor }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.description=Self-hosted Docker-native cron scheduler with a web UI
-            org.opencontainers.image.licenses=MIT OR Apache-2.0
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha,scope=cronduit-release
           cache-to: type=gha,mode=max,scope=cronduit-release
 

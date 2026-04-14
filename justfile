@@ -51,13 +51,43 @@ tailwind:
     fi
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --minify
 
-# Docker image build. Two variants:
-#   `just image`      — single-platform --load for PR CI smoke test
-#   `just image-push` — multi-arch push for release (see below)
+# Docker image build. Three variants:
+#   `just image`       — single-platform linux/amd64 --load, tagged cronduit:dev
+#                        (used by CI for reproducible smoke tests — DO NOT change
+#                        the hardcoded platform or tag here; Plan 07 pins both)
+#   `just image-local` — native host platform --load, tagged
+#                        ghcr.io/simplicityguy/cronduit:latest — the tag
+#                        examples/docker-compose.yml expects, so a
+#                        `just image-local && docker compose up -d` hand-off
+#                        works without a manual retag. Use for local UAT of a
+#                        feature branch before the release workflow publishes.
+#   `just image-push`  — multi-arch push for release (see below)
 image:
     docker buildx build \
         --platform linux/amd64 \
         --tag cronduit:dev \
+        --load \
+        .
+
+# Build the image with the native host platform and tag it as the exact
+# name examples/docker-compose.yml consumes, so compose finds it in the
+# local daemon without trying to pull from GHCR. Use this for local UAT
+# of a feature branch before the release workflow publishes a fresh image.
+# Non-amd64/arm64 hosts are not supported by the Dockerfile builder stage
+# (which cross-compiles with cargo-zigbuild only for those two triples).
+image-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ARCH=$(uname -m)
+    case "$ARCH" in
+      x86_64)        PLATFORM="linux/amd64" ;;
+      arm64|aarch64) PLATFORM="linux/arm64" ;;
+      *) echo "unsupported host arch: $ARCH (Dockerfile supports amd64/arm64 only)" >&2; exit 1 ;;
+    esac
+    echo "building cronduit for ${PLATFORM} and tagging ghcr.io/simplicityguy/cronduit:latest"
+    docker buildx build \
+        --platform "$PLATFORM" \
+        --tag ghcr.io/simplicityguy/cronduit:latest \
         --load \
         .
 

@@ -55,7 +55,7 @@ fn check_one_of_job_type(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigEr
             line: 0,
             col: 0,
             message: format!(
-                "[[jobs]] `{}` must declare exactly one of `command`, `script`, or `image` (found {count})",
+                "[[jobs]] `{}` must declare exactly one of `command`, `script`, or `image` (found {count}). Note: `image` may also come from `[defaults].image` unless the job sets `use_defaults = false`.",
                 job.name
             ),
         });
@@ -206,6 +206,8 @@ mod tests {
             network: None,
             container_name: None,
             timeout: None,
+            delete: None,
+            cmd: None,
         }
     }
 
@@ -237,5 +239,29 @@ mod tests {
         let mut e = Vec::new();
         check_schedule(&stub_job(""), Path::new("x"), &mut e);
         assert!(!e.is_empty());
+    }
+
+    #[test]
+    fn check_one_of_job_type_error_mentions_defaults() {
+        // Issue #20: when a user relies on [defaults].image but typos the
+        // defaults section away, the error must tell them `image` can come
+        // from [defaults] so they know where else to look.
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.script = None;
+        job.image = None;
+        let mut e = Vec::new();
+        check_one_of_job_type(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(
+            e[0].message.contains("[defaults]"),
+            "error must point at [defaults] as a valid source of `image`: {}",
+            e[0].message
+        );
+        assert!(
+            e[0].message.contains("use_defaults"),
+            "error must mention `use_defaults` as the opt-out knob: {}",
+            e[0].message
+        );
     }
 }

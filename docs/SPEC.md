@@ -159,6 +159,16 @@ delete = true
 RESTIC_PASSWORD = "${RESTIC_PASSWORD}"   # Interpolated at parse time, wrapped in SecretString
 ```
 
+**Overriding the image's baked-in CMD** — the `cmd` field is an optional list of strings that overrides the Docker image's default `CMD`. When set, the vec is passed verbatim to the container at start time via bollard's `ContainerCreateBody.cmd`. When unset, the container runs with whatever `CMD` the image defines (which may be nothing at all — e.g. `alpine:latest` has no default `CMD`, so a docker job using `alpine` with no `cmd` will exit immediately with no output). `cmd` is a **per-job-only field** and is **NOT available under `[defaults]`** — every job must declare its own override (or inherit the image default). This matches the semantics of `docker run IMAGE CMD...` on the command line.
+
+```toml
+[[jobs]]
+name = "curl-healthcheck"
+schedule = "*/5 * * * *"
+image = "curlimages/curl:8.5.0"
+cmd = ["curl", "-sf", "https://example.com/health"]
+```
+
 Secrets must use `${ENV_VAR}` references — Cronduit interpolates at parse time and wraps the resolved value in `SecretString` (from the `secrecy` crate) so credentials never appear in `Debug` output or log lines. If a referenced variable is unset, `cronduit check` fails with a clear error pointing at the line.
 
 For a complete working example, see [`examples/cronduit.toml`](../examples/cronduit.toml) in the repo.

@@ -43,7 +43,12 @@ fn job_type(job: &JobConfig) -> &'static str {
 /// Serialize job config to JSON for storage, excluding secret env values.
 ///
 /// T-02-03: Only env key names are stored, never secret values.
-fn serialize_config_json(job: &JobConfig) -> String {
+///
+/// `pub(crate)` so the parity regression test in
+/// `src/config/defaults.rs::tests::parity_with_docker_job_config_is_maintained`
+/// can call this function directly and assert that every non-secret
+/// field `DockerJobConfig` reads is present in the JSON output.
+pub(crate) fn serialize_config_json(job: &JobConfig) -> String {
     let mut map = serde_json::Map::new();
     map.insert("name".into(), serde_json::json!(job.name));
     map.insert("schedule".into(), serde_json::json!(job.schedule));
@@ -67,6 +72,12 @@ fn serialize_config_json(job: &JobConfig) -> String {
     }
     if let Some(t) = &job.timeout {
         map.insert("timeout_secs".into(), serde_json::json!(t.as_secs()));
+    }
+    if let Some(d) = job.delete {
+        map.insert("delete".into(), serde_json::json!(d));
+    }
+    if let Some(c) = &job.cmd {
+        map.insert("cmd".into(), serde_json::json!(c));
     }
     // T-02-03: Only store env key names, never values.
     if !job.env.is_empty() {
@@ -241,6 +252,8 @@ mod tests {
             network: None,
             container_name: None,
             timeout: None,
+            delete: None,
+            cmd: None,
         }
     }
 
@@ -407,6 +420,8 @@ mod tests {
                 network: None,
                 container_name: None,
                 timeout: None,
+                delete: None,
+                cmd: None,
             }],
         };
 
@@ -420,6 +435,68 @@ mod tests {
         assert!(!job.config_json.contains("super-secret-value"));
 
         pool.close().await;
+    }
+
+    #[test]
+    fn serialize_config_json_includes_delete() {
+        // Without this test, the serializer change is a silent semantic shift
+        // the compiler will not catch.
+        let mut job = make_job("dj", "*/5 * * * *", None, None);
+        job.image = Some("alpine:latest".into());
+
+        // Some(true) -> "delete": true
+        job.delete = Some(true);
+        let s = serialize_config_json(&job);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v.get("delete"), Some(&serde_json::json!(true)));
+
+        // Some(false) -> "delete": false
+        job.delete = Some(false);
+        let s = serialize_config_json(&job);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v.get("delete"), Some(&serde_json::json!(false)));
+
+        // None -> key absent
+        job.delete = None;
+        let s = serialize_config_json(&job);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(
+            v.get("delete").is_none(),
+            "delete=None must not emit the key (matches image/network pattern)"
+        );
+    }
+
+    #[test]
+    fn serialize_config_json_includes_cmd() {
+        // Without this test, the cmd serializer wiring is a silent semantic
+        // shift and the cmd flow-through to DockerJobConfig is unreachable.
+        let mut job = make_job("dj", "*/5 * * * *", None, None);
+        job.image = Some("alpine:latest".into());
+
+        // Some(["a","b"]) -> "cmd": ["a","b"]
+        job.cmd = Some(vec!["a".to_string(), "b".to_string()]);
+        let s = serialize_config_json(&job);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v.get("cmd"), Some(&serde_json::json!(["a", "b"])));
+
+        // Some([]) -> "cmd": [] (explicit "no command", semantically distinct from None)
+        job.cmd = Some(vec![]);
+        let s = serialize_config_json(&job);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(
+            v.get("cmd"),
+            Some(&serde_json::json!([])),
+            "Some(vec![]) must emit an empty array, not omit the key"
+        );
+
+        // None -> key absent
+        job.cmd = None;
+        let s = serialize_config_json(&job);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(
+            v.get("cmd").is_none(),
+            "cmd=None must not emit the key (matches image/network pattern)"
+        );
     }
 
     #[tokio::test]
