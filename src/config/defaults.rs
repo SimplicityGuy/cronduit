@@ -1,10 +1,99 @@
-//! Merge [defaults] into each JobConfig exactly once, during parse_and_validate.
+//! # Config plumbing parity invariant
 //!
-//! After this runs, every downstream consumer (validator, sync, hash, executor)
-//! reads the already-merged JobConfig directly and MUST NOT consult
-//! Config.defaults for per-job fields. The only remaining consumer of
-//! Config.defaults is `random_min_gap`, which is a global @random scheduler
-//! knob and NOT a per-job field -- see src/cli/run.rs and src/scheduler/reload.rs.
+//! This module is the single point of truth for how `[defaults]` merges into
+//! per-job `JobConfig`s, but it is ALSO load-bearing as documentation for the
+//! broader "config-to-executor plumbing" invariant. Five layers must stay in
+//! lock-step for any field that ends up on an executor deserialize struct:
+//!
+//! 1. `JobConfig` in `src/config/mod.rs` -- the TOML-side struct.
+//! 2. `serialize_config_json` in `src/scheduler/sync.rs` -- writes to the DB
+//!    `config_json` column that the executor reads back.
+//! 3. `compute_config_hash` in `src/config/hash.rs` -- change-detection for
+//!    `sync_config_to_db` so an operator's edit triggers an `updated` upsert.
+//! 4. `apply_defaults` in THIS file -- decides whether `[defaults]` merges
+//!    into the field or the field is per-job-only.
+//! 5. `DockerJobConfig` in `src/scheduler/docker.rs` -- the executor-side
+//!    deserialize struct that reads the serialized JSON.
+//!
+//! When one of the five drifts without the others, silent behavior regressions
+//! slip through unit tests that construct hand-rolled fixtures. The class of
+//! bug that produced both the `[defaults]` merge bug (issue #20) AND the
+//! missing `cmd` field was the same root cause: the executor-side struct was
+//! never cross-referenced with the TOML-side struct or the DB path.
+//!
+//! ```mermaid
+//! classDiagram
+//!     class JobConfig {
+//!         +name: String
+//!         +schedule: String
+//!         +command: Option~String~
+//!         +script: Option~String~
+//!         +image: Option~String~
+//!         +volumes: Option~Vec~String~~
+//!         +network: Option~String~
+//!         +container_name: Option~String~
+//!         +cmd: Option~Vec~String~~
+//!         +delete: Option~bool~
+//!         +timeout: Option~Duration~
+//!         +env: BTreeMap~String,SecretString~
+//!         +use_defaults: Option~bool~
+//!     }
+//!     class DefaultsConfig {
+//!         +image: Option~String~
+//!         +network: Option~String~
+//!         +volumes: Option~Vec~String~~
+//!         +delete: Option~bool~
+//!         +timeout: Option~Duration~
+//!         +random_min_gap: Option~Duration~
+//!     }
+//!     class DockerJobConfig {
+//!         +image: String
+//!         +env: HashMap~String,String~
+//!         +volumes: Option~Vec~String~~
+//!         +cmd: Option~Vec~String~~
+//!         +network: Option~String~
+//!         +container_name: Option~String~
+//!     }
+//!     JobConfig --> DefaultsConfig : apply_defaults merges image/network/volumes/delete/timeout
+//!     JobConfig --> DockerJobConfig : serialize_config_json -> config_json -> deserialize
+//! ```
+//!
+//! ## Parity table
+//!
+//! | DockerJobConfig field | JobConfig field  | serialize_config_json  | compute_config_hash | apply_defaults decision | Notes |
+//! |---|---|---|---|---|---|
+//! | `image`           | `image`          | yes                    | yes                 | mergeable               | Falls back to `[defaults].image` |
+//! | `env`             | `env`            | keys only (`env_keys`) | excluded            | per-job only (secret)   | T-02-03: values are `SecretString`, never hashed/logged |
+//! | `volumes`         | `volumes`        | yes                    | yes                 | mergeable               | Per-job REPLACES defaults (no concatenation) |
+//! | `cmd`             | `cmd`            | yes                    | yes                 | per-job only            | NOT in `DefaultsConfig`. `Some(vec![])` is distinct from `None` |
+//! | `network`         | `network`        | yes                    | yes                 | mergeable               | Includes `container:<name>` VPN mode -- marquee feature |
+//! | `container_name`  | `container_name` | yes                    | yes                 | per-job only            | NOT in `DefaultsConfig` -- container names must be unique |
+//!
+//! Fields in `JobConfig` that are NOT read by `DockerJobConfig` but still
+//! flow through the plumbing: `name`, `schedule`, `command`, `script`,
+//! `timeout` (becomes `DbJob.timeout_secs`, used by every executor),
+//! `delete` (serialized + hashed but not yet honored by the docker executor
+//! -- see Known Gap in the plan's objective), `use_defaults` (consumed by
+//! `apply_defaults` itself and then dropped -- not serialized, not hashed).
+//!
+//! ## Adding a new field
+//!
+//! Any future PR that adds a field to any ONE of these five layers MUST
+//! update the other four in the same commit. The
+//! `parity_with_docker_job_config_is_maintained` unit test below is a
+//! regression guard for the JSON surface -- it will fail loudly if
+//! `serialize_config_json` drops a field that `DockerJobConfig` reads. It
+//! does NOT catch `compute_config_hash` or `apply_defaults` drift; those
+//! still rely on PR review discipline and the parity table above.
+//!
+//! ## Merge semantics
+//!
+//! After `apply_defaults` runs, every downstream consumer (validator, sync,
+//! hash, executor) reads the already-merged `JobConfig` directly and MUST NOT
+//! consult `Config.defaults` for per-job fields. The only remaining consumer
+//! of `Config.defaults` is `random_min_gap`, which is a global `@random`
+//! scheduler knob and NOT a per-job field -- see `src/cli/run.rs` and
+//! `src/scheduler/reload.rs`.
 
 use super::{DefaultsConfig, JobConfig};
 
@@ -368,5 +457,101 @@ mod tests {
 
         // SecretString unused-import guard: keep the import live for cross-test consistency.
         let _ = SecretString::from("unused");
+    }
+
+    #[test]
+    fn apply_defaults_does_not_touch_container_name() {
+        // container_name is per-job ONLY -- two containers cannot share a
+        // name, so there is no DefaultsConfig.container_name field and
+        // apply_defaults must pass `job.container_name` through untouched
+        // whether it started as Some(name) or None. Mirrors the random_min_gap
+        // and cmd invariants.
+        let mut job_with_name = empty_job();
+        job_with_name.container_name = Some("fixed-name".to_string());
+        let merged = apply_defaults(job_with_name, Some(&full_defaults()));
+        assert_eq!(
+            merged.container_name.as_deref(),
+            Some("fixed-name"),
+            "apply_defaults must not modify a job's container_name"
+        );
+
+        let job_without_name = empty_job();
+        let merged = apply_defaults(job_without_name, Some(&full_defaults()));
+        assert_eq!(
+            merged.container_name, None,
+            "apply_defaults must not invent a container_name from defaults \
+             (no DefaultsConfig.container_name field)"
+        );
+    }
+
+    #[test]
+    fn parity_with_docker_job_config_is_maintained() {
+        // Structural regression guard: construct a fully-populated JobConfig
+        // with every non-secret field DockerJobConfig reads, serialize it
+        // via sync::serialize_config_json, and assert every expected key is
+        // present in the JSON output. Also confirms the output is a valid
+        // DockerJobConfig so a future rename like `image` -> `image_ref` on
+        // one side (but not the other) fails loudly here.
+        use crate::scheduler::docker::DockerJobConfig;
+        use crate::scheduler::sync;
+
+        let mut env = BTreeMap::new();
+        env.insert("SECRET_KEY".to_string(), SecretString::from("super-secret"));
+        let job = JobConfig {
+            name: "parity-test".to_string(),
+            schedule: "*/5 * * * *".to_string(),
+            command: None,
+            script: None,
+            image: Some("alpine:latest".to_string()),
+            use_defaults: None,
+            env,
+            volumes: Some(vec!["/host:/container".to_string()]),
+            network: Some("container:vpn".to_string()),
+            container_name: Some("parity-test-container".to_string()),
+            timeout: Some(Duration::from_secs(300)),
+            delete: Some(true),
+            cmd: Some(vec!["echo".to_string(), "parity".to_string()]),
+        };
+
+        let json_str = sync::serialize_config_json(&job);
+        let v: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
+        let obj = v.as_object().expect("top-level object");
+
+        // Every non-secret field DockerJobConfig reads MUST be in the output.
+        assert!(
+            obj.contains_key("image"),
+            "image missing from config_json -- DockerJobConfig would fail to deserialize"
+        );
+        assert!(
+            obj.contains_key("volumes"),
+            "volumes missing from config_json"
+        );
+        assert!(
+            obj.contains_key("network"),
+            "network missing from config_json"
+        );
+        assert!(
+            obj.contains_key("container_name"),
+            "container_name missing from config_json"
+        );
+        assert!(obj.contains_key("cmd"), "cmd missing from config_json");
+        // env is the secret allowlist: env_keys present, raw env values ABSENT.
+        assert!(
+            obj.contains_key("env_keys"),
+            "env_keys missing -- key-name allowlist broken"
+        );
+        let json_body = serde_json::to_string(obj).unwrap();
+        assert!(
+            !json_body.contains("super-secret"),
+            "T-02-03 breach: raw SecretString value leaked into config_json"
+        );
+
+        // DockerJobConfig compile-time smoke: confirm the emitted JSON is at
+        // least structurally deserializable as a DockerJobConfig. This is a
+        // one-way assertion -- DockerJobConfig only consumes a subset -- but
+        // it fails loudly if a typed field name drifts (e.g. someone renames
+        // `image` -> `image_ref` on JobConfig without updating both sides).
+        let _check: DockerJobConfig = serde_json::from_str(&json_str)
+            .expect("serialize_config_json output must be a valid DockerJobConfig");
     }
 }

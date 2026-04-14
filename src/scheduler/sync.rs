@@ -43,7 +43,12 @@ fn job_type(job: &JobConfig) -> &'static str {
 /// Serialize job config to JSON for storage, excluding secret env values.
 ///
 /// T-02-03: Only env key names are stored, never secret values.
-fn serialize_config_json(job: &JobConfig) -> String {
+///
+/// `pub(crate)` so the parity regression test in
+/// `src/config/defaults.rs::tests::parity_with_docker_job_config_is_maintained`
+/// can call this function directly and assert that every non-secret
+/// field `DockerJobConfig` reads is present in the JSON output.
+pub(crate) fn serialize_config_json(job: &JobConfig) -> String {
     let mut map = serde_json::Map::new();
     map.insert("name".into(), serde_json::json!(job.name));
     map.insert("schedule".into(), serde_json::json!(job.schedule));
