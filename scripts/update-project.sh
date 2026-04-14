@@ -579,7 +579,7 @@ generate_summary() {
 
     echo ""
     print_info "${EMOJI_GIT} Commits added to ${CURRENT_BRANCH}:"
-    git --no-pager log --oneline "HEAD~$(git rev-list --count HEAD ^HEAD@{1} 2>/dev/null || echo 1)..HEAD" 2>/dev/null || \
+    git --no-pager log --oneline "${STARTING_SHA}..HEAD" 2>/dev/null || \
         git --no-pager log --oneline -10
 
     echo ""
@@ -600,6 +600,10 @@ main() {
     print_info "Major bumps: $MAJOR_UPGRADES"
     print_info "Backups:     $BACKUP"
     print_info "Skip tests:  $SKIP_TESTS"
+
+    # Capture HEAD before any commits so generate_summary can show only the
+    # commits added by this script, regardless of reflog state on new branches.
+    STARTING_SHA=$(git rev-parse HEAD)
 
     update_cargo_deps
     update_dockerfile_base
