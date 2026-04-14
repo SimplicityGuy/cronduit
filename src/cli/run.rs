@@ -147,6 +147,10 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     };
 
     // Create Docker client (non-fatal if unavailable).
+    // bollard reads DOCKER_HOST from the environment, which is how
+    // examples/docker-compose.secure.yml routes traffic to the
+    // docker-socket-proxy sidecar (DOCKER_HOST=tcp://dockerproxy:2375).
+    // The default (no env var set) is the unix socket at /var/run/docker.sock.
     let docker = match bollard::Docker::connect_with_local_defaults() {
         Ok(d) => {
             tracing::info!(target: "cronduit.startup", "Docker client connected");
@@ -161,6 +165,18 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
             None
         }
     };
+
+    // Phase 8 D-11: run the daemon ping once at startup so the operator sees a
+    // loud WARN if bollard cannot reach the Docker socket, and so the
+    // cronduit_docker_reachable gauge reflects startup state. Non-fatal — cronduit
+    // keeps booting regardless so command/script-only configs still work.
+    //
+    // Note: `bollard::Docker::connect_with_local_defaults()` (above) reads the
+    // `DOCKER_HOST` environment variable the same way the `docker` CLI does. This
+    // is how `examples/docker-compose.secure.yml` routes bollard to the
+    // `docker-socket-proxy` sidecar via `DOCKER_HOST=tcp://dockerproxy:2375` —
+    // no cronduit code change needed for the hardened compose variant.
+    crate::scheduler::docker_daemon::preflight_ping(docker.as_ref()).await;
 
     // Orphan reconciliation before scheduler starts (SCHED-08).
     if let Some(ref docker_client) = docker {
