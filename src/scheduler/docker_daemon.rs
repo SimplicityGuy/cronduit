@@ -34,9 +34,12 @@ pub fn update_reachable_gauge(reachable: bool) {
 /// the function only logs and updates the gauge.
 ///
 /// Arguments:
-/// - `docker`: `Some(&Docker)` when `bollard::Docker::connect_with_local_defaults()`
+/// - `docker`: `Some(&Docker)` when `bollard::Docker::connect_with_defaults()`
 ///   succeeded; `None` when it failed upstream. Both cases flip the gauge to 0 and
 ///   emit a WARN line so the operator sees something regardless of which side broke.
+///   Using `connect_with_defaults()` (not `connect_with_local_defaults()`) matters
+///   for the secure compose variant which routes bollard through a TCP proxy via
+///   `DOCKER_HOST=tcp://dockerproxy:2375`.
 pub async fn preflight_ping(docker: Option<&Docker>) {
     let Some(docker) = docker else {
         tracing::warn!(
