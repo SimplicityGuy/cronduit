@@ -374,6 +374,152 @@ update_tailwind_version() {
     print_success "Committed: chore(deps): bump tailwind standalone to v${latest_tw}"
 }
 
+# -------------------- GitHub Actions pin updates --------------------
+
+# Scans every .github/workflows/*.yml for lines of the form:
+#     uses: <owner>/<repo>@<40-char sha> # vX.Y.Z
+# and rewrites each to the current latest-release SHA for that repo. Lines
+# using floating tags (e.g. 'actions/checkout@v4') are INTENTIONALLY ignored.
+# Per Phase 9 CONTEXT.md cross-cutting decisions, only NEW third-party actions
+# must be SHA-pinned; retroactive pinning of pre-existing floating-tag actions
+# is out of scope for Phase 9 (would need its own future security/supply-chain
+# phase). This script is the recurring lever for keeping already-pinned SHAs
+# current.
+update_gha_pins() {
+    print_section "${EMOJI_ACTIONS}" "Updating GitHub Actions SHA Pins"
+
+    if ! ls .github/workflows/*.yml >/dev/null 2>&1; then
+        print_warning "No workflow files found — skipping"
+        return
+    fi
+
+    # Collect every (owner, repo, current_sha, current_tag) tuple across all workflow files.
+    # Regex: uses: <owner>/<repo>@<40hex> # v<semver>
+    local -a pin_entries=()
+    while IFS= read -r line; do
+        pin_entries+=("$line")
+    done < <(grep -EHo 'uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[a-f0-9]{40}[[:space:]]*#[[:space:]]*v[0-9]+\.[0-9]+\.[0-9]+' .github/workflows/*.yml || true)
+
+    if [[ ${#pin_entries[@]} -eq 0 ]]; then
+        print_info "No SHA-pinned actions found in .github/workflows/*.yml — nothing to update"
+        return
+    fi
+
+    # Build a de-duplicated list of <owner>/<repo> to look up.
+    local -A latest_sha_cache=()
+    local -A latest_tag_cache=()
+    local any_change=false
+
+    for entry in "${pin_entries[@]}"; do
+        # Parse: <file>:uses: <owner>/<repo>@<sha> # v<X>.<Y>.<Z>
+        local file action_spec owner_repo current_sha current_tag
+        file="${entry%%:*}"
+        action_spec="${entry#*uses: }"
+        owner_repo="${action_spec%%@*}"
+        current_sha="${action_spec#*@}"
+        current_sha="${current_sha%% *}"
+        current_tag=$(echo "$action_spec" | sed -E 's/.*# (v[0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+
+        if [[ -z "${latest_sha_cache[$owner_repo]:-}" ]]; then
+            local latest_tag latest_sha
+            latest_tag=$(gh api "repos/${owner_repo}/releases/latest" --jq '.tag_name' 2>/dev/null || true)
+            if [[ -z "$latest_tag" ]] || [[ "$latest_tag" == "null" ]]; then
+                print_warning "Could not fetch latest release for ${owner_repo} — skipping"
+                continue
+            fi
+            latest_sha=$(gh api "repos/${owner_repo}/git/refs/tags/${latest_tag}" --jq '.object.sha' 2>/dev/null || true)
+            # If the tag object is annotated, dereference to the commit.
+            if [[ -n "$latest_sha" ]] && [[ "$latest_sha" != "null" ]]; then
+                local obj_type
+                obj_type=$(gh api "repos/${owner_repo}/git/refs/tags/${latest_tag}" --jq '.object.type' 2>/dev/null || echo commit)
+                if [[ "$obj_type" == "tag" ]]; then
+                    latest_sha=$(gh api "repos/${owner_repo}/git/tags/${latest_sha}" --jq '.object.sha' 2>/dev/null || echo "$latest_sha")
+                fi
+            fi
+            latest_sha_cache[$owner_repo]="$latest_sha"
+            latest_tag_cache[$owner_repo]="$latest_tag"
+        fi
+
+        local new_sha="${latest_sha_cache[$owner_repo]}"
+        local new_tag="${latest_tag_cache[$owner_repo]}"
+
+        if [[ "$new_sha" == "$current_sha" ]]; then
+            print_info "${owner_repo}: already at ${current_tag} (${current_sha:0:7})"
+            continue
+        fi
+
+        print_info "${owner_repo}: ${current_tag} (${current_sha:0:7}) → ${new_tag} (${new_sha:0:7}) in ${file}"
+
+        if [[ "$DRY_RUN" == true ]]; then
+            continue
+        fi
+
+        backup_file "$file"
+
+        # Rewrite the line. Match the literal old SHA + tag, replace with new SHA + tag.
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|${owner_repo}@${current_sha} # ${current_tag}|${owner_repo}@${new_sha} # ${new_tag}|g" "$file"
+        else
+            sed -i "s|${owner_repo}@${current_sha} # ${current_tag}|${owner_repo}@${new_sha} # ${new_tag}|g" "$file"
+        fi
+
+        if grep -q "${owner_repo}@${new_sha} # ${new_tag}" "$file"; then
+            print_success "Updated ${owner_repo} in ${file}"
+            any_change=true
+        else
+            print_error "sed rewrite failed for ${owner_repo} in ${file}"
+        fi
+    done
+
+    if [[ "$any_change" == true ]] && [[ "$DRY_RUN" == false ]]; then
+        git add .github/workflows/
+        git commit -m "chore(deps): update github actions pin SHAs" >/dev/null
+        CHANGES_MADE=true
+        print_success "Committed: chore(deps): update github actions pin SHAs"
+    fi
+}
+
+# -------------------- Pre-commit hooks --------------------
+
+update_precommit_hooks() {
+    print_section "${EMOJI_HOOKS}" "Updating Pre-commit Hooks"
+
+    if [[ ! -f .pre-commit-config.yaml ]]; then
+        print_info "No .pre-commit-config.yaml — skipping (Cronduit does not require pre-commit)"
+        return
+    fi
+
+    if ! command -v pre-commit >/dev/null 2>&1; then
+        print_warning "pre-commit not installed — skipping"
+        print_info    "  Install with: pipx install pre-commit   (or brew install pre-commit)"
+        return
+    fi
+
+    backup_file ".pre-commit-config.yaml"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would run: just update-hooks"
+        return
+    fi
+
+    print_info "Running: just update-hooks"
+    if just update-hooks; then
+        print_success "Pre-commit hooks refreshed"
+    else
+        print_warning "just update-hooks reported a failure"
+        return
+    fi
+
+    if [[ -n "$(git status --porcelain .pre-commit-config.yaml 2>/dev/null)" ]]; then
+        git add .pre-commit-config.yaml
+        git commit -m "chore(deps): update pre-commit hooks" >/dev/null
+        CHANGES_MADE=true
+        print_success "Committed: chore(deps): update pre-commit hooks"
+    else
+        print_info "No pre-commit hook changes to commit"
+    fi
+}
+
 # -------------------- Main scaffold (functions added in subsequent tasks) --------------------
 
 main() {
@@ -386,8 +532,8 @@ main() {
     update_cargo_deps
     update_dockerfile_base
     update_tailwind_version
-    # update_gha_pins        # Added in Task 4
-    # update_precommit_hooks # Added in Task 4
+    update_gha_pins
+    update_precommit_hooks
     # run_tests_if_requested # Added in Task 5
     # generate_summary       # Added in Task 5
 }
