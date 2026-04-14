@@ -118,6 +118,9 @@ Cronduit is a single Rust binary that:
 
 Cronduit is configured via a single TOML file. The config file is the source of truth -- jobs not in the file are disabled on reload.
 
+> **New to Cronduit?** Start with **[docs/QUICKSTART.md](./docs/QUICKSTART.md)** for a zero-to-first-scheduled-job walkthrough.
+> **Looking up a specific field?** The complete reference is in **[docs/CONFIG.md](./docs/CONFIG.md)**. The section below is a cheat sheet.
+
 ### Server Settings
 
 ```toml
