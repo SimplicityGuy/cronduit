@@ -1,11 +1,13 @@
 ---
-status: pending
+status: complete
 phase: 06-live-events-metrics-retention-release-engineering
 source:
   - 06-VERIFICATION.md
   - .planning/phases/08-v1-final-human-uat-validation/08-CONTEXT.md
 started: 2026-04-13T00:00:00Z
-updated: 2026-04-13T00:00:00Z
+updated: 2026-04-14T00:00:00Z
+validated_at: 2026-04-14
+validated_via: Phase 8 human UAT walkthrough (08-05)
 ---
 
 # Phase 6 — Human UAT
@@ -21,7 +23,7 @@ not trustworthy.
 
 ## Current Test
 
-[awaiting human testing]
+[complete — both tests validated during Phase 8 walkthrough]
 
 ## Tests
 
@@ -53,7 +55,18 @@ expected: |
 
   Record the result below. If any step fails, mark the result as an issue
   with severity (blocker / major / minor) and add reported: details.
-result: [pending]
+result: pass
+validated_at: 2026-04-14
+note: |
+  Validated end-to-end via the Phase 8 human UAT walkthrough on macOS Rancher
+  Desktop. All four example jobs (echo-timestamp, http-healthcheck, disk-usage,
+  hello-world) reached status=success in the dashboard after Phase 8's
+  mid-walkthrough fixes landed: 3042f13 (CRONDUIT_DOCKER_SOCKET parametrization),
+  8afb97d + 1a28efa (DOCKER_GID=102 Rancher Desktop documentation across README,
+  compose, preflight WARN, CI). Known environmental caveat for macOS Rancher
+  Desktop quickstart: operators must `export DOCKER_GID=102` before
+  `docker compose up -d` when using examples/docker-compose.yml; documented in
+  README § Troubleshooting.
 
 ### 2. SSE live log streaming (UI-14)
 requirement: UI-14
@@ -81,14 +94,20 @@ expected: |
   don't stream, if the transition requires a manual reload, or if the
   static viewer shows different content than the live stream, mark the
   result as an issue with severity and add reported: details.
-result: [pending]
+result: pass
+validated_at: 2026-04-14
+note: |
+  Validated during the Phase 8 human UAT walkthrough. User confirmed the
+  live streaming path end-to-end: LIVE badge visible during the RUNNING
+  window, log lines arrive without reload, clean transition to the static
+  log viewer on completion.
 
 ## Summary
 
 total: 2
-passed: 0
+passed: 2
 issues: 0
-pending: 2
+pending: 0
 skipped: 0
 blocked: 0
 
