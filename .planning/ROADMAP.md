@@ -295,7 +295,7 @@ Plans:
 - [x] 08-02-PLAN.md — Dual docker-compose example: group_add + DOCKER_GID on the default file, new docker-compose.secure.yml with tecnativa/docker-socket-proxy sidecar (CONTAINERS/IMAGES/POST allowlist, DOCKER_HOST routing) [Wave 1]
 - [x] 08-03-PLAN.md — Docker daemon startup pre-flight ping + cronduit_docker_reachable gauge (new src/scheduler/docker_daemon.rs, telemetry describe/register pair, non-fatal WARN template, integration test for gauge lifecycle) [Wave 1]
 - [x] 08-04-PLAN.md — compose-smoke CI matrix over both compose files + per-job success assertions via Run Now API (120s budget per job, expanded failure diagnostics) [Wave 2]
-- [ ] 08-05-PLAN.md — Human UAT walkthrough orchestration: new 06-HUMAN-UAT.md, 08-HUMAN-UAT.md index, .planning/BACKLOG.md seed, user-driven walkthrough checkpoint (no result flips by Claude) [Wave 3]
+- [x] 08-05-PLAN.md — Human UAT walkthrough orchestration: new 06-HUMAN-UAT.md, 08-HUMAN-UAT.md index, .planning/BACKLOG.md seed, user-driven walkthrough checkpoint (no result flips by Claude) [Wave 3]
 
 ---
 
