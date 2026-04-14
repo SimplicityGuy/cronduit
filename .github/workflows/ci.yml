@@ -171,11 +171,12 @@ jobs:
           # so the smoke test exercises PR code, not stale ghcr :latest. Never
           # committed.
           sed -i "s|ghcr.io/simplicityguy/cronduit:latest|cronduit:ci|g" "examples/${COMPOSE_FILE}"
-          grep -q 'image: cronduit:ci' "examples/${COMPOSE_FILE}" || {
-            echo "ERROR: sed rewrite did not produce 'image: cronduit:ci' in examples/${COMPOSE_FILE}"
+          count=$(grep -c 'image: cronduit:ci' "examples/${COMPOSE_FILE}" || true)
+          if [ "$count" -ne 1 ]; then
+            echo "ERROR: expected exactly 1 'image: cronduit:ci' line, found ${count}"
             cat "examples/${COMPOSE_FILE}"
             exit 1
-          }
+          fi
 
       - name: Derive DOCKER_GID from runner's docker.sock
         # Explicit derivation makes the default-compose axis robust against
