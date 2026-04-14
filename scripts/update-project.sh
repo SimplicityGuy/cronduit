@@ -173,6 +173,200 @@ backup_file() {
     fi
 }
 
+# -------------------- Cargo --------------------
+
+update_cargo_deps() {
+    print_section "${EMOJI_RUST}" "Updating Cargo Dependencies"
+
+    backup_file "Cargo.lock"
+    backup_file "Cargo.toml"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        if [[ "$MAJOR_UPGRADES" == true ]]; then
+            print_info "[DRY RUN] Would run: cargo upgrade --incompatible allow (updates Cargo.toml constraints)"
+        fi
+        print_info "[DRY RUN] Would run: just update-cargo (refreshes Cargo.lock within constraints)"
+        print_info "[DRY RUN] Would run: just openssl-check (Pitfall 14 — must stay empty)"
+        return
+    fi
+
+    if [[ "$MAJOR_UPGRADES" == true ]]; then
+        print_info "Running: cargo upgrade --incompatible allow"
+        if cargo upgrade --incompatible allow; then
+            print_success "Cargo.toml version requirements updated (major bumps applied)"
+        else
+            print_warning "cargo upgrade --incompatible failed — falling back to lockfile-only update"
+        fi
+    fi
+
+    print_info "Running: just update-cargo"
+    if just update-cargo; then
+        print_success "Cargo.lock refreshed"
+    else
+        print_error "just update-cargo failed"
+        return 1
+    fi
+
+    # Pitfall 14 — rustls-only guard. MUST be empty across native + amd64-musl + arm64-musl.
+    print_info "Running: just openssl-check (Pitfall 14 rustls-only guard)"
+    if just openssl-check; then
+        print_success "openssl-sys not present in dep tree (rustls-only confirmed)"
+    else
+        print_error "FATAL: openssl-sys appeared in dep tree after cargo update. Reverting is up to you."
+        print_info  "  Restore from: $BACKUP_DIR/Cargo.lock.backup"
+        return 2
+    fi
+
+    # Atomic commit per ecosystem.
+    if [[ -n "$(git status --porcelain Cargo.toml Cargo.lock 2>/dev/null)" ]]; then
+        git add Cargo.toml Cargo.lock
+        git commit -m "chore(deps): update cargo dependencies" >/dev/null
+        CHANGES_MADE=true
+        print_success "Committed: chore(deps): update cargo dependencies"
+    else
+        print_info "No cargo changes to commit"
+    fi
+}
+
+# -------------------- Dockerfile base images --------------------
+
+update_dockerfile_base() {
+    print_section "${EMOJI_DOCKER}" "Updating Dockerfile Base Images"
+
+    backup_file "Dockerfile"
+
+    # Cronduit uses two base images:
+    #   builder:  rust:<version>-slim-bookworm
+    #   runtime:  gcr.io/distroless/static-debian12:nonroot
+    #
+    # The distroless tag is already version-floating (:nonroot pulls the latest
+    # nonroot variant of debian12 on each docker build), so we only update the
+    # rust:<N.M>-slim-bookworm tag by looking up the latest minor on Docker Hub.
+
+    local current_rust
+    current_rust=$(grep -Eo 'FROM[^r]*rust:[0-9]+\.[0-9]+(\.[0-9]+)?-slim-bookworm' Dockerfile | head -1 | grep -Eo 'rust:[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
+    if [[ -z "$current_rust" ]]; then
+        print_warning "No 'rust:<version>-slim-bookworm' line found in Dockerfile — skipping"
+        return
+    fi
+    print_info "Current builder image: $current_rust-slim-bookworm"
+
+    # Look up latest rust tag matching 'N.M-slim-bookworm' on Docker Hub.
+    local latest_rust
+    latest_rust=$(curl -sf 'https://hub.docker.com/v2/repositories/library/rust/tags/?page_size=200&name=-slim-bookworm' \
+        | jq -r '.results[].name' \
+        | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?-slim-bookworm$' \
+        | sed 's/-slim-bookworm$//' \
+        | sort -V \
+        | tail -1 || true)
+    if [[ -z "$latest_rust" ]]; then
+        print_warning "Could not determine latest rust image tag from Docker Hub — skipping"
+        return
+    fi
+    print_info "Latest builder image:  rust:${latest_rust}-slim-bookworm"
+
+    if [[ "$current_rust" == "rust:${latest_rust}" ]]; then
+        print_info "Dockerfile already uses the latest rust base — no change"
+        return
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would rewrite ${current_rust}-slim-bookworm → rust:${latest_rust}-slim-bookworm in Dockerfile"
+        return
+    fi
+
+    # Portable sed (GNU vs BSD).
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|${current_rust}-slim-bookworm|rust:${latest_rust}-slim-bookworm|g" Dockerfile
+    else
+        sed -i "s|${current_rust}-slim-bookworm|rust:${latest_rust}-slim-bookworm|g" Dockerfile
+    fi
+
+    # Verify sed applied.
+    if grep -q "rust:${latest_rust}-slim-bookworm" Dockerfile; then
+        print_success "Dockerfile updated: ${current_rust} → rust:${latest_rust}"
+    else
+        print_error "sed rewrite failed — Dockerfile not updated"
+        return 1
+    fi
+
+    # Atomic commit.
+    git add Dockerfile
+    git commit -m "chore(deps): bump rust base image to ${latest_rust}" >/dev/null
+    CHANGES_MADE=true
+    print_success "Committed: chore(deps): bump rust base image to ${latest_rust}"
+}
+
+# -------------------- Tailwind standalone binary --------------------
+
+update_tailwind_version() {
+    print_section "${EMOJI_TAILWIND}" "Updating Tailwind Standalone Binary"
+
+    if ! grep -q 'tailwindlabs/tailwindcss/releases/download/v' justfile; then
+        print_warning "No Tailwind download line found in justfile — skipping"
+        return
+    fi
+
+    local current_tw
+    current_tw=$(grep -Eo 'tailwindlabs/tailwindcss/releases/download/v[0-9]+\.[0-9]+\.[0-9]+' justfile | head -1 | sed 's|.*/v||')
+    print_info "Current Tailwind: v${current_tw}"
+
+    # Cronduit is pinned to the Tailwind v3 line — v4 breaks tailwind.config.js format (see existing
+    # justfile comment "Pinned to v3.4.17 -- v4 breaks tailwind.config.js format"). So we only look
+    # at v3.x tags. --major can override this explicitly if the operator has updated the config.
+    local filter
+    if [[ "$MAJOR_UPGRADES" == true ]]; then
+        filter='^v[0-9]+\.[0-9]+\.[0-9]+$'
+    else
+        filter='^v3\.[0-9]+\.[0-9]+$'
+    fi
+
+    local latest_tw
+    latest_tw=$(gh api repos/tailwindlabs/tailwindcss/tags --jq '.[].name' 2>/dev/null \
+        | grep -E "$filter" \
+        | sed 's/^v//' \
+        | sort -V \
+        | tail -1 || true)
+    if [[ -z "$latest_tw" ]]; then
+        print_warning "Could not determine latest Tailwind tag — skipping"
+        return
+    fi
+    print_info "Latest Tailwind:  v${latest_tw} (filter: ${filter})"
+
+    if [[ "$current_tw" == "$latest_tw" ]]; then
+        print_info "Tailwind already on v${current_tw} — no change"
+        return
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would bump justfile Tailwind version v${current_tw} → v${latest_tw} and re-download binary"
+        return
+    fi
+
+    backup_file "justfile"
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|v${current_tw}|v${latest_tw}|g" justfile
+    else
+        sed -i "s|v${current_tw}|v${latest_tw}|g" justfile
+    fi
+
+    # Force re-download by deleting the cached binary.
+    rm -f ./bin/tailwindcss
+
+    if just tailwind >/dev/null 2>&1; then
+        print_success "Tailwind re-downloaded at v${latest_tw}"
+    else
+        print_error "just tailwind failed after version bump"
+        return 1
+    fi
+
+    git add justfile
+    git commit -m "chore(deps): bump tailwind standalone to v${latest_tw}" >/dev/null
+    CHANGES_MADE=true
+    print_success "Committed: chore(deps): bump tailwind standalone to v${latest_tw}"
+}
+
 # -------------------- Main scaffold (functions added in subsequent tasks) --------------------
 
 main() {
@@ -182,19 +376,13 @@ main() {
     print_info "Backups:     $BACKUP"
     print_info "Skip tests:  $SKIP_TESTS"
 
-    # Ecosystem functions (added in Tasks 3-4):
-    # update_cargo_deps
-    # update_dockerfile_base
-    # update_gha_pins
-    # update_tailwind_version
-    # update_precommit_hooks
-
-    # Post-update verification (added in Task 5):
-    # run_openssl_guard
-    # run_tests_if_requested
-    # generate_summary
-
-    print_success "Skeleton complete. Tasks 3-5 will wire the ecosystem updaters."
+    update_cargo_deps
+    update_dockerfile_base
+    update_tailwind_version
+    # update_gha_pins        # Added in Task 4
+    # update_precommit_hooks # Added in Task 4
+    # run_tests_if_requested # Added in Task 5
+    # generate_summary       # Added in Task 5
 }
 
 main "$@"
