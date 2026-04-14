@@ -86,6 +86,10 @@ Temporary Items
 bin/tailwindcss
 .sqlx/tmp/
 
+# scripts/update-project.sh creates timestamped backups/ trees before any
+# dependency update. Never committed.
+backups/
+
 # UAT / local scratch configs under examples/ -- never committed. Phase 6 UAT
 # regression (06-07-PLAN.md GAP-3) leaked examples/cronduit-uat.toml into the
 # quickstart path by replacing the docker-compose mount; this pattern prevents
