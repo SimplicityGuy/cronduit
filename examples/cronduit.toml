@@ -1,8 +1,10 @@
 # examples/cronduit.toml -- Cronduit quickstart configuration.
 #
-# This file ships two example jobs that demonstrate both execution types:
-#   1. A command job that runs every minute (instant feedback)
-#   2. A Docker container job that runs every 5 minutes
+# This file ships four example jobs covering every execution type:
+#   1. echo-timestamp (command) - every minute, instant heartbeat
+#   2. http-healthcheck (command) - every 5 minutes, uptime canary
+#   3. disk-usage (script) - every 15 minutes, script-job demo on /data
+#   4. hello-world (docker) - every 5 minutes, ephemeral container demo
 #
 # SECURITY:
 #   * Never commit plaintext secrets. Use env-var references (${VAR}) and set
