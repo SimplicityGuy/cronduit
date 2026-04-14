@@ -89,7 +89,17 @@ docker compose -f examples/docker-compose.yml up -d
 docker compose -f examples/docker-compose.secure.yml up -d
 ```
 
-Expected output ends with two or three services reporting `Started`. Check that Cronduit is healthy:
+**Building from source first (feature-branch UAT or airgapped homelabs).** The compose files reference `ghcr.io/simplicityguy/cronduit:latest`. If you are testing a branch that hasn't been published yet, or you want to build locally before trusting a remote image, run:
+
+```bash
+just image-local
+```
+
+This builds Cronduit for your native host platform (amd64 or arm64), loads the result into the local Docker daemon, and tags it as `ghcr.io/simplicityguy/cronduit:latest` — the exact name the compose files consume. Docker prefers local images over remote when the tag matches, so the subsequent `docker compose up -d` uses your locally-built image and skips the GHCR pull. First-run build time is ~8-12 minutes (cargo-zigbuild cross-compile + Tailwind + dependency compilation); subsequent builds hit the buildx cache and finish in ~30 seconds unless Rust sources changed.
+
+`just image-local` is distinct from `just image`. The latter is the CI smoke-test recipe — it hardcodes `linux/amd64` and tag `cronduit:dev` for build reproducibility, which is wrong for local compose hand-off. See `justfile` header comments on the `image:` block for the full matrix of image recipes.
+
+Expected output from `docker compose ... up -d` ends with two or three services reporting `Started`. Check that Cronduit is healthy:
 
 ```bash
 docker compose -f examples/docker-compose.yml ps
