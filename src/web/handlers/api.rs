@@ -273,3 +273,92 @@ pub async fn reroll(
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Scheduler shutting down").into_response(),
     }
 }
+
+/// GET /api/jobs — list all configured jobs as JSON.
+///
+/// Read-only, no CSRF required. Returns the same shape the HTML dashboard
+/// renders so external tooling (scripts, Prometheus sidecars, CI smoke tests)
+/// can resolve job id from name without scraping HTML. Added in Phase 8 to
+/// unblock the compose-smoke CI matrix (08-04) which needs deterministic
+/// name → id resolution to trigger Run Now on each example job.
+pub async fn list_jobs(State(state): State<AppState>) -> impl IntoResponse {
+    match queries::get_dashboard_jobs(&state.pool, None, "name", "asc").await {
+        Ok(jobs) => {
+            let body: Vec<_> = jobs
+                .iter()
+                .map(|j| {
+                    json!({
+                        "id": j.id,
+                        "name": j.name,
+                        "schedule": j.schedule,
+                        "resolved_schedule": j.resolved_schedule,
+                        "type": j.job_type,
+                        "timeout_secs": j.timeout_secs,
+                        "last_status": j.last_status,
+                        "last_run_time": j.last_run_time,
+                        "last_trigger": j.last_trigger,
+                    })
+                })
+                .collect();
+            (StatusCode::OK, axum::Json(body)).into_response()
+        }
+        Err(err) => {
+            tracing::error!(target: "cronduit.web", error = %err, "GET /api/jobs query failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RunsQuery {
+    pub limit: Option<i64>,
+}
+
+/// GET /api/jobs/{id}/runs?limit=N — list recent runs for a job as JSON.
+///
+/// Read-only, no CSRF required. Default limit is 50, capped at 500. Returns
+/// most recent first (same ordering as `get_run_history`). Added in Phase 8
+/// so external pollers can observe run terminal status without HTML scraping.
+pub async fn list_job_runs(
+    State(state): State<AppState>,
+    Path(job_id): Path<i64>,
+    axum::extract::Query(query): axum::extract::Query<RunsQuery>,
+) -> impl IntoResponse {
+    // Verify job exists so a 404 distinguishes missing job from empty history.
+    match queries::get_job_by_id(&state.pool, job_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "Job not found").into_response(),
+        Err(err) => {
+            tracing::error!(target: "cronduit.web", error = %err, job_id, "GET /api/jobs/:id/runs job lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    }
+
+    let limit = query.limit.unwrap_or(50).clamp(1, 500);
+    match queries::get_run_history(&state.pool, job_id, limit, 0).await {
+        Ok(paginated) => {
+            let body: Vec<_> = paginated
+                .items
+                .iter()
+                .map(|r| {
+                    json!({
+                        "id": r.id,
+                        "job_id": r.job_id,
+                        "status": r.status,
+                        "trigger": r.trigger,
+                        "start_time": r.start_time,
+                        "end_time": r.end_time,
+                        "duration_ms": r.duration_ms,
+                        "exit_code": r.exit_code,
+                        "error_message": r.error_message,
+                    })
+                })
+                .collect();
+            (StatusCode::OK, axum::Json(body)).into_response()
+        }
+        Err(err) => {
+            tracing::error!(target: "cronduit.web", error = %err, job_id, "GET /api/jobs/:id/runs history query failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response()
+        }
+    }
+}
