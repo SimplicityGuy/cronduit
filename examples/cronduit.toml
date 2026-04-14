@@ -15,7 +15,9 @@
 #     a reverse proxy with auth.
 
 [server]
-bind = "0.0.0.0:8080"
+bind = "0.0.0.0:8080"  # REQUIRED for docker-compose port publish to reach the host.
+                        # See the compose file SECURITY header. Never use this value
+                        # outside a reverse-proxy deployment.
 timezone = "UTC"
 log_retention = "90d"
 shutdown_grace = "30s"
