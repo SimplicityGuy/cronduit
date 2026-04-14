@@ -537,7 +537,62 @@ update_precommit_hooks() {
     fi
 }
 
-# -------------------- Main scaffold (functions added in subsequent tasks) --------------------
+# -------------------- Post-update verification --------------------
+
+run_tests_if_requested() {
+    if [[ "$SKIP_TESTS" == true ]]; then
+        print_info "${EMOJI_TEST} --skip-tests set, skipping test run"
+        return
+    fi
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "[DRY RUN] Would run: just nextest"
+        return
+    fi
+    if [[ "$CHANGES_MADE" == false ]]; then
+        print_info "${EMOJI_TEST} No changes made, skipping tests"
+        return
+    fi
+
+    print_section "${EMOJI_TEST}" "Running Test Suite"
+    print_info "Running: just nextest"
+    if just nextest; then
+        print_success "Tests passed"
+    else
+        print_error "Tests failed after dependency updates."
+        print_info  "Inspect failures and consider rolling back from ${BACKUP_DIR}/"
+        return 1
+    fi
+}
+
+generate_summary() {
+    print_section "${EMOJI_VERIFY}" "Summary"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        print_info "Dry-run complete. No files were modified."
+        return
+    fi
+
+    if [[ "$CHANGES_MADE" == false ]]; then
+        print_info "No dependency changes detected. Nothing was committed."
+        return
+    fi
+
+    echo ""
+    print_info "${EMOJI_GIT} Commits added to ${CURRENT_BRANCH}:"
+    git --no-pager log --oneline "HEAD~$(git rev-list --count HEAD ^HEAD@{1} 2>/dev/null || echo 1)..HEAD" 2>/dev/null || \
+        git --no-pager log --oneline -10
+
+    echo ""
+    print_info "Next steps:"
+    echo "  1. Review commits: git log --oneline -10"
+    echo "  2. Push branch:    git push -u origin ${CURRENT_BRANCH}"
+    echo "  3. Open PR:        gh pr create --fill"
+    if [[ "$BACKUP" == true ]]; then
+        echo "  4. Backups kept in: ${BACKUP_DIR}/"
+    fi
+}
+
+# -------------------- Main --------------------
 
 main() {
     print_section "${EMOJI_ROCKET}" "Cronduit Project Update"
@@ -551,8 +606,8 @@ main() {
     update_tailwind_version
     update_gha_pins
     update_precommit_hooks
-    # run_tests_if_requested # Added in Task 5
-    # generate_summary       # Added in Task 5
+    run_tests_if_requested
+    generate_summary
 }
 
 main "$@"
