@@ -214,7 +214,10 @@ jobs:
       - name: Assert /health body contains status:ok
         run: |
           set -eu
-          body=$(curl -sSf http://localhost:8080/health)
+          body=$(curl -sSf http://localhost:8080/health) || {
+            echo "ERROR: /health curl failed with exit $?"
+            exit 1
+          }
           echo "health body: $body"
           echo "$body" | grep -q '"status":"ok"' || {
             echo "ERROR: /health body missing status:ok"
