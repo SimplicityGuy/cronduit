@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Multi-stage Dockerfile for cronduit. Cross-compiles amd64 + arm64 musl-static
-# via cargo-zigbuild (no QEMU), packages into gcr.io/distroless/static-debian12:nonroot.
+# via cargo-zigbuild (no QEMU), packages into an alpine:3 runtime.
 
 # ---- builder ----
 FROM --platform=$BUILDPLATFORM rust:1.94-slim-bookworm AS builder
@@ -28,8 +28,34 @@ RUN set -eux; \
 
 RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
+# Install standalone Tailwind CSS binary for the BUILDPLATFORM so build.rs
+# can compile assets/static/app.css from the Tailwind sources before cargo
+# embeds them via rust-embed. Without this step the Docker image ships with
+# a stub `/* tailwind not built yet */` file and the web UI renders unstyled.
+# Version kept in sync with justfile's `just tailwind` recipe.
+RUN set -eux; \
+    TAILWIND_VERSION=v3.4.17; \
+    BUILD_ARCH="$(uname -m)"; \
+    case "$BUILD_ARCH" in \
+      "x86_64") TAILWIND_ARCH="x64" ;; \
+      "aarch64") TAILWIND_ARCH="arm64" ;; \
+      *) echo "unsupported BUILDPLATFORM arch: $BUILD_ARCH" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /usr/local/bin; \
+    curl -fsSL --retry 3 --retry-delay 5 \
+        -o /usr/local/bin/tailwindcss \
+        "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/tailwindcss-linux-${TAILWIND_ARCH}"; \
+    chmod +x /usr/local/bin/tailwindcss; \
+    /usr/local/bin/tailwindcss --help >/dev/null
+
 WORKDIR /build
 COPY . .
+
+# build.rs expects the tailwind binary at ./bin/tailwindcss (relative to the
+# crate root). Symlink into place so both local dev (where `just tailwind`
+# downloads into ./bin/) and the Docker builder (where it's in /usr/local/bin)
+# converge on the same path.
+RUN mkdir -p bin && ln -sf /usr/local/bin/tailwindcss bin/tailwindcss
 
 # Translate buildx TARGETPLATFORM -> rustc target triple.
 RUN set -eux; \
@@ -42,15 +68,18 @@ RUN set -eux; \
     cargo zigbuild --release --target "$TARGET"; \
     cp "target/$TARGET/release/cronduit" /cronduit
 
-# Pre-create /data directory owned by distroless nonroot (UID/GID 65532) so
-# that when docker-compose mounts a named volume at /data, Docker inherits
-# this ownership on first mount instead of defaulting to root:root. Without
-# this, cronduit (running as nonroot) cannot create its SQLite database file
-# on the named volume. See examples/docker-compose.yml `cronduit-data` volume.
-RUN install -d -o 65532 -g 65532 /staging-data
-
 # ---- runtime ----
-FROM gcr.io/distroless/static-debian12:nonroot
+# Rebased to alpine:3 in Phase 8 (2026-04-13) as a conscious walk-back from the
+# Phase 1 distroless-nonroot runtime. Rationale: the distroless image had no
+# /bin/sh, no coreutils, no busybox applets, so any command/script job that
+# invoked `date`, `wget`, `du`, `df`, or `sh` failed with ENOENT. The
+# quickstart's echo-timestamp job (date '+...') was broken out of the box for
+# every new user. Alpine ships busybox, runs as a non-root cronduit user
+# (UID 1000), and adds only ca-certificates + tzdata on top of the base image.
+# Trade-off: slightly larger attack surface; the non-root UID + read-only
+# config mount posture from Phase 1 still holds. See .planning/phases/08-*
+# for the full decision log (D-01..D-06) on this walk-back.
+FROM alpine:3
 
 # Static OCI labels. Dynamic labels (version, revision) are injected via --label
 # in the GitHub Actions docker/build-push-action step.
@@ -58,16 +87,26 @@ LABEL org.opencontainers.image.source="https://github.com/SimplicityGuy/cronduit
 LABEL org.opencontainers.image.description="Self-hosted Docker-native cron scheduler with a web UI"
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
+# Install minimal runtime dependencies: CA bundle for HTTPS (bollard image
+# pulls, busybox wget against https://www.google.com) and IANA timezone data
+# (croner DST-correct scheduling). Chain into a single layer with no apk
+# cache left behind.
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create a non-root cronduit user + group (UID/GID 1000) and pre-create
+# /data with cronduit ownership so docker-compose named volumes inherit
+# writable permissions on first mount. This replaces the Phase 1 multi-stage
+# chown dance that targeted the old distroless nonroot UID.
+RUN addgroup -g 1000 -S cronduit \
+ && adduser -S -u 1000 -G cronduit cronduit \
+ && install -d -o 1000 -g 1000 /data
+
 COPY --from=builder /cronduit /cronduit
 # Migrations are embedded via `sqlx::migrate!(...)` -- no filesystem copy.
 COPY --from=builder /build/examples/cronduit.toml /etc/cronduit/config.toml
-# Establish /data with nonroot ownership (UID/GID 65532 = distroless nonroot)
-# so named volume mounts inherit writable permissions on first mount.
-# --chown is required: COPY defaults to root:root even across multi-stage builds.
-COPY --from=builder --chown=65532:65532 /staging-data /data
 
 EXPOSE 8080
-USER nonroot:nonroot
+USER cronduit:cronduit
 
 ENTRYPOINT ["/cronduit"]
 CMD ["run", "--config", "/etc/cronduit/config.toml"]

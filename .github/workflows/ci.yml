@@ -124,15 +124,29 @@ jobs:
         run: just image-push "$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')/cronduit:sha-${GITHUB_SHA:0:7}"
 
   compose-smoke:
-    name: quickstart compose smoke (examples/docker-compose.yml)
+    name: quickstart compose smoke (${{ matrix.compose }})
     runs-on: ubuntu-latest
-    # GAP-3.4 (06-07-PLAN.md): bring up the quickstart compose file the stranger
-    # following the README would use, and assert /health returns 200. Builds a local
-    # cronduit:ci image from the PR checkout (NOT stale ghcr :latest) and rewrites
-    # the committed compose file in-place in the runner's ephemeral workspace so
-    # the smoke test exercises the PR's code, not the previous main build.
+    # Phase 8 D-18..D-22: matrix over both quickstart compose files. Each axis
+    # boots the full stack, triggers Run Now on every example job via the API,
+    # and asserts all four reach status=success within 120s. Extends the Phase 6
+    # gap-closure compose-smoke job rather than adding a second job (D-22 —
+    # single compose up/down cycle per axis).
+    strategy:
+      fail-fast: false
+      matrix:
+        compose:
+          - docker-compose.yml
+          - docker-compose.secure.yml
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends jq
+          fi
+          jq --version
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -150,23 +164,40 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Rewrite compose to use locally-built cronduit:ci image
+        env:
+          COMPOSE_FILE: ${{ matrix.compose }}
         run: |
-          # The committed compose file references ghcr.io/simplicityguy/cronduit:latest
-          # so end users pulling from README get the published image. On CI we swap it
-          # for the locally-built PR image so the smoke test validates PR code, not
-          # stale main. This rewrite happens in the runner's ephemeral workspace only
-          # and is NEVER committed.
-          sed -i 's|ghcr.io/simplicityguy/cronduit:latest|cronduit:ci|g' examples/docker-compose.yml
-          grep -q 'image: cronduit:ci' examples/docker-compose.yml || {
-            echo "ERROR: sed rewrite did not produce 'image: cronduit:ci' in compose file"
+          # Rewrite the committed compose file in-place in the runner workspace
+          # so the smoke test exercises PR code, not stale ghcr :latest. Never
+          # committed.
+          sed -i "s|ghcr.io/simplicityguy/cronduit:latest|cronduit:ci|g" "examples/${COMPOSE_FILE}"
+          count=$(grep -c 'image: cronduit:ci' "examples/${COMPOSE_FILE}" || true)
+          if [ "$count" -ne 1 ]; then
+            echo "ERROR: expected exactly 1 'image: cronduit:ci' line, found ${count}"
+            cat "examples/${COMPOSE_FILE}"
             exit 1
-          }
+          fi
+
+      - name: Derive DOCKER_GID from runner's docker.sock
+        # Explicit derivation makes the default-compose axis robust against
+        # ubuntu-latest image bumps that change the docker group GID. The
+        # secure-compose axis doesn't need this (its socket-proxy runs as
+        # root in its own container), but exporting DOCKER_GID unconditionally
+        # is a no-op there since nothing reads it.
+        run: |
+          DG=$(stat -c %g /var/run/docker.sock)
+          echo "DOCKER_GID=${DG}" >> "$GITHUB_ENV"
+          echo "derived DOCKER_GID=${DG}"
 
       - name: docker compose up -d
         working-directory: examples
-        run: docker compose -f docker-compose.yml up -d
+        env:
+          COMPOSE_FILE: ${{ matrix.compose }}
+        run: docker compose -f "${COMPOSE_FILE}" up -d
 
       - name: Wait for /health (max 30s)
+        env:
+          COMPOSE_FILE: ${{ matrix.compose }}
         run: |
           set -eu
           for i in $(seq 1 30); do
@@ -178,39 +209,148 @@ jobs:
             sleep 1
           done
           echo "ERROR: /health never responded after 30s"
-          docker compose -f examples/docker-compose.yml logs
+          docker compose -f "examples/${COMPOSE_FILE}" logs
           exit 1
 
       - name: Assert /health body contains status:ok
         run: |
           set -eu
-          body=$(curl -sSf http://localhost:8080/health)
+          body=$(curl -sSf http://localhost:8080/health) || {
+            echo "ERROR: /health curl failed with exit $?"
+            exit 1
+          }
           echo "health body: $body"
           echo "$body" | grep -q '"status":"ok"' || {
             echo "ERROR: /health body missing status:ok"
             exit 1
           }
 
-      - name: Assert dashboard lists both quickstart jobs
+      - name: Assert dashboard lists all four quickstart jobs
         run: |
           set -eu
           dash=$(curl -sSf http://localhost:8080/)
-          echo "$dash" | grep -q 'echo-timestamp' || {
-            echo "ERROR: dashboard missing echo-timestamp job"
-            echo "$dash"
-            exit 1
-          }
-          echo "$dash" | grep -q 'hello-world' || {
-            echo "ERROR: dashboard missing hello-world job"
-            echo "$dash"
-            exit 1
-          }
+          for job in echo-timestamp http-healthcheck disk-usage hello-world; do
+            echo "$dash" | grep -q "$job" || {
+              echo "ERROR: dashboard missing job: $job"
+              echo "---- full dashboard body ----"
+              echo "$dash"
+              exit 1
+            }
+          done
+          echo "all four jobs present on dashboard"
 
-      - name: Dump compose logs on failure
+      - name: Trigger Run Now on every example job and assert success within 120s
+        env:
+          COMPOSE_FILE: ${{ matrix.compose }}
+        run: |
+          set -eu
+          BASE="http://localhost:8080"
+          JOBS="echo-timestamp http-healthcheck disk-usage hello-world"
+          BUDGET_SECS=120
+          POLL_INTERVAL=2
+          COOKIE_JAR=$(mktemp)
+
+          # Prime the CSRF cookie by GETting the dashboard. The
+          # ensure_csrf_cookie middleware sets the `cronduit_csrf` cookie on
+          # first response; subsequent POSTs must echo that value in both the
+          # cookie header and the `csrf_token` form field (validate_csrf
+          # requires byte-equal non-empty strings).
+          curl -sSf -c "${COOKIE_JAR}" -o /dev/null "${BASE}/"
+          CSRF_TOKEN=$(awk '$6 == "cronduit_csrf" { print $7 }' "${COOKIE_JAR}")
+          if [ -z "${CSRF_TOKEN}" ]; then
+            echo "ERROR: cronduit_csrf cookie not set after GET /"
+            cat "${COOKIE_JAR}"
+            exit 1
+          fi
+          echo "primed CSRF cookie (len=${#CSRF_TOKEN})"
+
+          # Fetch all jobs once and map name -> id (the Run Now API takes id, not name).
+          jobs_json=$(curl -sSf "${BASE}/api/jobs")
+          echo "---- /api/jobs body ----"
+          echo "$jobs_json" | jq '.'
+
+          for name in $JOBS; do
+            id=$(echo "$jobs_json" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id')
+            if [ -z "$id" ] || [ "$id" = "null" ]; then
+              echo "ERROR: could not resolve job id for '$name' from /api/jobs"
+              exit 1
+            fi
+            echo "triggering Run Now for ${name} (id=${id})"
+            curl -sSf -b "${COOKIE_JAR}" \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              --data-urlencode "csrf_token=${CSRF_TOKEN}" \
+              -X POST "${BASE}/api/jobs/${id}/run" -o /dev/null || {
+              echo "ERROR: POST /api/jobs/${id}/run failed for ${name}"
+              exit 1
+            }
+          done
+
+          echo "polling run history for every job (per-job budget ${BUDGET_SECS}s, interval ${POLL_INTERVAL}s)"
+          for name in $JOBS; do
+            deadline=$(( $(date +%s) + BUDGET_SECS ))  # per-job budget: avoids first slow job starving later ones
+            id=$(echo "$jobs_json" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id')
+            while :; do
+              now=$(date +%s)
+              if [ "$now" -ge "$deadline" ]; then
+                echo "ERROR: job '${name}' did not reach status=success within ${BUDGET_SECS}s"
+                echo "---- latest runs for ${name} ----"
+                curl -sSf "${BASE}/api/jobs/${id}/runs?limit=5" | jq '.'
+                exit 1
+              fi
+              latest=$(curl -sSf "${BASE}/api/jobs/${id}/runs?limit=1" | jq -r '.[0].status // empty')
+              case "$latest" in
+                success)
+                  echo "job '${name}' reached status=success"
+                  break
+                  ;;
+                failed|timeout|cancelled)
+                  echo "ERROR: job '${name}' reached terminal status=${latest} (expected success)"
+                  curl -sSf "${BASE}/api/jobs/${id}/runs?limit=5" | jq '.'
+                  exit 1
+                  ;;
+                running|scheduled|"")
+                  sleep "$POLL_INTERVAL"
+                  ;;
+                *)
+                  echo "WARN: unknown status='${latest}' for ${name}, continuing poll"
+                  sleep "$POLL_INTERVAL"
+                  ;;
+              esac
+            done
+          done
+
+          echo "all four example jobs reached status=success within ${BUDGET_SECS}s"
+
+      - name: Dump diagnostics on failure
         if: failure()
-        run: docker compose -f examples/docker-compose.yml logs
+        env:
+          COMPOSE_FILE: ${{ matrix.compose }}
+        run: |
+          echo "::group::cronduit logs (tail 200)"
+          docker compose -f "examples/${COMPOSE_FILE}" logs cronduit --tail=200 || true
+          echo "::endgroup::"
+          echo "::group::dockerproxy logs (tail 50, secure axis only)"
+          docker compose -f "examples/${COMPOSE_FILE}" logs dockerproxy --tail=50 2>/dev/null || echo "(no dockerproxy service in this axis)"
+          echo "::endgroup::"
+          echo "::group::run history tail per job"
+          for name in echo-timestamp http-healthcheck disk-usage hello-world; do
+            echo "---- ${name} ----"
+            jobs_json=$(curl -sSf "http://localhost:8080/api/jobs" 2>/dev/null || echo "[]")
+            id=$(echo "$jobs_json" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id' 2>/dev/null || true)
+            if [ -n "$id" ] && [ "$id" != "null" ]; then
+              curl -sSf "http://localhost:8080/api/jobs/${id}/runs?limit=5" 2>/dev/null | jq '.' || echo "(unreachable)"
+            else
+              echo "(id not found)"
+            fi
+          done
+          echo "::endgroup::"
+          echo "::group::cronduit_docker_reachable gauge"
+          curl -sSf http://localhost:8080/metrics 2>/dev/null | grep cronduit_docker_reachable || echo "(gauge unavailable)"
+          echo "::endgroup::"
 
       - name: Tear down compose stack
         if: always()
         working-directory: examples
-        run: docker compose -f docker-compose.yml down -v
+        env:
+          COMPOSE_FILE: ${{ matrix.compose }}
+        run: docker compose -f "${COMPOSE_FILE}" down -v
