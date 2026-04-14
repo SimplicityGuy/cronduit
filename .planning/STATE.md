@@ -1,16 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: Cleanup & Bookkeeping
-status: executing
-stopped_at: Phase 7 context gathered
-last_updated: "2026-04-14T01:23:41.409Z"
+milestone_name: Docker-Native Cron Scheduler
+status: shipped
+shipped_at: "2026-04-14"
+tag: v1.0.0
+last_updated: "2026-04-14"
 last_activity: 2026-04-14
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 40
-  completed_plans: 40
+  total_phases: 9
+  completed_phases: 9
+  total_plans: 49
+  completed_plans: 49
   percent: 100
 ---
 
@@ -18,10 +19,10 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-09 after research synthesis)
+See: `.planning/PROJECT.md` (updated 2026-04-14 after v1.0.0 milestone)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 09 — ci-cd-improvements
+**Current focus:** v1.0.0 shipped — next milestone not yet scoped. Run `/gsd-new-milestone` to begin v1.1 planning.
 
 ## Current Position
 
@@ -31,94 +32,43 @@ flowchart LR
     P2 --> P3[Phase 3<br/>Web UI]
     P3 --> P4[Phase 4<br/>Docker Executor]
     P4 --> P5[Phase 5<br/>Reload + random]
-    P5 --> P6[Phase 6<br/>Release]
+    P5 --> P6[Phase 6<br/>Release Engineering]
+    P6 --> P7[Phase 7<br/>Cleanup]
+    P7 --> P8[Phase 8<br/>Human UAT]
+    P8 --> P9[Phase 9<br/>CI/CD]
+    P9 --> SHIP([v1.0.0 SHIPPED])
 
-    classDef current fill:#0a3d0a,stroke:#00ff7f,stroke-width:3px,color:#e0ffe0
-    classDef pending fill:#1a1a1a,stroke:#666,stroke-width:1px,color:#888
-    class P1 current
-    class P2,P3,P4,P5,P6 pending
+    classDef done fill:#0a3d0a,stroke:#00ff7f,stroke-width:2px,color:#e0ffe0
+    classDef ship fill:#00ff7f,stroke:#00ff7f,stroke-width:3px,color:#0a1a0a
+    class P1,P2,P3,P4,P5,P6,P7,P8,P9 done
+    class SHIP ship
 ```
 
-Phase: 09
-Plan: Not started
-Status: Executing Phase 09
+Milestone: v1.0 — Docker-Native Cron Scheduler
+Tag: v1.0.0
+Status: SHIPPED
 Last activity: 2026-04-14
 
-Progress: [░░░░░░░░░░] 0%
-
-## Performance Metrics
-
-**Velocity:**
-
-- Total plans completed: 39
-- Average duration: —
-- Total execution time: —
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| — | — | — | — |
-| 01 | 9 | - | - |
-| 02 | 4 | - | - |
-| 03 | 6 | - | - |
-| 04 | 4 | - | - |
-| 05 | 5 | - | - |
-| 06 | 7 | - | - |
-| 09 | 4 | - | - |
-
-**Recent Trend:**
-
-- No plans executed yet.
-
-*Updated after each plan completion.*
-| Phase 06 P01 | 21min | 4 tasks | 15 files |
-| Phase 06 P02 | 11min | 3 tasks | 11 files |
-| Phase 06 P03 | 3min | 2 tasks | 5 files |
-| Phase 06 P05 | 2min | 1 tasks | 4 files |
-| Phase 06 P04 | 5min | 2 tasks | 4 files |
+Progress: [██████████] 100% (49/49 plans, 9/9 phases)
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in `.planning/PROJECT.md` Key Decisions table. Recent settled decisions affecting Phase 1:
-
-- **Phase 1:** TOML locked as config format (`serde-yaml` archived; YAML hostile for cron `*`/`@random` quoting).
-- **Phase 1:** `croner` 3.0 locked for cron parsing (DST-aware, `L`/`#`/`W` modifiers, human-readable descriptions).
-- **Phase 1:** `askama_web` 0.15 with `axum-0.8` feature (NOT the deprecated `askama_axum`).
-- **Phase 1:** Rustls everywhere; `cargo tree -i openssl-sys` must return empty; CI enforces.
-- **Phase 1:** Default bind `127.0.0.1:8080`; loud startup warning on non-loopback; web UI auth deferred to v2.
-- **Phase 1:** Separate read/write SQLite pools (WAL + `busy_timeout=5000`); dual migration directories for SQLite + Postgres.
-- **Phase 1:** CI matrix (`linux/amd64 + linux/arm64 × SQLite + Postgres`) required from day one via `cargo-zigbuild`.
-- **Phase 1:** All diagrams authored as mermaid code blocks; no ASCII art anywhere in project artifacts.
-- **Phase 1:** All changes land via PR on a feature branch; no direct commits to `main`.
-- [Phase 06]: Broadcast channel capacity 256 per active run, publish in log_writer_task alongside DB inserts
-- [Phase 06]: HTMX SSE extension vendored at v2.2.2 for offline homelab compatibility
-- [Phase 06]: Metrics facade with PrometheusBuilder, closed-enum FailureReason for cardinality control
-- [Phase 06]: Retention pruner uses pool.writer() accessor, fires 24h from startup, tracing target cronduit.retention
-- [Phase 06]: Release workflow uses docker/build-push-action@v6 directly for GHA cache integration, not justfile
-- [Phase 06]: README SECURITY-first structure with 3-step quickstart, THREAT_MODEL with four models
-
-### Roadmap Evolution
-
-- Phase 9 added: CI/CD Improvements (2026-04-13)
+All v1.0 decisions are now logged in `.planning/PROJECT.md` § Key Decisions (every row marked `✓ Settled (v1.0)` after the milestone evolution review). Full archive in `.planning/milestones/v1.0-ROADMAP.md` and `.planning/milestones/v1.0-MILESTONE-AUDIT.md`.
 
 ### Pending Todos
 
-None yet. Capture ideas via `/gsd-add-todo`.
+None.
 
 ### Blockers/Concerns
 
-None yet. Known gaps from research synthesis (`.planning/research/SUMMARY.md` § Gaps to Address) to resolve during phase planning:
+None. v1.0 milestone audit verdict: `passed` (86/86 requirements Complete, 9/9 nyquist-compliant, 0 gaps, 0 outstanding tech debt).
 
-- `@random` mixed-field edge cases (Phase 5 planning).
-- Renamed-job semantics (Phase 1 planning — decide at sync-engine design).
-- Log viewer pagination UX (Phase 3 planning).
-- "Running" state recovery label (Phase 3 planning — affects run history rendering).
+Three Phase 9 UAT items are accepted as deferred to natural post-merge validation per the audit verdict — see `.planning/milestones/v1.0-MILESTONE-AUDIT.md` § `deferred_post_merge_observation`. They are NOT blockers.
 
 ## Session Continuity
 
-Last session: 2026-04-12T23:50:36.907Z
-Stopped at: Phase 7 context gathered
-Resume file: .planning/phases/07-v1-cleanup-bookkeeping/07-CONTEXT.md
+Last session: 2026-04-14 — v1.0.0 milestone archival via `/gsd-complete-milestone`
+Stopped at: Milestone shipped, ready for next milestone scoping
+Resume command: `/gsd-new-milestone`

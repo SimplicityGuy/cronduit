@@ -122,10 +122,13 @@ Cronduit is configured via a single TOML file. The config file is the source of 
 
 ```toml
 [server]
-bind = "127.0.0.1:8080"   # Default: loopback only. Use 0.0.0.0 behind a reverse proxy.
-timezone = "UTC"            # IANA timezone for schedule evaluation
-log_retention = "90d"       # How long to keep run logs before pruning
-shutdown_grace = "30s"      # Grace period for running jobs on SIGTERM
+bind = "127.0.0.1:8080"   # Default: loopback only. Loud WARN at startup if non-loopback.
+timezone = "UTC"            # REQUIRED -- no implicit host-timezone fallback (D-19).
+log_retention = "90d"       # Default 90d. How long to keep run logs before the daily pruner reclaims them.
+shutdown_grace = "30s"      # Default 30s. Grace period for running jobs on SIGINT/SIGTERM before SIGKILL.
+watch_config = true         # Default true. Set false to disable the debounced file-watch reload path.
+# database_url = "sqlite:///data/cronduit.db"   # Optional. Falls back to env DATABASE_URL,
+                                                  # then to "sqlite://./cronduit.db?mode=rwc" for local dev.
 ```
 
 ### Default Job Settings
@@ -134,9 +137,13 @@ shutdown_grace = "30s"      # Grace period for running jobs on SIGTERM
 [defaults]
 image = "alpine:latest"     # Default Docker image for container jobs
 network = "bridge"          # Default Docker network mode
-delete = true               # Auto-remove containers after completion
+delete = true               # When true, cronduit removes the container after wait_container drains.
+                            # NOT bollard auto_remove -- cronduit always sets auto_remove=false to
+                            # avoid the moby#8441 race that loses exit codes; the explicit remove
+                            # happens after the run is fully recorded.
 timeout = "5m"              # Default job timeout
-random_min_gap = "0s"       # Minimum gap between @random-scheduled jobs
+random_min_gap = "90m"      # Minimum gap between @random-scheduled jobs on the same day.
+                            # Optional -- omit to allow @random jobs to land back-to-back.
 ```
 
 ### Job Types
@@ -194,14 +201,18 @@ Cronduit exposes a Prometheus-compatible `/metrics` endpoint for integration wit
 
 ### Metric Families
 
+Cronduit exposes **six** metric families, all eagerly described at boot so `/metrics` returns full HELP/TYPE lines even before the first observation:
+
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
+| `cronduit_scheduler_up` | Gauge | -- | `1` once the scheduler loop is running. Liveness sentinel. |
 | `cronduit_jobs_total` | Gauge | -- | Number of currently configured jobs |
 | `cronduit_runs_total` | Counter | `job`, `status` | Total runs by job and status (`success`, `failed`, `timeout`, `cancelled`) |
 | `cronduit_run_duration_seconds` | Histogram | `job` | Run duration with homelab-tuned buckets (1s to 1h) |
 | `cronduit_run_failures_total` | Counter | `job`, `reason` | Failures by reason (`image_pull_failed`, `network_target_unavailable`, `timeout`, `exit_nonzero`, `abandoned`, `unknown`) |
+| `cronduit_docker_reachable` | Gauge | -- | Docker daemon preflight result: `1` reachable, `0` unreachable. See [Troubleshooting](#troubleshooting) below. |
 
-Cardinality is bounded: `job` labels scale with your job count (typically 5-50), and `reason` uses a closed enum of 6 values.
+Cardinality is bounded: `job` labels scale with your job count (typically 5-50), `status` is a 4-value closed enum, and `reason` is a 6-value closed enum.
 
 ### Prometheus Setup
 

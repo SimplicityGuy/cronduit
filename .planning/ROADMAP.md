@@ -1,383 +1,46 @@
 # Roadmap: Cronduit
 
-**Created:** 2026-04-09
-**Granularity:** standard (6 phases)
-**Core Value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
+## Milestones
 
-> Source documents: `docs/SPEC.md`, `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md` (86 v1 requirements), `.planning/research/SUMMARY.md`, `.planning/research/ARCHITECTURE.md`, `.planning/research/PITFALLS.md`.
-
-## Overview
-
-Cronduit is built in six sequential phases that move from a secure, CI-gated, persistence-ready skeleton through the scheduler core, a read-only observability UI, the Docker executor (the marquee differentiator), the `@random` resolver and config reload safety layer, and finally the live-events / release-engineering layer that makes it shippable as public OSS. Security posture and CI matrix are established in Phase 1 and carried through every subsequent phase — they are not a "Phase 6 polish" item. Tests accompany each phase; no phase is "testing only."
-
-Phases 1-3 deliver a usable-but-incomplete homelab binary (command/script jobs with a real UI). Phase 4 unlocks the marquee Docker-native story including `network = "container:<name>"`. Phase 5 unlocks the second differentiator (`@random`) and the production-grade config reload loop. Phase 6 turns it into something an outside adopter can clone, trust, and deploy.
-
-## Phase Dependency Diagram
-
-```mermaid
-flowchart TD
-    P1[Phase 1<br/>Foundation + Security + CI + Persistence] --> P2[Phase 2<br/>Scheduler Core + Command/Script Executor]
-    P2 --> P3[Phase 3<br/>Read-Only Web UI + Health Endpoint]
-    P3 --> P4[Phase 4<br/>Docker Executor + container:name]
-    P4 --> P5[Phase 5<br/>Config Reload + random Resolver]
-    P5 --> P6[Phase 6<br/>Live Events, Metrics, Retention, Release]
-
-    P1 -.security posture.-> P6
-    P1 -.CI matrix.-> P6
-    P4 -.orphan labels.-> P5
-
-    classDef critical fill:#0a3d0a,stroke:#00ff7f,stroke-width:2px,color:#e0ffe0
-    classDef standard fill:#1a1a1a,stroke:#888,stroke-width:1px,color:#eee
-    class P1,P4,P5 critical
-    class P2,P3,P6 standard
-```
+- ✅ **v1.0 — Docker-Native Cron Scheduler** — Phases 1–9 (shipped 2026-04-14, tag `v1.0.0`) — see [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.md) and [`MILESTONES.md`](MILESTONES.md)
+- 📋 **v1.1+** — TBD — run `/gsd-new-milestone` to begin scoping the next release
 
 ## Phases
 
-**Phase Numbering:**
-- Integer phases (1-6): Planned v1 milestone work
-- Decimal phases (e.g., 2.1): Reserved for urgent insertions via `/gsd-insert-phase`
+<details>
+<summary>✅ v1.0 Docker-Native Cron Scheduler (Phases 1–9) — SHIPPED 2026-04-14</summary>
 
-- [ ] **Phase 1: Foundation, Security Posture & Persistence Base** - Secure-by-default Rust skeleton, CI matrix, TOML config parser, dual-backend migrations, dual-pool SQLite, threat model document
-- [ ] **Phase 2: Scheduler Core & Command/Script Executor** - Hand-rolled tokio scheduler loop with DST-correct croner, command/script backends, bounded log pipeline, graceful shutdown
-- [ ] **Phase 3: Read-Only Web UI & Health Endpoint** - Terminal-green askama_web + HTMX dashboard, job/run detail pages, Run Now, `/health`, log XSS hardening
-- [ ] **Phase 4: Docker Executor & container-network Differentiator** - bollard-based ephemeral containers, all network modes, `container:<name>` pre-flight, startup orphan reconciliation, testcontainers integration tests
-- [ ] **Phase 5: Config Reload & `@random` Resolver** - SIGHUP / API / file-watch reload, slot-based `@random` algorithm, feasibility checking, UI surfacing of resolutions
-- [ ] **Phase 6: Live Events, Metrics, Retention & Release Engineering** - SSE log tail, Prometheus metrics, retention pruner, multi-arch Docker image, complete `THREAT_MODEL.md`, README quickstart
+- [x] Phase 1: Foundation, Security Posture & Persistence Base (9/9 plans) — 2026-04-10
+- [x] Phase 2: Scheduler Core & Command/Script Executor (4/4 plans) — 2026-04-10
+- [x] Phase 3: Read-Only Web UI & Health Endpoint (6/6 plans) — 2026-04-11
+- [x] Phase 4: Docker Executor & `container:<name>` Differentiator (4/4 plans) — 2026-04-11
+- [x] Phase 5: Config Reload & `@random` Resolver (5/5 plans) — 2026-04-12
+- [x] Phase 6: Live Events, Metrics, Retention & Release Engineering (7/7 plans) — 2026-04-13
+- [x] Phase 7: v1.0 Cleanup & Bookkeeping (5/5 plans) — 2026-04-13
+- [x] Phase 8: v1.0 Final Human UAT Validation (5/5 plans) — 2026-04-14
+- [x] Phase 9: CI/CD Improvements (4/4 plans) — 2026-04-14
 
-## Phase Details
+**Total:** 49 plans across 9 phases · 86/86 v1 requirements Complete · audit verdict `passed`
 
-### Phase 1: Foundation, Security Posture & Persistence Base
+</details>
 
-**Goal**: A secure-by-default Rust binary that parses a TOML config, creates and migrates the database on both SQLite and PostgreSQL, validates configs with `cronduit check`, and runs under a green CI matrix on both architectures — establishing every foundational decision that later phases will depend on.
+### 📋 v1.1+ (Not yet planned)
 
-**Depends on**: Nothing (first phase)
+The next milestone has not been scoped. To begin:
 
-**Requirements**: FOUND-01, FOUND-02, FOUND-03, FOUND-04, FOUND-05, FOUND-06, FOUND-07, FOUND-08, FOUND-09, FOUND-10, FOUND-11, CONF-01, CONF-02, CONF-03, CONF-04, CONF-05, CONF-06, CONF-07, CONF-08, CONF-09, CONF-10, DB-01, DB-02, DB-03, DB-04, DB-05, DB-06, DB-07, OPS-03
+```
+/gsd-new-milestone
+```
 
-**Success Criteria** (what must be TRUE):
-  1. An operator can run `cronduit --config test.toml` against a fresh SQLite or Postgres URL and the process loads the config, runs migrations, upserts jobs, emits a structured JSON startup summary, and exits cleanly (FOUND-01..04, DB-01..04, CONF-01..10).
-  2. `cronduit check config.toml` validates parse + cron expressions + network-mode syntax + env-var expansion and exits non-zero with line-numbered errors on any failure, without touching the database (FOUND-03, CONF-05, CONF-10).
-  3. On startup, a non-loopback `[server].bind` produces a loud WARN log explaining the no-auth-in-v1 stance; the default bind is `127.0.0.1:8080`; `SecretString` fields render `[redacted]` in any Debug output (OPS-03, FOUND-05).
-  4. Every PR runs the CI matrix (`linux/amd64` + `linux/arm64` × SQLite + Postgres) with `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, `cargo tree -i openssl-sys` (must return empty), and a multi-arch Docker image built via `cargo-zigbuild`; every check is green before merge (FOUND-06, FOUND-07, FOUND-08, FOUND-09).
-  5. `README.md` leads with a SECURITY section and `THREAT_MODEL.md` exists as at least a skeleton document; every diagram in repository docs is authored as a mermaid code block (FOUND-10, FOUND-11).
-
-**Pitfalls addressed** (from `.planning/research/PITFALLS.md`):
-- Pitfall 1 (Docker socket is root-equivalent): default loopback bind, loud warning, `THREAT_MODEL.md` skeleton.
-- Pitfall 7 (SQLite write contention): separate read/write pools + WAL + `busy_timeout=5000` established from day one (DB-05).
-- Pitfall 8 (SQLite/Postgres schema parity): dual migration directories + CI matrix covers both backends (DB-02, FOUND-08).
-- Pitfall 14 (cross-compile breaks on OpenSSL): rustls-only dependency tree enforced by `cargo tree -i openssl-sys` CI check (FOUND-06).
-- Pitfall 15 (zero-config surprises): startup summary log enumerates bind, db, timezone, config path, job count.
-- Pitfall 18 (secrets leak into errors): `SecretString` newtype from day one (FOUND-05).
-- Pitfall 20 (config format creep): TOML is locked, no YAML/JSON/INI code paths exist.
-
-**Plans**: 9 plans (5 waves + 1 gap closure)
-
-Plans:
-- [x] 01-01-PLAN.md — Workspace scaffold: Cargo.toml, rust-toolchain.toml, src/ module skeleton, clap CLI stubs, tracing init, graceful shutdown, axum placeholder (Wave 1)
-- [x] 01-02-PLAN.md — TOML config parsing: SecretString wiring, ${VAR} interpolation, GCC-style errors, IANA timezone + network mode validators, SHA-256 config_hash, 9 fixtures + integration tests (Wave 2)
-- [x] 01-03-PLAN.md — `cronduit check` subcommand: wire parse_and_validate, GCC-style error printer, collect-all exit codes, black-box tests (no DB, no secret leak) (Wave 3)
-- [x] 01-04-PLAN.md — DbPool enum: split SQLite read/write pools (WAL + busy_timeout), Postgres pool, initial migrations for both backends, full boot flow + cronduit.startup event + bind warning, pragma/idempotency/startup-event/graceful-shutdown tests (Wave 3)
-- [x] 01-05-PLAN.md — Schema parity test: testcontainers Postgres + introspection + normalization whitelist + structured diff; DbPool Postgres smoke test (Wave 4)
-- [x] 01-06-PLAN.md — justfile with all D-11 recipes + `just openssl-check` Pitfall 14 guard (Wave 2)
-- [x] 01-07-PLAN.md — `.github/workflows/ci.yml` (lint + 4-cell test matrix + image jobs, all steps call `just`) + multi-stage Dockerfile with cargo-zigbuild → distroless/static nonroot (Wave 5)
-- [x] 01-08-PLAN.md — README.md with SECURITY as first H2, THREAT_MODEL.md STRIDE skeleton, examples/cronduit.toml canonical config (Wave 2)
-- [x] 01-09-PLAN.md — Gap closure: croner dependency + cron schedule validation in validate.rs + invalid-schedule fixture + tests (Wave 1, gap closure)
-
----
-
-### Phase 2: Scheduler Core & Command/Script Executor
-
-**Goal**: A hand-rolled tokio scheduler loop that fires jobs on their cron schedule in the configured timezone, executes local command and script backends, captures stdout/stderr through a bounded log pipeline into the DB, and drains cleanly on SIGINT/SIGTERM — all without Docker or a UI.
-
-**Depends on**: Phase 1
-
-**Requirements**: SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SCHED-06, SCHED-07, EXEC-01, EXEC-02, EXEC-03, EXEC-04, EXEC-05, EXEC-06
-
-**Success Criteria** (what must be TRUE):
-  1. A `command`-type job scheduled at `*/1 * * * *` fires every minute in the configured timezone, executes via `tokio::process::Command`, and its stdout/stderr lines land in `job_logs` with correct `stream` tags and preserved ordering (SCHED-01, SCHED-02, EXEC-01, EXEC-03).
-  2. A `script`-type job declared via `script = """..."""` writes its body to a tempfile with the configured shebang, executes, and its exit code + logs are recorded; a successful run is `status='success' exit_code=0`, a non-zero exit is `status='failed' exit_code=<n>`, and a per-job timeout produces `status='timeout'` with the partial logs preserved (EXEC-02, EXEC-06, SCHED-05).
-  3. DST regression tests (spring-forward and fall-back on frozen clocks) pass for at least one representative timezone; wall-clock jumps larger than 2 minutes emit WARN-level log lines and do not silently drop missed fires (SCHED-02, SCHED-03).
-  4. Pressing Ctrl+C (SIGINT) stops accepting new fires, waits up to `[server].shutdown_grace = "30s"` for in-flight runs, then closes pools and exits with code 0; a second SIGTERM kills immediately (SCHED-07).
-  5. The log pipeline uses a bounded channel (256 lines) with tail-sampling drop policy and inserts a `[truncated N lines]` marker in `job_logs` on overflow; lines longer than 16 KB are truncated with a marker (EXEC-04, EXEC-05).
-  6. Concurrent runs of the same job are allowed and each writes a separate `job_runs` row; `trigger` is set to `scheduled` for cron fires (SCHED-04, SCHED-06).
-
-**Pitfalls addressed** (from PITFALLS.md):
-- Pitfall 4 (log back-pressure): bounded channel + tail-sampling + DB-writer decoupled from any future broadcast bus (EXEC-04, EXEC-05).
-- Pitfall 5 (DST handling): croner 3.0 + explicit `[server].timezone` + UTC storage + regression tests (SCHED-02, SCHED-03, CONF-08).
-- Pitfall 19 (graceful shutdown timeout): configurable `shutdown_grace`, progress logging, second-SIGTERM immediate kill (SCHED-07).
-- Pitfall 22 (scheduler clock drift): wall-clock scheduling (not monotonic sleep), >2min clock-jump detection (SCHED-03).
-
-**Plans**: TBD
-
----
-
-### Phase 3: Read-Only Web UI & Health Endpoint
-
-**Goal**: A terminal-green, server-rendered, HTMX-polled web UI that displays the job list, job detail, run detail, and settings/status pages; a working "Run Now" button that goes through the scheduler; and a `GET /health` endpoint — all with log content rendered safely and the design system applied.
-
-**Depends on**: Phase 2 (scheduler must produce runs and logs before a UI can render them)
-
-**Requirements**: UI-01, UI-02, UI-03, UI-04, UI-05, UI-06, UI-07, UI-08, UI-09, UI-10, UI-11, UI-12, UI-13, UI-15, OPS-01
-
-**Success Criteria** (what must be TRUE):
-  1. An operator opens `http://127.0.0.1:8080` and sees a Dashboard listing every enabled job with name, raw schedule, resolved schedule, next fire time, last-run status badge, and last-run timestamp; the table auto-refreshes every 3 seconds via an HTMX partial swap (UI-01, UI-06, UI-07).
-  2. Clicking a job opens the Job Detail page showing the full resolved config, the human-readable cron description from croner, and a paginated run history; clicking a run opens the Run Detail page showing metadata and the full captured logs with stdout/stderr distinction and ANSI color codes parsed into sanitized HTML spans (UI-08, UI-09).
-  3. A Run Now button on each job triggers `POST /api/jobs/:id/run`, the manual run is recorded with `trigger='manual'` by going through the scheduler (not bypassing it), and the run appears on the next dashboard poll (UI-12).
-  4. An XSS test in CI asserts that log content containing `<script>alert(1)</script>` and SGR escape sequences renders as escaped text with only the ANSI transformation applied; no log content path uses `| safe` / `PreEscaped` (UI-10).
-  5. A Settings/Status page shows scheduler uptime, DB connection status, config file path, last successful reload time, and Cronduit version; `GET /health` returns `{"status":"ok","db":"ok","scheduler":"running"}` (UI-11, OPS-01).
-  6. Every page matches the `design/DESIGN_SYSTEM.md` terminal-green palette, monospace typography, and dark/light token set; Tailwind is built at compile time via the standalone binary (no Node); HTMX is vendored locally (no CDN); all assets are embedded via `rust-embed`; state-changing endpoints require a CSRF token (UI-02, UI-03, UI-04, UI-05, UI-13, UI-15).
-
-**Pitfalls addressed** (from PITFALLS.md):
-- Pitfall 13 (log XSS / ANSI / binary rendering): always HTML-escape, ANSI server-side only, XSS test in CI (UI-10).
-- Pitfall 16 (Run Now bypasses scheduler semantics): manual runs go through the scheduler's `SchedulerCmd::RunNow` path and are recorded with `trigger='manual'` (UI-12).
-- Pitfall 23 (rust-embed hot reload / binary size): debug-mode disk read, compile-time Tailwind build, binary size check in CI.
-
-**UI hint**: yes
-
-**Plans**: 6 plans (4 waves)
-
-Plans:
-- [x] 03-01-PLAN.md — Asset pipeline + Cargo deps + design system CSS + base template + rust-embed (Wave 1)
-- [x] 03-02-PLAN.md — DB read queries (dashboard, run history, log pagination) + SchedulerCmd channel + health endpoint + AppState extension (Wave 1)
-- [x] 03-03-PLAN.md — Dashboard page handler + HTMX polling table partial + filter/sort + empty state (Wave 2)
-- [x] 03-04-PLAN.md — Job Detail + Run Detail + Settings pages + ANSI log rendering + pagination partials (Wave 3)
-- [x] 03-05-PLAN.md — CSRF double-submit cookie + Run Now POST endpoint + toast notification (Wave 3)
-- [x] 03-06-PLAN.md — XSS log safety CI test + health endpoint integration test (Wave 4)
-
----
-
-### Phase 4: Docker Executor & container-network Differentiator
-
-**Goal**: The headline feature: ephemeral Docker container jobs via `bollard` with full support for every network mode including `container:<name>`, structured pre-flight failures, correct `wait_container` + explicit-remove sequencing, image auto-pull with retry, per-container labeling, and startup orphan reconciliation — validated by a testcontainers integration test of the `container:<name>` path.
-
-**Depends on**: Phase 3 (existing UI validates that run status, logs, and metadata render correctly before Docker complexity is added)
-
-**Requirements**: DOCKER-01, DOCKER-02, DOCKER-03, DOCKER-04, DOCKER-05, DOCKER-06, DOCKER-07, DOCKER-08, DOCKER-09, DOCKER-10, SCHED-08
-
-**Success Criteria** (what must be TRUE):
-  1. A `docker`-type job declared via `image = "..."` spawns an ephemeral container through bollard with `auto_remove=false`, streams logs concurrently with `wait_container`, persists the exit code BEFORE calling `remove_container`, and records the image digest on the run row — a container that exits in under 50 ms has its exit code reliably captured across 100 repeated runs (DOCKER-01, DOCKER-06, DOCKER-08, DOCKER-09).
-  2. All five network modes (`bridge`, `host`, `none`, named network, `container:<name>`) are exercised by the parser, executor, and an integration test; the `container:<name>` test uses `testcontainers` to bring up a target container and schedule a dependent Cronduit job against it (DOCKER-02, DOCKER-10).
-  3. Starting a `network = "container:<name>"` job when the target container is not `running` records a run with `error_message='network_target_unavailable: <name>'` (not Docker's raw error) and does not bubble a raw bollard error to the UI (DOCKER-03).
-  4. Image auto-pull retries failures with exponential backoff (3 attempts), distinguishes retryable network/timeout failures from terminal `manifest unknown` / `unauthorized` failures, and records the failure reason as a structured error on the run row (DOCKER-05).
-  5. Every spawned container is labeled `cronduit.run_id=<id>` and `cronduit.job_name=<name>`; volume mounts, env vars, custom `container_name`, and per-job `timeout` are all honored (DOCKER-04, DOCKER-07).
-  6. On startup, any container matching `cronduit.run_id=*` whose `run_id` corresponds to a `job_runs` row still in `status='running'` is reconciled (marked `status='error'` with `error_message='orphaned at restart'`); no orphan containers leak across restarts (SCHED-08).
-
-**Pitfalls addressed** (from PITFALLS.md):
-- Pitfall 2 (`container:<name>` silent break): pre-flight inspect + structured failure + distinct metric reason (DOCKER-03).
-- Pitfall 3 (`wait_container` vs `auto_remove` race): explicit `auto_remove=false`, state machine `Creating->Starting->Running->Exited->LogsDrained->Removed`, exit-code persisted before remove (DOCKER-06).
-- Pitfall 10 (orphan containers after restart): every container labeled with `run_id`, reconciliation at boot, DB rows resolved (DOCKER-07, SCHED-08).
-- Pitfall 12 (image pull failure handling): exponential backoff + classification + distinct metric reason (DOCKER-05).
-- Pitfall 21 (`type = "command"` means inside-the-container): documented in README + surfaced in `cronduit check` hints.
-
-**Plans**: TBD
-
----
-
-### Phase 5: Config Reload & `@random` Resolver
-
-**Goal**: Production-grade config reload via SIGHUP / `POST /api/reload` / debounced file-watch, the slot-based `@random` algorithm with feasibility checks and daily re-roll cadence, and the UI surfaces that make resolved schedules visible — addressing the two highest-risk / highest-novelty features together because they share the same reload lifecycle.
-
-**Depends on**: Phase 4 (the Docker executor must be solid before layering the reload safety net and the random resolver on top, because reload must not cancel in-flight container runs)
-
-**Requirements**: RELOAD-01, RELOAD-02, RELOAD-03, RELOAD-04, RELOAD-05, RELOAD-06, RELOAD-07, RAND-01, RAND-02, RAND-03, RAND-04, RAND-05, RAND-06
-
-**Success Criteria** (what must be TRUE):
-  1. Editing the config file triggers a debounced (500 ms) reload that parses to a staging structure, diffs against the DB by `config_hash`, creates new jobs, updates changed jobs, disables removed jobs (history preserved), and leaves in-flight runs untouched; SIGHUP and `POST /api/reload` share the same `do_reload()` code path; a reload that fails to parse leaves the running config untouched and surfaces the error via API, log, and UI (RELOAD-01..07).
-  2. A job with `schedule = "@random 14 * * *"` is resolved once at sync time, the concrete value persisted to `jobs.resolved_schedule`, and remains stable across process restarts and config reloads as long as the raw `schedule` field is unchanged; a schedule-field edit triggers re-randomization (RAND-01, RAND-02, RAND-03).
-  3. `[server].random_min_gap = "90m"` guarantees a minimum spacing between randomized jobs' fire times on the same day via a slot-based algorithm; a mathematically infeasible gap (e.g., 20 jobs x 90 min > 24 h) logs a WARN at startup, relaxes the gap for overflow jobs, and continues booting — Cronduit never fails to start because of an infeasible random config (RAND-04, RAND-05).
-  4. The Job Detail page shows both the raw `schedule` and the `resolved_schedule`, clearly labeled (e.g., "Schedule: `@random` (today resolved to `14 17 * * *`)"); dashboard badges distinguish `@random` jobs from fixed-schedule jobs (RAND-06).
-  5. An integration test exercises: (a) edit config -> SIGHUP -> new jobs appear, removed jobs go `enabled=false`, (b) reload during an in-flight run does not cancel the run, (c) `resolved_schedule` is retained for unchanged random jobs across a reload.
-
-**Pitfalls addressed** (from PITFALLS.md):
-- Pitfall 6 (`@random` invisible state and infeasible gap): persisted `resolved_schedule`, daily-cadence re-roll, slot algorithm, feasibility check, UI surfacing, structured log events.
-- Pitfall 9 (non-atomic config reload): 500 ms debounce, staging parse, atomic apply under lock, in-flight runs not cancelled.
-- Pitfall 16 (Run Now idempotency under reload): manual runs go through scheduler; idempotency token scoped correctly.
-
-**Plans**: 5 plans (3 waves)
-
-Plans:
-- [x] 05-01-PLAN.md — @random resolver module with TDD + SchedulerCmd extension + sync engine wiring (Wave 1)
-- [x] 05-02-PLAN.md — Reload infrastructure: do_reload(), SIGHUP handler, file watcher, watch_config (Wave 1)
-- [x] 05-03-PLAN.md — Scheduler loop Reload/Reroll branches + reload/reroll API handlers + routes (Wave 2)
-- [x] 05-04-PLAN.md — UI surfaces: toast JS update, settings page enhancement, @random badge, job detail resolved schedule + re-roll (Wave 2)
-- [x] 05-05-PLAN.md — Integration tests (reload diff, in-flight survival, @random stability) + visual checkpoint (Wave 3)
-
----
-
-### Phase 6: Live Events, Metrics, Retention & Release Engineering
-
-**Goal**: Turn the feature-complete binary into a shippable public OSS release: SSE log tail for in-progress runs, Prometheus `/metrics` with a bounded-cardinality label set, daily retention pruner, multi-arch Docker image, complete `THREAT_MODEL.md`, and a README quickstart that takes a stranger from `git clone` to a working scheduled job in under 5 minutes.
-
-**Depends on**: Phase 5 (the product is functionally complete after Phase 5; this phase layers observability + release engineering without changing correctness-critical code paths)
-
-**Requirements**: UI-14, OPS-02, OPS-04, OPS-05, DB-08
-
-**Success Criteria** (what must be TRUE):
-  1. Opening the Run Detail page of an in-progress run shows log lines streaming in real time via SSE (`GET /events/runs/:id/logs`); completed runs render statically from `job_logs`; slow SSE subscribers drop lines without affecting the DB writer (UI-14).
-  2. `GET /metrics` exposes Prometheus text format including `cronduit_jobs_total`, `cronduit_runs_total{status}`, `cronduit_run_duration_seconds` (histogram), and `cronduit_run_failures_total{reason}` where `reason` is the closed enum `image_pull_failed | network_target_unavailable | timeout | exit_nonzero | abandoned | unknown` (no per-`run_id` or unbounded labels) (OPS-02).
-  3. A daily retention pruner deletes `job_runs` and `job_logs` older than `[server].log_retention` (default 90 days) in batched transactions with `PRAGMA wal_checkpoint(TRUNCATE)` after large SQLite prunes; no write-contention spikes are observed in logs during pruning (DB-08).
-  4. A stranger can clone the repo, run `docker compose up`, and schedule a working job by editing the example config in under 5 minutes; the example `docker-compose.yml` mounts the Docker socket, mounts the config file read-only, uses a named volume for SQLite, and uses `expose:` (not `ports:`) for the web UI (OPS-04, OPS-05).
-  5. `THREAT_MODEL.md` is complete (Docker socket model, untrusted-client model, config-tamper model, malicious-image model); the README security section is above the fold; the multi-arch Docker image (amd64 + arm64) builds via `cargo-zigbuild` and publishes on every push to `main`.
-
-**Pitfalls addressed** (from PITFALLS.md):
-- Pitfall 1 (Docker socket / security posture): complete `THREAT_MODEL.md`, README security section, `expose:` in compose example.
-- Pitfall 4 (log back-pressure, SSE side): SSE subscribers disposable, DB writer authoritative, slow-consumer drop policy.
-- Pitfall 11 (retention pruning under load): batched deletes, WAL checkpoint after prune, separate log vs run retention.
-- Pitfall 17 (metrics cardinality explosion): closed-enum `reason` label, no `run_id` label, documented scrape guidance.
-
-**Plans**: 5 plans (2 waves)
-
-Plans:
-- [x] 06-01-PLAN.md -- SSE log streaming: broadcast channel fan-out + SSE handler + Run Detail template (Wave 1)
-- [x] 06-02-PLAN.md -- Prometheus metrics: metrics facade + /metrics endpoint + scheduler instrumentation (Wave 1)
-- [x] 06-03-PLAN.md -- Retention pruner: daily batched deletes + WAL checkpoint (Wave 1)
-- [x] 06-04-PLAN.md -- Release docs: README quickstart + docker-compose + THREAT_MODEL.md (Wave 2)
-- [x] 06-05-PLAN.md -- Release CI: release.yml workflow + git-cliff + OCI labels (Wave 2)
-
----
-
-### Phase 7: v1.0 Cleanup & Bookkeeping
-
-**Goal**: Close the mechanical gaps surfaced by `/gsd-audit-milestone` so v1.0 archives cleanly: resolve the `ports:` vs `expose:` deviation in the docker-compose example (OPS-04), bulk-update REQUIREMENTS.md traceability to reflect what actually shipped, refresh the stale Phase 5 verification, and land the minor settings-page reload card auto-refresh fix from 05-UAT.
-
-**Depends on**: Phase 6 (final feature phase of v1.0)
-
-**Requirements**: OPS-04 (close partial), bookkeeping for FOUND-01..11, CONF-01..10, DB-01..07, SCHED-01..08, EXEC-01..06, UI-01..15, DOCKER-01..10, RAND-01..06, RELOAD-01..07, OPS-01..05 (no new requirement coverage — reflects work already shipped)
-
-**Success Criteria** (what must be TRUE):
-  1. `examples/docker-compose.yml` either uses `expose:` (per OPS-04 ROADMAP wording) OR `06-VERIFICATION.md` carries an explicit `overrides:` block accepting D-12 with rationale; the file's existing comment about `expose:` for production is preserved or strengthened.
-  2. `REQUIREMENTS.md` traceability table has all 86 v1 requirements marked complete (`Status: Complete`, checkbox `[x]`) with the coverage summary updated; only requirements that genuinely shipped get checked, with each one's status anchored in a per-phase VERIFICATION.md table.
-  3. `05-VERIFICATION.md` is no longer stale: either re-generated by `/gsd-verify-work 5` showing `status: passed` (because both flagged code gaps were closed in PR #9), or annotated with a frontmatter `re_verification:` block recording that the gaps were closed post-verification.
-  4. Settings page Reload Config card auto-refreshes after a successful reload — `/api/reload` response carries `HX-Refresh` (or `hx-swap-oob` partial) so the operator no longer needs a manual page refresh to see the new "Last Reload" timestamp.
-
-**Pitfalls addressed** (from PITFALLS.md):
-- Bookkeeping debt isn't a technical pitfall but accumulates as scope grows; closing it before milestone archive prevents v1.1 from inheriting unclear "what already shipped" state.
-
-**Plans**: 4 plans (3 waves)
-
-Plans:
-- [x] 07-01-PLAN.md — docker-compose.yml SECURITY comment + 06-VERIFICATION.md overrides block (D-01, D-02; Wave 1)
-- [x] 07-02-PLAN.md — REQUIREMENTS.md 4-column Evidence rewrite + bulk bookkeeping flip (D-03..D-08; Wave 3; depends on 01 + 03)
-- [x] 07-03-PLAN.md — 05-VERIFICATION.md re_verification annotation + status flip (D-09..D-12, D-15; Wave 2; depends on 04)
-- [x] 07-04-PLAN.md — tests/reload_api.rs HX-Refresh HTTP-layer regression test (D-13 ack, D-14, D-16 ack; Wave 1)
-
----
-
-### Phase 8: v1.0 Final Human UAT Validation
-
-**Goal**: Walk through the human-verification items flagged by Phases 3 and 6 verifications so v1.0 ships with operator-confirmed UI quality and quickstart fidelity. Per project policy ("UAT requires user validation"), this phase is user-driven — Claude prepares fixtures and prompts; the user runs the binary and records pass/fail in the relevant UAT files.
-
-**Depends on**: Phase 7 (cleanup must be in place so the binary the user tests reflects the final v1.0 state, including the docker-compose decision)
-
-**Requirements**: UI-05, UI-06, UI-09, UI-12 (Phase 3 visual validation closes outstanding human-needed items); OPS-05, UI-14 (Phase 6 quickstart e2e + SSE live streaming user-confirm); **plus three gaps logged in `07-UAT.md` after Phase 7 UAT on 2026-04-13**:
-  - `echo-timestamp` quickstart job fails instantly — `date` binary does not exist in the distroless runtime, `Command::new("date")` returns ENOENT. Bundled example is broken for every new quickstart user.
-  - `hello-world` quickstart job fails instantly — bollard "hyper legacy client: client error (Connect)" reaching `/var/run/docker.sock` from inside the nonroot (UID 65532) distroless container. Compose mounts the socket but the connect still fails.
-  - `07-05` Job Detail Run History auto-refresh cannot be browser-UAT'd until at least one of the two example jobs can reach a sustained RUNNING state long enough to observe the HTMX conditional polling transition. Deferred from Phase 7 per Plan 07-05 D-16; joins this phase's human-needed batch.
-
-**Success Criteria** (what must be TRUE):
-  1. `03-HUMAN-UAT.md` has all four visual UAT items recorded as `result: pass` (or `issue` with severity) by the user: terminal-green theme rendering, dark/light mode toggle persistence, Run Now toast, ANSI log rendering with stderr distinction.
-  2. A new `06-HUMAN-UAT.md` (or extension of an existing UAT file) records the user-run quickstart end-to-end test: clone → `docker compose -f examples/docker-compose.yml up -d` → dashboard loads → `echo-timestamp` job fires within ~1 minute of starting. Result captured as pass/fail/issue.
-  3. The same UAT file records the SSE live log streaming validation: trigger a long-running job → open Run Detail → LIVE badge visible → log lines stream in real time → on completion the view transitions to the static log viewer without a page reload. Result captured.
-  4. `examples/cronduit.toml` ships at least one command/script job AND one docker job that actually succeed on a fresh `docker compose up` against the distroless runtime image. The `echo-timestamp` gap (`date` → ENOENT) is closed either by swapping the example to a binary that exists in distroless, by rebasing the runtime on a minimal-shell image, or by converting the example into a `script =` job that invokes an inline shell from a static binary. Fix is committed and a new cold-start smoke test verifies both example jobs reach a terminal `success` state within two minutes of boot.
-  5. The `hello-world` docker-job gap is closed: bollard inside the cronduit container can reach `/var/run/docker.sock` at startup, a startup pre-flight logs a clear `docker daemon unreachable` warning if it cannot, and the example image pulls + runs cleanly under the compose quickstart. Root cause documented in an 08-level SUMMARY.md.
-  6. Once criteria 4 and 5 pass, the Plan 07-05 Job Detail Run History auto-refresh browser UAT runs end-to-end and records `result: pass` (or issue) in `07-UAT.md`: 10+ Run Now clicks on a real job, RUNNING → terminal transitions without manual reload within ~2s of each underlying completion, and the network tab shows polling stops once the list is idle.
-  7. Any failures discovered during UAT walkthrough get either a small follow-up fix in this phase OR a documented v1.1 backlog entry — no silent gaps left at archive time.
-
-**Pitfalls addressed** (from PITFALLS.md):
-- Pitfall: shipping UI features as "verified" without operator visual validation. Project memory captures this as a hard rule. Phase 8 closes the gap retroactively for the human-needed items in Phases 3 and 6.
-- Pitfall: shipping quickstart examples whose bundled demo jobs cannot actually run out of the box. Phase 6 UAT caught three; Phase 7 UAT caught two more. Phase 8 must make the quickstart runnable end-to-end.
-
-**Plans**: 5 plans in 3 waves
-
-Plans:
-- [x] 08-01-PLAN.md — Alpine runtime rebase (distroless → alpine:3, UID 1000, /data owned by cronduit) + four-job quickstart config (echo-timestamp, http-healthcheck, disk-usage, hello-world) [Wave 1]
-- [x] 08-02-PLAN.md — Dual docker-compose example: group_add + DOCKER_GID on the default file, new docker-compose.secure.yml with tecnativa/docker-socket-proxy sidecar (CONTAINERS/IMAGES/POST allowlist, DOCKER_HOST routing) [Wave 1]
-- [x] 08-03-PLAN.md — Docker daemon startup pre-flight ping + cronduit_docker_reachable gauge (new src/scheduler/docker_daemon.rs, telemetry describe/register pair, non-fatal WARN template, integration test for gauge lifecycle) [Wave 1]
-- [x] 08-04-PLAN.md — compose-smoke CI matrix over both compose files + per-job success assertions via Run Now API (120s budget per job, expanded failure diagnostics) [Wave 2]
-- [x] 08-05-PLAN.md — Human UAT walkthrough orchestration: new 06-HUMAN-UAT.md, 08-HUMAN-UAT.md index, .planning/BACKLOG.md seed, user-driven walkthrough checkpoint (no result flips by Claude) [Wave 3]
-
----
-
-### Phase 9: CI/CD Improvements
-
-**Goal:** Bring Cronduit's CI/CD hygiene up to a level that matches a long-lived OSS project: PR caches stop accumulating, old GHCR image revisions get pruned, dependency upgrades are a one-command operation, and every existing workflow exploits the standard caching lanes (cargo registry/index/target, Docker buildx layers, Tailwind binary). Reference implementations come from the SimplicityGuy/discogsography repo, adapted for Cronduit's Rust-only + single-image shape.
-
-**Depends on:** Phase 8
-
-**Requirements**: TBD (DevOps phase — closes operational debt; will be enumerated at plan time)
-
-**Scope (sources of inspiration):**
-1. **PR cache cleanup workflow** — port `cleanup-cache.yml` from discogsography. Triggered on `pull_request: closed`, deletes all caches whose ref matches the merged/closed PR via `gh cache list` + `gh cache delete`. Concurrency-grouped per PR. No matrix needed (Cronduit has a single Rust crate, not sub-projects).
-   - Source: <https://github.com/SimplicityGuy/discogsography/blob/main/.github/workflows/cleanup-cache.yml>
-2. **GHCR image cleanup workflow** — port `cleanup-images.yml`. Monthly schedule (`0 0 15 * *`) plus `workflow_dispatch`. Uses `dataaxiom/ghcr-cleanup-action` with `keep-n-tagged`, `older-than`, `delete-untagged`, `delete-partial-images`. Cronduit publishes one image (`ghcr.io/<owner>/cronduit`), so the matrix collapses to a single package.
-   - Source: <https://github.com/SimplicityGuy/discogsography/blob/main/.github/workflows/cleanup-images.yml>
-3. **`scripts/update-project.sh`** — write a Cronduit-flavored version inspired by the discogsography script. Cronduit's relevant ecosystems are: cargo dependencies (lockfile vs `--major` via `cargo upgrade --incompatible`), GitHub Actions pin updates (SHAs in `ci.yml` / `release.yml` / new cleanup workflows), Dockerfile base image refresh (distroless tag), Tailwind standalone binary version, pre-commit hooks (if any). Must respect the same option surface where it makes sense: `--dry-run`, `--major`, `--no-backup`, `--skip-tests`. Delegate tool invocations to `just` recipes per the discogsography pattern (just is already in use). All commits land on a feature branch — never directly on `main`.
-   - Source: <https://github.com/SimplicityGuy/discogsography/blob/main/scripts/update-project.sh>
-4. **Caching audit** — review `.github/workflows/ci.yml` and `.github/workflows/release.yml` and confirm every cache opportunity is wired:
-   - `Swatinem/rust-cache@v2` on every job that runs `cargo` (currently only on lint/test jobs?)
-   - `actions/cache` for the standalone Tailwind binary (avoid re-downloading per run)
-   - `docker/build-push-action@v6` with `cache-from: type=gha,scope=<job>` and `cache-to: type=gha,mode=max,scope=<job>` for both build matrix arches
-   - cargo-zigbuild output cached per target triple
-   - `cargo nextest` archive reuse if applicable
-   - Document any deliberate cache misses with rationale (e.g., release builds intentionally bypass cache for reproducibility).
-
-**Success Criteria** (what must be TRUE):
-  1. `.github/workflows/cleanup-cache.yml` exists, triggers on `pull_request: closed`, deletes that PR's caches via `gh cache delete`, has the required `actions: write` permission, and is concurrency-grouped per PR. A test PR opened-then-closed shows the workflow ran and removed at least its own cache entries.
-  2. `.github/workflows/cleanup-images.yml` exists, runs on `workflow_dispatch` and a monthly schedule, has `packages: write` permission, uses a pinned-by-SHA `dataaxiom/ghcr-cleanup-action`, keeps the latest N tagged images, deletes images older than the configured window, and a manual `gh workflow run cleanup-images.yml` succeeds against the real `ghcr.io/<owner>/cronduit` package.
-  3. `scripts/update-project.sh` exists, is executable, supports at minimum `--dry-run`, `--major`, `--skip-tests`, `--no-backup`, `--help`, refuses to run outside the project root, runs `just`-routed updates for cargo + Dockerfile base image + GitHub Action SHAs + Tailwind, creates a backup directory unless `--no-backup`, and on success leaves the working tree on a fresh feature branch (never `main`) with one or more atomic commits per ecosystem updated.
-  4. Every existing workflow job that touches cargo uses `Swatinem/rust-cache@v2`; every job that builds the Docker image uses `cache-from`/`cache-to` GHA cache scopes; every job that downloads the Tailwind standalone binary uses `actions/cache` keyed on the binary version. A short "CI caching" section is added to `docs/` (or `THREAT_MODEL.md`-adjacent contributor docs) listing every cache and what evicts it.
-  5. CI green on a PR that exercises the new workflows: `cleanup-cache` does NOT fire on push (only on PR close), `cleanup-images` is verified via a `--dry-run`-equivalent (e.g., manual dispatch with `dry-run: true` if the action supports it), `update-project.sh --dry-run` exits 0 against the current tree, and the caching audit report is committed.
-
-**Pitfalls addressed:**
-- Long-lived OSS repos accumulate stale PR caches (10 GB GHA quota burns out fast on multi-arch Rust builds). Without cleanup, CI silently slows as cache evictions become random.
-- GHCR image registries grow unbounded; for an OSS project that publishes per-tag + per-PR images, monthly pruning keeps the package page navigable and avoids future paid storage tiers.
-- Manual dependency updates drift; a one-command updater plus a feature-branch-only commit policy makes "stay current" a 5-minute monthly chore instead of a phase-sized event.
-- Caching gaps in CI silently 2-3x build times; an explicit audit + documented cache topology prevents regression as workflows evolve.
-
-**Plans:** 4 plans
-
-Plans:
-- [x] 09-01-PLAN.md — port `cleanup-cache.yml` (verbatim, no matrix) with PR-scoped concurrency, `actions: write`, `set +e` delete loop
-- [x] 09-02-PLAN.md — port `cleanup-images.yml` collapsed to single flat job pruning `ghcr.io/<owner>/cronduit` on monthly schedule + workflow_dispatch, action pinned by SHA
-- [x] 09-03-PLAN.md — `scripts/update-project.sh` (cargo + Dockerfile base + GHA SHA pins + Tailwind + pre-commit) + `update-cargo`/`update-hooks` justfile recipes + `backups/` in `.gitignore`
-- [x] 09-04-PLAN.md — caching audit: timeouts + least-privilege permissions + per-arch GHA cache scopes on every Docker build + `docs/CI_CACHING.md` with mermaid flow
-
----
+This will walk through requirements definition, research, and roadmap creation for the next release.
 
 ## Progress
 
-**Execution Order:** Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
+| Milestone | Phases | Plans | Status      | Shipped    |
+| --------- | ------ | ----- | ----------- | ---------- |
+| v1.0      | 1–9    | 49/49 | ✅ Complete | 2026-04-14 |
+| v1.1+     | -      | -     | 📋 Not started | -       |
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Foundation, Security Posture & Persistence Base | 9/9 | Complete | 2026-04-10 |
-| 2. Scheduler Core & Command/Script Executor | 4/4 | Complete | 2026-04-10 |
-| 3. Read-Only Web UI & Health Endpoint | 6/6 | Complete (UAT pending) | 2026-04-11 |
-| 4. Docker Executor & container-network Differentiator | 4/4 | Complete | 2026-04-11 |
-| 5. Config Reload & `@random` Resolver | 5/5 | Complete | 2026-04-12 |
-| 6. Live Events, Metrics, Retention & Release Engineering | 5/5 | Complete (UAT pending) | 2026-04-12 |
-| 7. v1.0 Cleanup & Bookkeeping | 0/TBD | Planned (gap closure) | - |
-| 8. v1.0 Final Human UAT Validation | 0/TBD | Planned (gap closure) | - |
-| 9. CI/CD Improvements | 0/TBD | Not planned | - |
+---
 
-## Coverage Validation
-
-All 86 v1 requirements mapped. Phases 7 and 8 are gap-closure phases derived from `/gsd-audit-milestone`; they do not introduce new requirements but address bookkeeping debt, the OPS-04 partial deviation, the stale Phase 5 verification, the Phase 5 settings-card minor issue, and pending human UAT validation in Phases 3 and 6.
-
-| Phase | Requirement Count | Categories Touched |
-|-------|-------------------|--------------------|
-| 1 | 29 | FOUND (11), CONF (10), DB (7 of 8), OPS (1 of 5) |
-| 2 | 13 | SCHED (7 of 8), EXEC (6) |
-| 3 | 15 | UI (14 of 15), OPS (1 of 5) |
-| 4 | 11 | DOCKER (10), SCHED (1 of 8) |
-| 5 | 13 | RELOAD (7), RAND (6) |
-| 6 | 5 | UI (1 of 15), OPS (3 of 5), DB (1 of 8) |
-| 7 | (gap closure — closes OPS-04 partial, no new reqs) | n/a |
-| 8 | (gap closure — UAT validation, no new reqs) | n/a |
-| 9 | (CI/CD devops — requirements TBD at plan time) | n/a |
-| **Total** | **86** | **100% coverage** |
-
-*Roadmap created: 2026-04-09 — derived from requirements, reconciled against ARCHITECTURE.md Phase A-F and FEATURES.md build order. No requirements orphaned.*
-*Phases 7-8 added: 2026-04-12 — gap closure from `/gsd-audit-milestone` v1.0 audit.*
-*Phase 9 added: 2026-04-13 — CI/CD devops improvements.*
+*v1.0 archived 2026-04-14 via `/gsd-complete-milestone`. Full historical roadmap, requirements, audit, and execution history are preserved under `.planning/milestones/v1.0-*`.*
