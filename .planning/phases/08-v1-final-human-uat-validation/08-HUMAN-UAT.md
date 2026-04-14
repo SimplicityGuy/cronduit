@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 phase: 08-v1-final-human-uat-validation
 kind: index
 source:
@@ -9,7 +9,8 @@ source:
   - 08-CONTEXT.md
   - 08-VALIDATION.md
 started: 2026-04-13T00:00:00Z
-updated: 2026-04-13T00:00:00Z
+updated: 2026-04-14T00:00:00Z
+walkthrough_completed_at: 2026-04-14
 ---
 
 # Phase 8 — Human UAT Index
@@ -89,17 +90,19 @@ docker compose -f examples/docker-compose.secure.yml down -v
 
 | # | File | Test | Requirement | Current Result | Final Result |
 |---|------|------|-------------|----------------|--------------|
-| 1 | 03-HUMAN-UAT.md | Terminal-green design system rendering | UI-05 | [pending] | _user fills_ |
-| 2 | 03-HUMAN-UAT.md | Dark/light mode toggle persistence | UI-06 | [pending] | _user fills_ |
-| 3 | 03-HUMAN-UAT.md | Run Now toast notification | UI-09 | [pending] | _user fills_ |
-| 4 | 03-HUMAN-UAT.md | ANSI log rendering in Run Detail | UI-12 | [pending] | _user fills_ |
-| 5 | 06-HUMAN-UAT.md | Quickstart end-to-end | OPS-05 | [pending] | _user fills_ |
-| 6 | 06-HUMAN-UAT.md | SSE live log streaming | UI-14 | [pending] | _user fills_ |
-| 7 | 07-UAT.md | Job Detail Run History Auto-Refresh (re-run) | n/a | issue/blocker | _user fills_ |
-| 8 | 07-UAT.md | Job Detail Polling Stops When Idle (re-run) | n/a | blocked | _user fills_ |
+| 1 | 03-HUMAN-UAT.md | Terminal-green design system rendering | UI-05 | pass | **pass** |
+| 2 | 03-HUMAN-UAT.md | Dark/light mode toggle persistence | UI-06 | pass | **pass** |
+| 3 | 03-HUMAN-UAT.md | Run Now toast notification | UI-09 | pass | **pass** |
+| 4 | 03-HUMAN-UAT.md | ANSI log rendering in Run Detail | UI-12 | pass | **pass** |
+| 5 | 06-HUMAN-UAT.md | Quickstart end-to-end | OPS-05 | pass | **pass** (with DOCKER_GID=102 caveat for macOS Rancher Desktop) |
+| 6 | 06-HUMAN-UAT.md | SSE live log streaming | UI-14 | pass | **pass** |
+| 7 | 07-UAT.md | Job Detail Run History Auto-Refresh (re-run) | n/a | issue/blocker → **pass** | **pass** (re-tested 2026-04-14 after Phase 8 gap closure) |
+| 8 | 07-UAT.md | Job Detail Polling Stops When Idle (re-run) | n/a | blocked → **pass** | **pass** (unblocked by Test 7 resolution) |
 
-When flipping Test 7 and Test 8 in 07-UAT.md, add a `re_tested_at:
-2026-04-13T..Z` annotation so the audit trail shows the retry.
+All eight items terminated as `pass`. Tests 7 and 8 were re-tested on 2026-04-14 after
+the Phase 8 gap closures (alpine rebase, docker daemon preflight, macOS Rancher Desktop
+socket permissions) produced the sustained RUNNING state that Plan 07-05's polling
+transition needed to observe.
 
 ## Triage Rubric
 
@@ -118,19 +121,44 @@ backlog entry (verbatim from 08-CONTEXT.md D-26, D-28):
 
 ## Final Status
 
-_To be filled in by the user after the walkthrough completes._
+Filled in after the walkthrough on 2026-04-14. User approved via session message
+(recorded in 08-05-SUMMARY.md) and per-row result flips landed via `/gsd-verify-work 3`,
+`/gsd-verify-work 6`, `/gsd-verify-work 7` in the same session.
 
 | Category | Count |
 |----------|-------|
 | Tests total | 8 |
-| Passed | _fill_ |
-| Issues (Phase 8 fix) | _fill_ |
-| Issues (deferred to v1.1) | _fill_ |
-| Blocked | _fill_ |
+| Passed | 8 |
+| Issues (Phase 8 fix) | 0 |
+| Issues (deferred to v1.1) | 0 |
+| Blocked | 0 |
 
-**Phase 8 fix plans opened:** _list any gap-closure plan IDs_
+**Phase 8 fix plans opened:** None. Three gap-closure fixes landed in-session as
+direct commits on `phase/08-plan` rather than spawning new gap-closure plans, because
+the issues were environmental (macOS Rancher Desktop host configuration) rather than
+product bugs:
 
-**v1.1 backlog entries added:** _list 999.X IDs from .planning/BACKLOG.md_
+- `3042f13` fix(08): parametrize docker socket path via `CRONDUIT_DOCKER_SOCKET` env var
+- `8afb97d` docs(08): README — document DOCKER_GID=102 for Rancher Desktop macOS
+- `1a28efa` docs(08): document Rancher Desktop DOCKER_GID=102 across README, compose, preflight, CI
 
-**Walkthrough completed:** _timestamp_
-**User approved archive:** _yes / no_
+Additionally, the `/gsd-code-review-fix 8` pass auto-fixed the 5 advisory code review
+warnings from `08-REVIEW.md`:
+
+- `2840ac0` fix(08): WR-01 guard curl failure in health assertion step
+- `58d041d` fix(08): WR-02 assert exactly one cronduit:ci image line after sed rewrite
+- `6c7febd` fix(08): WR-03 give each polled job its own per-job deadline
+- `b3b96b9` fix(08): WR-04 clarify 0.0.0.0 bind with inline comment in cronduit.toml
+- `f91ec24` fix(08): WR-05 add comment explaining absent group_add in secure compose
+
+**v1.1 backlog entries added:** None during the walkthrough. `.planning/BACKLOG.md`
+was seeded with a template entry in Task 2 of 08-05 (commit `dd19b5e`) and remains
+available for v1.1 planning. The 6 Info-level code review findings (IN-01..IN-06
+from `08-REVIEW.md`) are candidates to promote to backlog entries if they should
+persist into v1.1.
+
+**Walkthrough completed:** 2026-04-14
+**User approved archive:** Walkthrough approved. **Milestone archive deferred to
+Phase 9** — per user decision, Phase 9 exists (added in a separate session) and
+will own the v1.0 PR + archive. Phase 8 ships as its own PR first, then Phase 9
+lands on top, then `/gsd-complete-milestone` runs.
