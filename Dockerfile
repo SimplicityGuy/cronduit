@@ -2,9 +2,17 @@
 #
 # Multi-stage Dockerfile for cronduit. Cross-compiles amd64 + arm64 musl-static
 # via cargo-zigbuild (no QEMU), packages into an alpine:3 runtime.
+#
+# Builder base is Debian 13 (trixie) — the current Debian stable. Upgraded
+# from bookworm in minor-fixes after v1.0.0: the cargo-zigbuild cross-compile
+# path produces a musl-static binary for the runtime stage, so the builder's
+# glibc version does not affect the output; the only observable difference is
+# CVE exposure on the builder itself. The apt package names used below
+# (ca-certificates, curl, xz-utils, pkg-config) are stable across bookworm and
+# trixie, so no install-line changes are needed.
 
 # ---- builder ----
-FROM --platform=$BUILDPLATFORM rust:1.94-slim-bookworm AS builder
+FROM --platform=$BUILDPLATFORM rust:1.94-slim-trixie AS builder
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
