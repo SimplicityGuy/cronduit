@@ -108,6 +108,10 @@ pub fn setup_metrics() -> PrometheusHandle {
                 "cronduit_run_failures_total",
                 "Total job run failures, labeled by closed-enum reason"
             );
+            metrics::describe_gauge!(
+                "cronduit_docker_reachable",
+                "1 if the docker daemon was reachable at last ping, 0 otherwise (Phase 8 D-12)"
+            );
 
             // Force registration of each family in the Prometheus registry by creating a
             // handle (and, where a zero baseline is semantically safe, recording it).
@@ -119,6 +123,7 @@ pub fn setup_metrics() -> PrometheusHandle {
             metrics::counter!("cronduit_runs_total").increment(0);
             metrics::histogram!("cronduit_run_duration_seconds").record(0.0);
             metrics::counter!("cronduit_run_failures_total").increment(0);
+            metrics::gauge!("cronduit_docker_reachable").set(0.0);
 
             handle
         })
