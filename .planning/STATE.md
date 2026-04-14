@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: Cleanup & Bookkeeping
 status: executing
 stopped_at: Phase 7 context gathered
-last_updated: "2026-04-14T00:21:29.635Z"
-last_activity: 2026-04-14 -- Phase 9 planning complete
+last_updated: "2026-04-14T00:42:33.278Z"
+last_activity: 2026-04-14 -- Phase 09 execution started
 progress:
   total_phases: 7
   completed_phases: 7
@@ -21,7 +21,7 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-09 after research synthesis)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 06 — live-events-metrics-retention-release-engineering
+**Current focus:** Phase 09 — ci-cd-improvements
 
 ## Current Position
 
@@ -39,10 +39,10 @@ flowchart LR
     class P2,P3,P4,P5,P6 pending
 ```
 
-Phase: 07
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-04-14 -- Phase 9 planning complete
+Phase: 09 (ci-cd-improvements) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 09
+Last activity: 2026-04-14 -- Phase 09 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
