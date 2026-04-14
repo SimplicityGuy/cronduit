@@ -77,12 +77,20 @@ du -sh /data 2>/dev/null || echo "/data not mounted"
 df -h /data 2>/dev/null || true
 """
 
-# 4. Ephemeral Docker container demo. Pulls hello-world:latest and runs it;
-#    `delete = true` removes the container on completion. Requires the
-#    Docker socket mount (docker-compose.yml) or the socket-proxy sidecar
-#    (docker-compose.secure.yml).
+# 4. Docker job demonstrating BOTH the [defaults] merge path (CONF-03/
+#    CONF-06) AND the per-job `cmd` override. This block deliberately
+#    omits `image`, `network`, `delete`, and `timeout` so they are
+#    inherited from [defaults] (alpine:latest on the bridge network,
+#    cronduit-removes-after-run, 5m timeout). The `cmd = [...]` line
+#    overrides alpine:latest's (empty) baked-in CMD so the container
+#    actually prints something visible in the run logs -- alpine without
+#    an explicit cmd would exit immediately with no output. Run
+#    `cronduit check examples/cronduit.toml` to validate; confirm on the
+#    web UI that the job shows up as type=docker with image=alpine:latest
+#    and that a run emits `Hello from cronduit defaults!` to stdout.
+#    Requires the Docker socket mount (docker-compose.yml) or the
+#    socket-proxy sidecar (docker-compose.secure.yml).
 [[jobs]]
 name = "hello-world"
 schedule = "*/5 * * * *"
-image = "hello-world:latest"
-delete = true
+cmd = ["echo", "Hello from cronduit defaults!"]
