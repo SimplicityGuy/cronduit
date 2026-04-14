@@ -95,7 +95,7 @@ FROM alpine:3
 # https://docs.github.com/packages/working-with-a-github-packages-registry/working-with-the-container-registry#labelling-container-images
 LABEL org.opencontainers.image.source="https://github.com/SimplicityGuy/cronduit"
 LABEL org.opencontainers.image.description="Self-hosted Docker-native cron scheduler with a web UI"
-LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
+LABEL org.opencontainers.image.licenses="MIT"
 
 # Install minimal runtime dependencies: CA bundle for HTTPS (bollard image
 # pulls, busybox wget against https://www.google.com) and IANA timezone data
