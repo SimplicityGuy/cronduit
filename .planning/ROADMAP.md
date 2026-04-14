@@ -334,13 +334,13 @@ Plans:
 - Manual dependency updates drift; a one-command updater plus a feature-branch-only commit policy makes "stay current" a 5-minute monthly chore instead of a phase-sized event.
 - Caching gaps in CI silently 2-3x build times; an explicit audit + documented cache topology prevents regression as workflows evolve.
 
-**Plans:** TBD (will be sized by `/gsd-plan-phase 9`)
+**Plans:** 4 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — TBD: port `cleanup-cache.yml` + verify on a throwaway PR
-- [ ] 09-02-PLAN.md — TBD: port `cleanup-images.yml` adapted to single-image GHCR package + manual dispatch verification
-- [ ] 09-03-PLAN.md — TBD: write `scripts/update-project.sh` (Rust + Docker + Actions + Tailwind), wire to `justfile`, dry-run verified
-- [ ] 09-04-PLAN.md — TBD: caching audit of `ci.yml` + `release.yml`, fill gaps, commit `docs/CI_CACHING.md`
+- [ ] 09-01-PLAN.md — port `cleanup-cache.yml` (verbatim, no matrix) with PR-scoped concurrency, `actions: write`, `set +e` delete loop
+- [ ] 09-02-PLAN.md — port `cleanup-images.yml` collapsed to single flat job pruning `ghcr.io/<owner>/cronduit` on monthly schedule + workflow_dispatch, action pinned by SHA
+- [ ] 09-03-PLAN.md — `scripts/update-project.sh` (cargo + Dockerfile base + GHA SHA pins + Tailwind + pre-commit) + `update-cargo`/`update-hooks` justfile recipes + `backups/` in `.gitignore`
+- [ ] 09-04-PLAN.md — caching audit: timeouts + least-privilege permissions + per-arch GHA cache scopes on every Docker build + `docs/CI_CACHING.md` with mermaid flow
 
 ---
 

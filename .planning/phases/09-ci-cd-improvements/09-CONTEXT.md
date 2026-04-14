@@ -94,7 +94,7 @@ A Cronduit-flavored adapter of the discogsography updater. Cronduit's relevant e
 | Lane | Tool | Key strategy | Notes |
 |---|---|---|---|
 | Cargo registry + index + target | `Swatinem/rust-cache@v2` | Default keying (Cargo.lock + rustc version + workflow + job + env) | Required on every job that runs `cargo` |
-| Docker buildx layers | `docker/build-push-action@v6` with `cache-from: type=gha,scope=<job-name>` and `cache-to: type=gha,mode=max,scope=<job-name>` | Per-arch scope (so amd64 and arm64 don't poison each other) | Both `ci.yml` Docker build and `release.yml` |
+| Docker buildx layers | `docker/build-push-action@v6` with `cache-from: type=gha,scope=<job-name>` and `cache-to: type=gha,mode=max,scope=<job-name>` | Per-arch scope for parallel per-arch builds; single scope for single-step multi-platform builds with `mode=max` (rationale documented in `docs/CI_CACHING.md`) | Both `ci.yml` Docker build and `release.yml` |
 | Tailwind standalone binary | `actions/cache@v4` | Key on `TAILWIND_VERSION` from justfile or Dockerfile | Avoid re-downloading 30 MB binary every run |
 | `cargo-zigbuild` cross targets | `Swatinem/rust-cache@v2` per target triple | Key includes the target triple in the prefix | Only relevant on jobs that call `just build-arm64` |
 | `cargo nextest` archive (if used) | `actions/cache` for `target/nextest/` | Optional, skip if nextest isn't used yet | Add only if it produces measurable speedup |
