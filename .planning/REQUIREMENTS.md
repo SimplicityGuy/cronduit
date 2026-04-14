@@ -123,7 +123,7 @@ Requirements for the initial release. Each maps to a roadmap phase via the Trace
 - [x] **OPS-02**: `GET /metrics` exposes Prometheus-format metrics including `cronduit_jobs_total`, `cronduit_runs_total{status}`, `cronduit_run_duration_seconds` (histogram), and `cronduit_run_failures_total{reason}` where `reason` is a closed enum (no unbounded label cardinality)
 - [x] **OPS-03**: Cronduit defaults `[server].bind` to `127.0.0.1:8080`; on startup, if the resolved bind address is non-loopback, a WARN-level log line is emitted explaining the no-auth-in-v1 stance and recommending a reverse proxy
 - [x] **OPS-04**: An example `docker-compose.yml` is shipped in the repo with the Docker socket mounted, the config file mounted read-only, and a named volume for the SQLite database (gap closure: ports: vs expose: deviation reassigned to Phase 7)
-- [ ] **OPS-05**: The README quickstart enables a stranger to clone the repo, run `docker compose up`, and schedule a working job in under 5 minutes (gap closure: human UAT validation reassigned to Phase 8)
+- [x] **OPS-05**: The README quickstart enables a stranger to clone the repo, run `docker compose up`, and schedule a working job in under 5 minutes (gap closure: human UAT validation reassigned to Phase 8)
 
 ## v2 Requirements
 
@@ -262,14 +262,21 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 | OPS-02 | Phase 6 | Complete | `06-VERIFICATION.md` |
 | OPS-03 | Phase 1 | Complete | `01-VERIFICATION.md` |
 | OPS-04 | Phase 6 → Phase 7 (gap closure) | Complete | `06-VERIFICATION.md` (override); `examples/docker-compose.yml` |
-| OPS-05 | Phase 6 → Phase 8 (gap closure) | Pending | (deferred to Phase 8 human UAT) |
+| OPS-05 | Phase 6 → Phase 8 (gap closure) | Complete | Phase 8 walkthrough 2026-04-14: user-driven quickstart E2E on fresh clone → `docker compose -f examples/docker-compose.yml up -d` → dashboard loaded → all 4 example jobs reached `success` within 120s on both compose axes (default + `docker-compose.secure.yml`). Walkthrough recorded in `08-05-SUMMARY.md` + `08-HUMAN-UAT.md` Final Status table (8/8 passed, 0 issues, 0 blocked). Compose-smoke CI matrix (`ci.yml:133-360`) provides continuous regression coverage via Run Now API per-job assertion. |
+| (Phase 9 — no v1 REQ-IDs) | Phase 9 | n/a — operational hygiene | Phase 9 (CI/CD Improvements) was added to the roadmap 2026-04-13 as an operational-hygiene phase after the v1 requirement set was locked. It ships no runtime code changes: deliverables are `.github/workflows/cleanup-cache.yml`, `cleanup-images.yml`, `scripts/update-project.sh`, and the caching audit (`docs/CI_CACHING.md`). Validated retroactively in `09-VALIDATION.md` using synthetic local identifiers `CI-01..CI-04` that are NOT part of the v1 requirement set. Grep-clean against `src/`, `Cargo.toml`, `migrations/`, `tests/`. |
 
 **Coverage:**
 - v1 requirements: 86 total
 - Mapped to phases: 86
 - Unmapped: 0 ✓
-- **Completed (2026-04-12, Phase 7 bookkeeping flip):** 85 marked Complete with Evidence columns citing per-phase `0X-VERIFICATION.md` files (strict cross-check per Phase 7 D-03 against `SATISFIED` rows in those files). OPS-04 closed via override recorded in `06-VERIFICATION.md` (see Phase 7 Plan 01). RAND-03 closed via `re_verification:` annotation in `05-VERIFICATION.md` documenting PR #9 closure (see Phase 7 Plan 03). CONF-07 closed with dual evidence (Phase 1 groundwork + `examples/docker-compose.yml` `:ro` bind).
-- **Pending (1 remaining):** OPS-05 (5-minute stranger quickstart) — deferred to Phase 8 human UAT.
+- **Completed (2026-04-14, Phase 8 walkthrough flip):** **86/86** marked Complete with Evidence columns citing per-phase verification files and/or the Phase 8 walkthrough record.
+  - 85 requirements closed via Phase 7 bookkeeping flip 2026-04-12 (strict cross-check per Phase 7 D-03 against `SATISFIED` rows in per-phase VERIFICATION.md files).
+  - OPS-04 closed via override recorded in `06-VERIFICATION.md` (see Phase 7 Plan 01).
+  - RAND-03 closed via `re_verification:` annotation in `05-VERIFICATION.md` documenting PR #9 closure (see Phase 7 Plan 03).
+  - CONF-07 closed with dual evidence (Phase 1 groundwork + `examples/docker-compose.yml` `:ro` bind).
+  - **OPS-05 closed 2026-04-14** via Phase 8 walkthrough (user-driven quickstart E2E on fresh clone, 8/8 tests passed per `08-HUMAN-UAT.md` Final Status table) + continuous compose-smoke CI matrix regression coverage.
+- **Pending: 0.**
+- **Phase 9 (CI/CD Improvements):** separately tracked as `n/a — operational hygiene`; no v1 REQ-IDs assigned by design (see traceability table).
 
 **Distribution by phase:**
 - Phase 1 (Foundation, Security Posture & Persistence Base): 29 requirements — 29 Complete, 0 Pending
@@ -277,10 +284,11 @@ Every v1 requirement is mapped to exactly one phase. See `.planning/ROADMAP.md` 
 - Phase 3 (Read-Only Web UI & Health Endpoint): 15 requirements — 15 Complete, 0 Pending
 - Phase 4 (Docker Executor & container-network Differentiator): 11 requirements — 11 Complete, 0 Pending
 - Phase 5 (Config Reload & `@random` Resolver): 13 requirements — 13 Complete, 0 Pending
-- Phase 6 (Live Events, Metrics, Retention & Release Engineering): 5 requirements — 4 Complete, 1 Pending
+- Phase 6 (Live Events, Metrics, Retention & Release Engineering): 5 requirements — 5 Complete, 0 Pending
 - Phase 7 (v1.0 Cleanup & Bookkeeping): closed OPS-04 override + executed the bulk bookkeeping flip documented in this table
-- Phase 8 (v1.0 Final Human UAT Validation): closes OPS-05 + Phase 3 / Phase 6 human-needed visual items
+- Phase 8 (v1.0 Final Human UAT Validation): closed OPS-05 via user walkthrough + addressed Phase 3 / Phase 6 human-needed visual items
+- Phase 9 (CI/CD Improvements): n/a — operational hygiene; no v1 REQ-IDs assigned by design
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-12 — Phase 7 bookkeeping flip: Evidence column added, 85 of 86 v1 requirements flipped to Complete with strict per-phase cross-check; OPS-05 deferred to Phase 8.*
+*Last updated: 2026-04-14 — Phase 8 walkthrough flip: OPS-05 closed, 86/86 v1 requirements Complete. Phase 9 added to traceability as n/a — operational hygiene phase.*
