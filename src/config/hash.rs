@@ -37,6 +37,12 @@ pub fn compute_config_hash(job: &JobConfig) -> String {
     if let Some(t) = &job.timeout {
         map.insert("timeout_secs", serde_json::json!(t.as_secs()));
     }
+    if let Some(d) = &job.delete {
+        map.insert("delete", serde_json::json!(d));
+    }
+    if let Some(c) = &job.cmd {
+        map.insert("cmd", serde_json::json!(c));
+    }
     // DO NOT include `env` -- its values are SecretString and must not be hashed/logged.
 
     let bytes = serde_json::to_vec(&map).expect("serde_json BTreeMap never fails");
@@ -92,17 +98,44 @@ mod tests {
         // change hashes. For each defaults-eligible field, the field set
         // directly on the job must hash identically to the field set in
         // [defaults] then merged in via apply_defaults.
+        //
+        // Docker-only fields (image/network/volumes/delete) are gated on
+        // `is_non_docker == false`, so we build mk_docker_job() which has
+        // command=None and image already set (or will be merged in).
         use crate::config::DefaultsConfig;
         use crate::config::defaults::apply_defaults;
 
-        // image
+        // Helper: a docker job stub (command=None) so docker-only field
+        // merging is reachable. mk_job() is a command job by default and
+        // would skip every docker-only branch.
+        fn mk_docker_job() -> JobConfig {
+            JobConfig {
+                name: "t".into(),
+                schedule: "*/5 * * * *".into(),
+                command: None,
+                script: None,
+                image: Some("alpine:latest".into()),
+                use_defaults: None,
+                env: BTreeMap::new(),
+                volumes: None,
+                network: None,
+                container_name: None,
+                timeout: None,
+                delete: None,
+                cmd: None,
+            }
+        }
+
+        // image (docker job; need a non-docker baseline for the no-image
+        // representation, so use an empty job with no command/script/image
+        // and let apply_defaults fill image from defaults).
         {
-            let mut a = mk_job();
-            a.command = None;
-            a.image = Some("alpine:latest".into());
-            let b = mk_job();
-            let mut b = JobConfig { command: None, ..b };
-            // b.image stays None; we merge from defaults
+            let a = mk_docker_job();
+            // b has no image field set; defaults provides "alpine:latest"
+            let b = JobConfig {
+                image: None,
+                ..mk_docker_job()
+            };
             let defaults = DefaultsConfig {
                 image: Some("alpine:latest".into()),
                 network: None,
@@ -111,7 +144,7 @@ mod tests {
                 timeout: None,
                 random_min_gap: None,
             };
-            b = apply_defaults(b, Some(&defaults));
+            let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
                 compute_config_hash(&a),
                 compute_config_hash(&b),
@@ -119,11 +152,11 @@ mod tests {
             );
         }
 
-        // network
+        // network (docker job)
         {
-            let mut a = mk_job();
+            let mut a = mk_docker_job();
             a.network = Some("container:vpn".into());
-            let b = mk_job();
+            let b = mk_docker_job();
             let defaults = DefaultsConfig {
                 image: None,
                 network: Some("container:vpn".into()),
@@ -140,11 +173,11 @@ mod tests {
             );
         }
 
-        // volumes
+        // volumes (docker job)
         {
-            let mut a = mk_job();
+            let mut a = mk_docker_job();
             a.volumes = Some(vec!["/host:/container".to_string()]);
-            let b = mk_job();
+            let b = mk_docker_job();
             let defaults = DefaultsConfig {
                 image: None,
                 network: None,
@@ -161,7 +194,7 @@ mod tests {
             );
         }
 
-        // timeout
+        // timeout (works for any job type -- mk_job is fine here)
         {
             let mut a = mk_job();
             a.timeout = Some(std::time::Duration::from_secs(300));
@@ -182,11 +215,11 @@ mod tests {
             );
         }
 
-        // delete (the new field) -- REQUIRED to guard Warning 3 for the new field.
+        // delete (docker job; the new field) -- REQUIRED to guard Warning 3.
         {
-            let mut a = mk_job();
+            let mut a = mk_docker_job();
             a.delete = Some(true);
-            let b = mk_job();
+            let b = mk_docker_job();
             let defaults = DefaultsConfig {
                 image: None,
                 network: None,

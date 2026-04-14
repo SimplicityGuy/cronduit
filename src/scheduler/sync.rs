@@ -68,6 +68,12 @@ fn serialize_config_json(job: &JobConfig) -> String {
     if let Some(t) = &job.timeout {
         map.insert("timeout_secs".into(), serde_json::json!(t.as_secs()));
     }
+    if let Some(d) = job.delete {
+        map.insert("delete".into(), serde_json::json!(d));
+    }
+    if let Some(c) = &job.cmd {
+        map.insert("cmd".into(), serde_json::json!(c));
+    }
     // T-02-03: Only store env key names, never values.
     if !job.env.is_empty() {
         let keys: Vec<&str> = job.env.keys().map(|k| k.as_str()).collect();

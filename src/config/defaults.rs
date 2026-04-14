@@ -16,9 +16,57 @@ use super::{DefaultsConfig, JobConfig};
 /// - Never merges `random_min_gap` -- that field does not exist on JobConfig;
 ///   it is a global scheduler knob consumed directly from Config.defaults.
 /// - Never touches `cmd` or `container_name` -- both are per-job only by spec.
-pub fn apply_defaults(_job: JobConfig, _defaults: Option<&DefaultsConfig>) -> JobConfig {
-    // RED stub -- replaced by the GREEN commit.
-    unimplemented!("apply_defaults is implemented in the GREEN commit")
+pub fn apply_defaults(mut job: JobConfig, defaults: Option<&DefaultsConfig>) -> JobConfig {
+    let Some(defaults) = defaults else {
+        return job;
+    };
+    if job.use_defaults == Some(false) {
+        return job;
+    }
+
+    // Whether this job is non-docker (has command or script). For non-docker
+    // jobs we MUST NOT merge docker-only fields (image/network/volumes/delete)
+    // because doing so would violate the "exactly one of command/script/image"
+    // invariant in `check_one_of_job_type` AND silently attach docker-only
+    // settings to a job that has no container lifecycle. `timeout` is the one
+    // defaults field that applies to every job type and is therefore always
+    // mergeable.
+    let is_non_docker = job.command.is_some() || job.script.is_some();
+
+    if !is_non_docker
+        && job.image.is_none()
+        && let Some(v) = &defaults.image
+    {
+        job.image = Some(v.clone());
+    }
+    if !is_non_docker
+        && job.network.is_none()
+        && let Some(v) = &defaults.network
+    {
+        job.network = Some(v.clone());
+    }
+    if !is_non_docker
+        && job.volumes.is_none()
+        && let Some(v) = &defaults.volumes
+    {
+        job.volumes = Some(v.clone());
+    }
+    if job.timeout.is_none()
+        && let Some(v) = defaults.timeout
+    {
+        job.timeout = Some(v);
+    }
+    if !is_non_docker
+        && job.delete.is_none()
+        && let Some(v) = defaults.delete
+    {
+        job.delete = Some(v);
+    }
+    // NOTE: random_min_gap is intentionally NOT merged -- see module doc.
+    // NOTE: cmd is per-job ONLY -- DefaultsConfig has no `cmd` field.
+    // NOTE: container_name is per-job ONLY -- two containers cannot share a name.
+
+    job
 }
 
 #[cfg(test)]
@@ -250,6 +298,50 @@ mod tests {
         assert_eq!(merged_with.timeout, merged_without.timeout);
         assert_eq!(merged_with.delete, merged_without.delete);
         assert_eq!(merged_with.cmd, merged_without.cmd);
+    }
+
+    #[test]
+    fn apply_defaults_skips_docker_fields_on_command_jobs() {
+        // Regression: a [defaults] section with image/network/volumes/delete
+        // must NOT auto-attach those fields to a command/script job.
+        // Otherwise check_one_of_job_type would fire ("found 2") because the
+        // job would end up with both `command` AND `image`. `timeout` is the
+        // one defaults field that should still merge into command jobs.
+        let mut job = empty_job();
+        job.command = Some("echo hi".into());
+        let merged = apply_defaults(job, Some(&full_defaults()));
+        assert_eq!(merged.image, None, "image must NOT merge into command jobs");
+        assert_eq!(
+            merged.network, None,
+            "network must NOT merge into command jobs"
+        );
+        assert_eq!(
+            merged.volumes, None,
+            "volumes must NOT merge into command jobs"
+        );
+        assert_eq!(
+            merged.delete, None,
+            "delete must NOT merge into command jobs"
+        );
+        // timeout SHOULD merge -- it applies to every job type.
+        assert_eq!(
+            merged.timeout,
+            Some(Duration::from_secs(300)),
+            "timeout must merge into command jobs"
+        );
+    }
+
+    #[test]
+    fn apply_defaults_skips_docker_fields_on_script_jobs() {
+        let mut job = empty_job();
+        job.command = None;
+        job.script = Some("#!/bin/sh\necho hi".into());
+        let merged = apply_defaults(job, Some(&full_defaults()));
+        assert_eq!(merged.image, None);
+        assert_eq!(merged.network, None);
+        assert_eq!(merged.volumes, None);
+        assert_eq!(merged.delete, None);
+        assert_eq!(merged.timeout, Some(Duration::from_secs(300)));
     }
 
     #[test]
