@@ -34,6 +34,25 @@
 # NOT published on the host -- only other containers on the same Docker
 # network (e.g., your reverse proxy) can reach it.
 #
+# docker.sock access: by default, cronduit runs as UID 1000 inside the alpine
+# runtime image. To let the non-root cronduit user read /var/run/docker.sock,
+# this file uses a `group_add` stanza that joins the cronduit process to the
+# host docker group. The `DOCKER_GID` environment variable overrides the
+# default (999); derive yours on Linux with:
+#
+#     stat -c %g /var/run/docker.sock
+#
+# then either export `DOCKER_GID=<value>` in your shell, or set it in a
+# `.env` file next to this compose file. Example:
+#
+#     # .env
+#     DOCKER_GID=998
+#
+# On macOS / Docker Desktop the socket inside the Linux VM is root-owned with
+# no stable host-side GID mapping -- `group_add` cannot fix that. macOS users
+# should use `examples/docker-compose.secure.yml` instead, which runs a
+# docker-socket-proxy sidecar and does not rely on host GID alignment.
+#
 # Prerequisites: Docker with Compose v2+
 # Usage: docker compose -f examples/docker-compose.yml up -d
 # Web UI: http://localhost:8080
@@ -41,6 +60,12 @@
 services:
   cronduit:
     image: ghcr.io/simplicityguy/cronduit:latest
+    # Join the host docker group so UID 1000 inside the container can
+    # read /var/run/docker.sock. Override DOCKER_GID via .env or shell
+    # env to match `stat -c %g /var/run/docker.sock` on your host.
+    # See the SECURITY block above for details.
+    group_add:
+      - "${DOCKER_GID:-999}"
     ports:
       - "8080:8080"
     volumes:

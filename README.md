@@ -41,19 +41,26 @@ Get from `git clone` to a running scheduled job in under 5 minutes:
 git clone https://github.com/SimplicityGuy/cronduit
 cd cronduit
 
-# 2. Start Cronduit with Docker Compose
+# 2. Start Cronduit (default -- Linux with group_add for docker.sock access)
 docker compose -f examples/docker-compose.yml up -d
+
+# -- OR, for macOS / Docker Desktop / defense-in-depth deployments --
+# Uses docker-socket-proxy to mediate Docker API access through a narrow
+# allowlist; no direct /var/run/docker.sock mount in cronduit.
+# docker compose -f examples/docker-compose.secure.yml up -d
 
 # 3. Open the web UI
 open http://localhost:8080
 ```
 
-You should see two jobs in the dashboard:
+You should see four example jobs in the dashboard:
 
-- **echo-timestamp** (command job) -- runs every minute, prints the current date
-- **hello-world** (Docker job) -- runs every 5 minutes, pulls `hello-world:latest` and prints Docker's canonical intro greeting
+- **echo-timestamp** (command) -- every minute, prints `date` output. Instant heartbeat so you know Cronduit is alive.
+- **http-healthcheck** (command) -- every 5 minutes, `wget --spider` against `https://www.google.com`. Realistic uptime canary demonstrating DNS + TLS + egress.
+- **disk-usage** (script) -- every 15 minutes, `du -sh /data && df -h /data`. Shows off the script-job path and the `/data` named volume.
+- **hello-world** (Docker) -- every 5 minutes, pulls `hello-world:latest` in an ephemeral container with `delete = true`. Exercises the Docker executor end-to-end (requires the socket mount from the default compose file or the docker-socket-proxy sidecar from the secure compose file).
 
-The echo job fires within 60 seconds, giving you instant feedback that Cronduit is working. The hello-world job demonstrates Docker container execution with automatic cleanup (`delete = true`).
+The echo job fires within 60 seconds, giving you instant feedback that Cronduit is working. The other three demonstrate every execution type Cronduit supports (command, script, and Docker) so you can pattern-match on them when writing your own.
 
 ---
 
