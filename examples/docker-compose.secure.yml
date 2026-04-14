@@ -1,0 +1,114 @@
+# examples/docker-compose.secure.yml -- Hardened Cronduit quickstart.
+#
+# ============================================================================
+# SECURITY: THIS IS THE "THREAT MODEL HONORED" VARIANT
+# ============================================================================
+# This compose file runs cronduit with NO direct access to /var/run/docker.sock.
+# Instead, a `tecnativa/docker-socket-proxy` sidecar mediates every Docker API
+# call through a narrow allowlist: cronduit can list/create/start/wait/remove
+# containers and pull images, but it CANNOT access the rest of the Docker API
+# (networks, volumes, exec into containers, daemon info, swarm, system prune).
+#
+# Use this file when:
+#   * You are running on macOS + Docker Desktop. The socket GID inside the
+#     Docker Desktop VM is not stable across releases, so the `group_add`
+#     alignment in `docker-compose.yml` is brittle there. The socket-proxy
+#     sidecar mounts the socket inside its OWN root-owned container and
+#     exposes an HTTP allowlist to cronduit over a private Docker network —
+#     no host GID alignment required.
+#   * You want defense-in-depth on any platform. Even a compromised cronduit
+#     (code execution via a malicious config reload, a bug in the web UI,
+#     etc.) cannot pivot to the full Docker API and root the host — the
+#     compromise is bounded to the allowlisted verbs.
+#   * You are fronting Cronduit with a reverse proxy and want the HTTP listener
+#     on loopback only. Replace `ports: - "8080:8080"` below with `expose: - "8080"`
+#     and put your proxy in a container on the `cronduit-net` network.
+#
+# On macOS + Rancher Desktop, BOTH compose files work — the default variant
+# needs `export DOCKER_GID=102` (the VM-side docker group GID), and this
+# secure variant needs no environment variables at all. Pick the default
+# when you want simpler wiring, pick this one for defense-in-depth.
+#
+# See THREAT_MODEL.md in the repo root for the full threat surface. See
+# `examples/docker-compose.yml` for the simpler single-container variant.
+#
+# Prerequisites: Docker with Compose v2+
+# Usage: docker compose -f examples/docker-compose.secure.yml up -d
+# Web UI: http://localhost:8080
+
+services:
+  # docker-socket-proxy: the ONLY container that mounts the host docker.sock.
+  # Exposes a narrow HTTP allowlist on port 2375 inside the cronduit-net
+  # network. Cronduit reaches it via DOCKER_HOST=tcp://dockerproxy:2375.
+  #
+  # Allowlist (everything else is default-deny in docker-socket-proxy):
+  #   CONTAINERS=1  -- GET /containers/*, container inspect/list (read side)
+  #   IMAGES=1      -- GET/POST /images/* (needed for bollard to pull hello-world)
+  #   POST=1        -- enables POST verb on allowed endpoints, required for
+  #                    POST /containers/create, /start, /wait
+  #   DELETE=1      -- enables DELETE verb on allowed endpoints, required for
+  #                    DELETE /containers/{id} (bollard::remove_container, fired
+  #                    for `delete = true` docker jobs like the quickstart's
+  #                    hello-world). Per 08-RESEARCH.md Q1 + D-29, POST=1 does
+  #                    NOT imply DELETE in docker-socket-proxy -- each HTTP verb
+  #                    is a separate flag.
+  #
+  # NOT granted: NETWORKS, VOLUMES, EXEC, INFO, SWARM, SYSTEM, BUILD, SERVICES,
+  # TASKS, NODES, PLUGINS, AUTH, SECRETS, CONFIGS, DISTRIBUTION, SESSION. If
+  # cronduit ever needs more (e.g. to inspect a named network for
+  # container:<name> mode), the error is loud and the allowlist can be extended
+  # here in one place.
+  dockerproxy:
+    image: tecnativa/docker-socket-proxy:latest
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - POST=1
+      # DELETE=1 is required (D-29, resolves 08-RESEARCH.md Q1) because bollard's
+      # remove_container call issues HTTP DELETE /containers/{id}; POST=1 alone
+      # does NOT imply DELETE in docker-socket-proxy. Without this line, the
+      # hello-world quickstart job (`delete = true`) fails at container removal.
+      - DELETE=1
+    volumes:
+      # The proxy container runs as root inside its own namespace, so it can
+      # read the host docker.sock even when the outer socket is user-owned
+      # mode 600 (macOS / Rancher Desktop). The source path is overridable via
+      # CRONDUIT_DOCKER_SOCKET so macOS users can point at ~/.rd/docker.sock
+      # instead of the Linux-only /var/run/docker.sock default.
+      - ${CRONDUIT_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+    networks:
+      - cronduit-net
+    restart: unless-stopped
+    # No host port binding: dockerproxy is ONLY reachable from inside the
+    # cronduit-net network. Never expose port 2375 to the host.
+
+  cronduit:
+    image: ghcr.io/simplicityguy/cronduit:latest
+    # No group_add needed: Docker API traffic flows through dockerproxy (no
+    # direct socket mount). The cronduit user is UID 1000, matching the /data
+    # volume ownership set in the Dockerfile.
+    depends_on:
+      - dockerproxy
+    ports:
+      - "8080:8080"
+    volumes:
+      # No /var/run/docker.sock mount -- all Docker API traffic flows through
+      # dockerproxy over the private network.
+      - ./cronduit.toml:/etc/cronduit/config.toml:ro
+      - cronduit-data:/data
+    environment:
+      - RUST_LOG=info,cronduit=debug
+      - DATABASE_URL=sqlite:///data/cronduit.db
+      # Point bollard at the socket-proxy over the private network. bollard
+      # reads DOCKER_HOST the same way the docker CLI does.
+      - DOCKER_HOST=tcp://dockerproxy:2375
+    networks:
+      - cronduit-net
+    restart: unless-stopped
+
+networks:
+  cronduit-net:
+    driver: bridge
+
+volumes:
+  cronduit-data:

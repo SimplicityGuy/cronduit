@@ -288,13 +288,14 @@ Plans:
 - Pitfall: shipping UI features as "verified" without operator visual validation. Project memory captures this as a hard rule. Phase 8 closes the gap retroactively for the human-needed items in Phases 3 and 6.
 - Pitfall: shipping quickstart examples whose bundled demo jobs cannot actually run out of the box. Phase 6 UAT caught three; Phase 7 UAT caught two more. Phase 8 must make the quickstart runnable end-to-end.
 
-**Plans**: TBD (will be sized by `/gsd-plan-phase 8`)
+**Plans**: 5 plans in 3 waves
 
 Plans:
-- [ ] 08-01-PLAN.md — TBD (visual UAT walkthrough + SSE live-stream UAT)
-- [ ] 08-02-PLAN.md — TBD (fix echo-timestamp: replace broken `date` example with a distroless-compatible job, add cold-start smoke test for both example jobs)
-- [ ] 08-03-PLAN.md — TBD (fix hello-world docker.sock Connect: investigate nonroot UID 65532 socket permission, add startup "docker daemon unreachable" pre-flight log)
-- [ ] 08-04-PLAN.md — TBD (Plan 07-05 browser UAT — run Job Detail auto-refresh + polling-stop tests after 08-02 + 08-03 unblock a sustained RUNNING state)
+- [x] 08-01-PLAN.md — Alpine runtime rebase (distroless → alpine:3, UID 1000, /data owned by cronduit) + four-job quickstart config (echo-timestamp, http-healthcheck, disk-usage, hello-world) [Wave 1]
+- [x] 08-02-PLAN.md — Dual docker-compose example: group_add + DOCKER_GID on the default file, new docker-compose.secure.yml with tecnativa/docker-socket-proxy sidecar (CONTAINERS/IMAGES/POST allowlist, DOCKER_HOST routing) [Wave 1]
+- [x] 08-03-PLAN.md — Docker daemon startup pre-flight ping + cronduit_docker_reachable gauge (new src/scheduler/docker_daemon.rs, telemetry describe/register pair, non-fatal WARN template, integration test for gauge lifecycle) [Wave 1]
+- [x] 08-04-PLAN.md — compose-smoke CI matrix over both compose files + per-job success assertions via Run Now API (120s budget per job, expanded failure diagnostics) [Wave 2]
+- [x] 08-05-PLAN.md — Human UAT walkthrough orchestration: new 06-HUMAN-UAT.md, 08-HUMAN-UAT.md index, .planning/BACKLOG.md seed, user-driven walkthrough checkpoint (no result flips by Claude) [Wave 3]
 
 ---
 

@@ -74,6 +74,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/settings", get(handlers::settings::settings))
         .route("/health", get(handlers::health::health))
+        .route("/api/jobs", get(handlers::api::list_jobs))
+        .route("/api/jobs/{id}/runs", get(handlers::api::list_job_runs))
         .route("/api/jobs/{id}/run", post(handlers::api::run_now))
         .route("/api/reload", post(handlers::api::reload))
         .route("/api/jobs/{id}/reroll", post(handlers::api::reroll))

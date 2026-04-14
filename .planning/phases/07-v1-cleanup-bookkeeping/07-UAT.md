@@ -1,5 +1,5 @@
 ---
-status: partial
+status: complete
 phase: 07-v1-cleanup-bookkeeping
 source:
   - 07-01-SUMMARY.md
@@ -8,7 +8,9 @@ source:
   - 07-04-SUMMARY.md
   - 07-05-SUMMARY.md
 started: 2026-04-13T21:43:15Z
-updated: 2026-04-13T21:57:00Z
+updated: 2026-04-14T00:00:00Z
+validated_at: 2026-04-14
+validated_via: Phase 8 human UAT walkthrough (08-05) — Tests 2 + 3 re-tested after gap closure
 ---
 
 ## Current Test
@@ -39,16 +41,25 @@ expected: |
   badge should transition to SUCCESS (or FAILED) **without manually
   reloading the page**. After all runs finish, every row should show a
   terminal status.
-result: issue
-reported: |
-  Tried Run Now on both example jobs; both fail in ~1ms and never enter
-  a sustained RUNNING state, so Plan 07-05's polling behavior cannot be
-  observed:
-    - hello-world: "image pull failed: transient pull error: Error in
-      the hyper legacy client: client error (Connect)"
-    - echo-timestamp: "failed to spawn command: No such file or
-      directory (os error 2)"
-severity: blocker
+result: pass
+re_tested_at: 2026-04-14
+re_tested_via: Phase 8 human UAT walkthrough (08-05)
+resolved_by: |
+  The Phase 7 blocker (echo-timestamp ENOENT + hello-world socket connect)
+  was closed by the following Phase 8 commits, which produced the sustained
+  RUNNING state required to observe the Plan 07-05 polling transition:
+    - 08-01 (3977867, 25a14dd): Alpine runtime rebase + four-job quickstart
+      — echo-timestamp, http-healthcheck, disk-usage now run successfully on
+      the Alpine base, and http-healthcheck + disk-usage stay in RUNNING for
+      several seconds each (enough to observe the HTMX conditional polling
+      transition).
+    - 08-03 (49fa137, 32b6eb5): Docker daemon startup preflight ping +
+      `cronduit_docker_reachable` gauge wired via telemetry describe/register
+      pair — hello-world now runs successfully once the daemon is reachable.
+    - 3042f13, 8afb97d, 1a28efa (mid-walkthrough fixes): socket path
+      parametrization + DOCKER_GID=102 Rancher Desktop documentation, which
+      was the remaining environmental gap blocking hello-world on macOS
+      Rancher Desktop.
 
 ### 3. Job Detail Polling Stops When Idle
 expected: |
@@ -60,9 +71,10 @@ expected: |
   renders when `any_running == true`, so once the last RUNNING row
   flips to terminal the wrapper re-renders without the trigger and
   HTMX stops polling on its own.
-result: blocked
-blocked_by: prior-test
-reason: "Transitively blocked by Test 2 — cannot observe polling-stop behavior without a successful RUNNING → terminal transition window."
+result: pass
+re_tested_at: 2026-04-14
+re_tested_via: Phase 8 human UAT walkthrough (08-05)
+resolved_by: "Unblocked by the resolution of Test 2 (see above) — Phase 8 fixes produced the sustained RUNNING → terminal window needed to observe polling stop. Validated end-to-end during the Phase 8 walkthrough."
 
 ### 4. docker-compose.yml SECURITY Block Readable
 expected: |
@@ -79,16 +91,18 @@ note: |
 ## Summary
 
 total: 4
-passed: 2
-issues: 1
+passed: 4
+issues: 0
 pending: 0
 skipped: 0
-blocked: 1
+blocked: 0
 
 ## Gaps
 
 - truth: "examples/cronduit.toml echo-timestamp command job should run successfully when the example stack is booted fresh"
-  status: failed
+  status: resolved
+  resolved_by: "Phase 8 Plan 08-01 (commits 3977867 + 25a14dd) — Dockerfile rebased from distroless to alpine:3 (busybox date/wget/du/df/sh available); examples/cronduit.toml rewritten with four quickstart jobs. Validated in Phase 8 UAT walkthrough 2026-04-14."
+  original_status: failed
   reason: |
     The cronduit runtime image is gcr.io/distroless/static-debian12:nonroot
     (Dockerfile:55). Distroless has no coreutils — no /bin/date, no shell.
@@ -109,7 +123,15 @@ blocked: 1
       docker job, or change the runtime base to a minimal-shell image).
 
 - truth: "examples/cronduit.toml hello-world docker job should pull and run successfully when the example stack is booted fresh"
-  status: failed
+  status: resolved
+  resolved_by: |
+    Phase 8 Plan 08-03 (commits 49fa137 + 32b6eb5) added the Docker daemon
+    startup preflight ping + cronduit_docker_reachable gauge; mid-walkthrough
+    commits 3042f13, 8afb97d, 1a28efa documented the macOS Rancher Desktop
+    DOCKER_GID=102 requirement across README, compose files, preflight WARN
+    template, and CI. hello-world runs green end-to-end with `export DOCKER_GID=102`
+    on macOS Rancher Desktop as of the 2026-04-14 walkthrough.
+  original_status: failed
   reason: |
     bollard inside the cronduit container returned "image pull failed:
     transient pull error: Error in the hyper legacy client: client error

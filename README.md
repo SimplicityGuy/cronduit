@@ -41,19 +41,37 @@ Get from `git clone` to a running scheduled job in under 5 minutes:
 git clone https://github.com/SimplicityGuy/cronduit
 cd cronduit
 
-# 2. Start Cronduit with Docker Compose
-docker compose -f examples/docker-compose.yml up -d
+# 2. Start Cronduit — pick the variant that matches your host.
+#
+# On Linux: derive DOCKER_GID from the host socket and start the default compose.
+#   export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+#   docker compose -f examples/docker-compose.yml up -d
+#
+# On macOS + Rancher Desktop: the docker daemon socket lives inside the lima
+# VM at /var/run/docker.sock (not ~/.rd/docker.sock — that is the host-side
+# client relay). The VM's socket is root:102, so DOCKER_GID must be 102:
+#   export DOCKER_GID=102
+#   docker compose -f examples/docker-compose.yml up -d
+#
+# On macOS + Docker Desktop, or when you want defense-in-depth (socket-proxy
+# sidecar, narrow allowlist, no direct socket mount in cronduit):
+#   docker compose -f examples/docker-compose.secure.yml up -d
+#
+# See examples/docker-compose.yml and .secure.yml headers for the full
+# rationale and threat model notes.
 
 # 3. Open the web UI
 open http://localhost:8080
 ```
 
-You should see two jobs in the dashboard:
+You should see four example jobs in the dashboard:
 
-- **echo-timestamp** (command job) -- runs every minute, prints the current date
-- **hello-world** (Docker job) -- runs every 5 minutes, pulls `hello-world:latest` and prints Docker's canonical intro greeting
+- **echo-timestamp** (command) -- every minute, prints `date` output. Instant heartbeat so you know Cronduit is alive.
+- **http-healthcheck** (command) -- every 5 minutes, `wget --spider` against `https://www.google.com`. Realistic uptime canary demonstrating DNS + TLS + egress.
+- **disk-usage** (script) -- every 15 minutes, `du -sh /data && df -h /data`. Shows off the script-job path and the `/data` named volume.
+- **hello-world** (Docker) -- every 5 minutes, pulls `hello-world:latest` in an ephemeral container with `delete = true`. Exercises the Docker executor end-to-end (requires the socket mount from the default compose file or the docker-socket-proxy sidecar from the secure compose file).
 
-The echo job fires within 60 seconds, giving you instant feedback that Cronduit is working. The hello-world job demonstrates Docker container execution with automatic cleanup (`delete = true`).
+The echo job fires within 60 seconds, giving you instant feedback that Cronduit is working. The other three demonstrate every execution type Cronduit supports (command, script, and Docker) so you can pattern-match on them when writing your own.
 
 ---
 
@@ -240,6 +258,58 @@ The `rust-embed` crate reads assets from disk in debug builds, so template and C
 
 ```bash
 just check-config examples/cronduit.toml
+```
+
+---
+
+## Troubleshooting
+
+### Docker jobs fail with "no Docker client" or "Socket not found"
+
+Cronduit pings the Docker daemon once at startup and exposes the result as a Prometheus gauge:
+
+```bash
+curl -sS http://localhost:8080/metrics | grep cronduit_docker_reachable
+# cronduit_docker_reachable 1   <- daemon reachable, docker jobs will work
+# cronduit_docker_reachable 0   <- preflight failed, docker jobs will error
+```
+
+If the gauge is `0` and you see a `cronduit.docker` WARN log line at startup, the cause is almost always a mismatch between cronduit's supplementary group and the host Docker group.
+
+**Derive the right `DOCKER_GID`:**
+
+| Host | Command | Typical value |
+|------|---------|---------------|
+| Linux | `stat -c %g /var/run/docker.sock` | `999` (default) |
+| macOS + Rancher Desktop | *fixed value* (VM-side docker group) | **`102`** |
+| macOS + Docker Desktop | *unstable, varies by release* | use `docker-compose.secure.yml` instead |
+
+Export the value and restart the stack:
+
+```bash
+export DOCKER_GID=102          # for Rancher Desktop on macOS
+docker compose -f examples/docker-compose.yml down -v
+docker compose -f examples/docker-compose.yml up -d
+curl -sS http://localhost:8080/metrics | grep cronduit_docker_reachable
+```
+
+### Command/script jobs fail with "No such file or directory"
+
+The Cronduit runtime image is based on `alpine:3` and ships busybox `date`, `wget`, `du`, `df`, and `/bin/sh`. If your command references a binary that isn't in busybox (e.g. `curl`, `jq`, `bash`), either install it via a custom Dockerfile that extends `ghcr.io/simplicityguy/cronduit:latest`, or rewrite the job as a `script = ` that invokes the busybox equivalent.
+
+### Web UI unreachable / `/health` times out
+
+Check that the compose stack is actually up (`docker compose ps`) and that nothing else is bound to port 8080. The default bind is `0.0.0.0:8080` inside the example compose files; cronduit emits a loud WARN at startup if you bind to a non-loopback address without a reverse proxy (see the Security section above).
+
+### I want to validate before I run anything
+
+Use `cronduit check` to parse your config and surface errors without starting the scheduler:
+
+```bash
+docker run --rm \
+  -v $PWD/examples/cronduit.toml:/etc/cronduit/config.toml:ro \
+  ghcr.io/simplicityguy/cronduit:latest \
+  cronduit check /etc/cronduit/config.toml
 ```
 
 ---

@@ -147,7 +147,20 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     };
 
     // Create Docker client (non-fatal if unavailable).
-    let docker = match bollard::Docker::connect_with_local_defaults() {
+    //
+    // Uses `connect_with_defaults()` (NOT `connect_with_local_defaults()`)
+    // because the latter only honors `DOCKER_HOST` when it starts with
+    // `unix://` — TCP URIs like `tcp://dockerproxy:2375` are silently
+    // ignored and bollard falls back to `/var/run/docker.sock`, which is
+    // not mounted in `examples/docker-compose.secure.yml`'s cronduit
+    // container. `connect_with_defaults()` routes on the URL scheme and
+    // honors unix/tcp/http/ssh uniformly, matching the docker CLI.
+    //
+    // Historical note: this was regressed by the Phase 8 secure-compose CI
+    // matrix (08-04) which exposed the bug — the CI found that every
+    // docker-type job errored with "docker executor unavailable" on the
+    // secure axis because the proxy-sidecar DOCKER_HOST was ignored.
+    let docker = match bollard::Docker::connect_with_defaults() {
         Ok(d) => {
             tracing::info!(target: "cronduit.startup", "Docker client connected");
             Some(d)
@@ -161,6 +174,19 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
             None
         }
     };
+
+    // Phase 8 D-11: run the daemon ping once at startup so the operator sees a
+    // loud WARN if bollard cannot reach the Docker socket, and so the
+    // cronduit_docker_reachable gauge reflects startup state. Non-fatal — cronduit
+    // keeps booting regardless so command/script-only configs still work.
+    //
+    // Note: `bollard::Docker::connect_with_defaults()` (above) reads the
+    // `DOCKER_HOST` environment variable on EVERY scheme (unix://, tcp://,
+    // http://, ssh://). This is how `examples/docker-compose.secure.yml`
+    // routes bollard to the `docker-socket-proxy` sidecar via
+    // `DOCKER_HOST=tcp://dockerproxy:2375` — the connect function matches
+    // the docker CLI's resolution semantics.
+    crate::scheduler::docker_daemon::preflight_ping(docker.as_ref()).await;
 
     // Orphan reconciliation before scheduler starts (SCHED-08).
     if let Some(ref docker_client) = docker {
