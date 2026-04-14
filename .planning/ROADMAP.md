@@ -339,8 +339,8 @@ Plans:
 Plans:
 - [x] 09-01-PLAN.md — port `cleanup-cache.yml` (verbatim, no matrix) with PR-scoped concurrency, `actions: write`, `set +e` delete loop
 - [x] 09-02-PLAN.md — port `cleanup-images.yml` collapsed to single flat job pruning `ghcr.io/<owner>/cronduit` on monthly schedule + workflow_dispatch, action pinned by SHA
-- [ ] 09-03-PLAN.md — `scripts/update-project.sh` (cargo + Dockerfile base + GHA SHA pins + Tailwind + pre-commit) + `update-cargo`/`update-hooks` justfile recipes + `backups/` in `.gitignore`
-- [ ] 09-04-PLAN.md — caching audit: timeouts + least-privilege permissions + per-arch GHA cache scopes on every Docker build + `docs/CI_CACHING.md` with mermaid flow
+- [x] 09-03-PLAN.md — `scripts/update-project.sh` (cargo + Dockerfile base + GHA SHA pins + Tailwind + pre-commit) + `update-cargo`/`update-hooks` justfile recipes + `backups/` in `.gitignore`
+- [x] 09-04-PLAN.md — caching audit: timeouts + least-privilege permissions + per-arch GHA cache scopes on every Docker build + `docs/CI_CACHING.md` with mermaid flow
 
 ---
 
