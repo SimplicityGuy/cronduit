@@ -69,7 +69,12 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # CRONDUIT_DOCKER_SOCKET lets Rancher Desktop / non-standard hosts point
+      # at the real socket path (e.g. $HOME/.rd/docker.sock). NOTE: on macOS
+      # the docker socket is typically mode 0600 user-owned, so group_add
+      # alone CANNOT grant UID 1000 access even with a valid path. macOS
+      # users should use docker-compose.secure.yml instead.
+      - ${CRONDUIT_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       - ./cronduit.toml:/etc/cronduit/config.toml:ro
       - cronduit-data:/data
     environment:

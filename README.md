@@ -44,9 +44,16 @@ cd cronduit
 # 2. Start Cronduit (default -- Linux with group_add for docker.sock access)
 docker compose -f examples/docker-compose.yml up -d
 
-# -- OR, for macOS / Docker Desktop / defense-in-depth deployments --
+# -- OR, for macOS / Docker Desktop / Rancher Desktop / defense-in-depth --
 # Uses docker-socket-proxy to mediate Docker API access through a narrow
-# allowlist; no direct /var/run/docker.sock mount in cronduit.
+# allowlist; no direct /var/run/docker.sock mount in cronduit. On macOS
+# the docker socket is typically mode 0600 user-owned, so the default
+# docker-compose.yml CANNOT work there -- you must use this variant.
+#
+# Rancher Desktop on macOS also needs a socket path override because the
+# real socket lives at ~/.rd/docker.sock, not /var/run/docker.sock:
+# export CRONDUIT_DOCKER_SOCKET=$HOME/.rd/docker.sock
+#
 # docker compose -f examples/docker-compose.secure.yml up -d
 
 # 3. Open the web UI

@@ -64,7 +64,12 @@ services:
       # hello-world quickstart job (`delete = true`) fails at container removal.
       - DELETE=1
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # The proxy container runs as root inside its own namespace, so it can
+      # read the host docker.sock even when the outer socket is user-owned
+      # mode 600 (macOS / Rancher Desktop). The source path is overridable via
+      # CRONDUIT_DOCKER_SOCKET so macOS users can point at ~/.rd/docker.sock
+      # instead of the Linux-only /var/run/docker.sock default.
+      - ${CRONDUIT_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
     networks:
       - cronduit-net
     restart: unless-stopped
