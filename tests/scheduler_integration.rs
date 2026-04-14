@@ -61,6 +61,8 @@ fn make_job(
         network: None,
         container_name: None,
         timeout,
+        delete: None,
+        cmd: None,
     }
 }
 

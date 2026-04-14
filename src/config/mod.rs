@@ -3,6 +3,7 @@
 //! This is the shared core used by BOTH `cronduit check` (Plan 03) and
 //! `cronduit run` (Plan 04). It never touches the database.
 
+pub mod defaults;
 pub mod errors;
 pub mod hash;
 pub mod interpolate;
@@ -19,6 +20,13 @@ pub use errors::{ConfigError, byte_offset_to_line_col};
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
+    /// `[defaults]` section. After `parse_and_validate` returns, per-job
+    /// merging has already happened (see `crate::config::defaults::apply_defaults`)
+    /// so downstream code MUST NOT re-consult `Config.defaults` for
+    /// `image`/`network`/`volumes`/`timeout`/`delete`. The ONLY legitimate
+    /// post-parse consumer is `random_min_gap` in `src/cli/run.rs` and
+    /// `src/scheduler/reload.rs` -- that field is a global scheduler knob,
+    /// not a per-job field.
     #[serde(default)]
     pub defaults: Option<DefaultsConfig>,
     #[serde(default, rename = "jobs")]
@@ -96,6 +104,19 @@ pub struct JobConfig {
     pub container_name: Option<String>,
     #[serde(default, with = "humantime_serde::option")]
     pub timeout: Option<Duration>,
+    /// Cronduit-side container removal toggle. Merged from `[defaults].delete`
+    /// when the job omits it. NOTE: honoring `delete = false` (keep failed
+    /// containers for inspection) is a Known Gap -- the executor currently
+    /// always removes. See plan 260414-gbf objective for follow-up issue.
+    #[serde(default)]
+    pub delete: Option<bool>,
+    /// Override the Docker image's baked-in CMD. Per-job ONLY -- NOT
+    /// defaults-eligible. When None, the container runs with the image's
+    /// default CMD; when Some(vec), the vec is passed verbatim to bollard's
+    /// ContainerCreateBody.cmd (note: `Some(vec![])` is a valid override
+    /// meaning "run with NO command", semantically distinct from None).
+    #[serde(default)]
+    pub cmd: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -144,7 +165,7 @@ pub fn parse_and_validate(path: &Path) -> Result<ParsedConfig, Vec<ConfigError>>
         })
         .collect();
 
-    let parsed = match toml::from_str::<Config>(&interpolated) {
+    let mut parsed = match toml::from_str::<Config>(&interpolated) {
         Ok(c) => Some(c),
         Err(e) => {
             let (line, col) = e
@@ -160,6 +181,19 @@ pub fn parse_and_validate(path: &Path) -> Result<ParsedConfig, Vec<ConfigError>>
             None
         }
     };
+
+    if let Some(cfg) = &mut parsed {
+        // Apply [defaults] to every job before validation so downstream consumers
+        // (validator, sync, hash, executor) see already-merged jobs and never need
+        // to re-read Config.defaults for per-job fields. The only exception is
+        // `random_min_gap`, which is a global @random scheduler knob and stays
+        // on Config.defaults -- see src/cli/run.rs and src/scheduler/reload.rs.
+        let defaults = cfg.defaults.as_ref();
+        cfg.jobs = std::mem::take(&mut cfg.jobs)
+            .into_iter()
+            .map(|j| crate::config::defaults::apply_defaults(j, defaults))
+            .collect();
+    }
 
     if let Some(cfg) = &parsed {
         validate::run_all_checks(cfg, path, &raw, &mut errors);

@@ -63,6 +63,8 @@ mod tests {
             network: None,
             container_name: None,
             timeout: None,
+            delete: None,
+            cmd: None,
         }
     }
 
@@ -81,5 +83,167 @@ mod tests {
         j.name = "t2".into();
         let b = compute_config_hash(&j);
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn hash_stable_across_defaults_merge() {
+        // Guards Warning 3: a future refactor of parse_and_validate that
+        // drops fields during the apply_defaults rebuild must not silently
+        // change hashes. For each defaults-eligible field, the field set
+        // directly on the job must hash identically to the field set in
+        // [defaults] then merged in via apply_defaults.
+        use crate::config::DefaultsConfig;
+        use crate::config::defaults::apply_defaults;
+
+        // image
+        {
+            let mut a = mk_job();
+            a.command = None;
+            a.image = Some("alpine:latest".into());
+            let b = mk_job();
+            let mut b = JobConfig { command: None, ..b };
+            // b.image stays None; we merge from defaults
+            let defaults = DefaultsConfig {
+                image: Some("alpine:latest".into()),
+                network: None,
+                volumes: None,
+                delete: None,
+                timeout: None,
+                random_min_gap: None,
+            };
+            b = apply_defaults(b, Some(&defaults));
+            assert_eq!(
+                compute_config_hash(&a),
+                compute_config_hash(&b),
+                "image: field-on-job vs field-from-defaults"
+            );
+        }
+
+        // network
+        {
+            let mut a = mk_job();
+            a.network = Some("container:vpn".into());
+            let b = mk_job();
+            let defaults = DefaultsConfig {
+                image: None,
+                network: Some("container:vpn".into()),
+                volumes: None,
+                delete: None,
+                timeout: None,
+                random_min_gap: None,
+            };
+            let b = apply_defaults(b, Some(&defaults));
+            assert_eq!(
+                compute_config_hash(&a),
+                compute_config_hash(&b),
+                "network: field-on-job vs field-from-defaults"
+            );
+        }
+
+        // volumes
+        {
+            let mut a = mk_job();
+            a.volumes = Some(vec!["/host:/container".to_string()]);
+            let b = mk_job();
+            let defaults = DefaultsConfig {
+                image: None,
+                network: None,
+                volumes: Some(vec!["/host:/container".to_string()]),
+                delete: None,
+                timeout: None,
+                random_min_gap: None,
+            };
+            let b = apply_defaults(b, Some(&defaults));
+            assert_eq!(
+                compute_config_hash(&a),
+                compute_config_hash(&b),
+                "volumes: field-on-job vs field-from-defaults"
+            );
+        }
+
+        // timeout
+        {
+            let mut a = mk_job();
+            a.timeout = Some(std::time::Duration::from_secs(300));
+            let b = mk_job();
+            let defaults = DefaultsConfig {
+                image: None,
+                network: None,
+                volumes: None,
+                delete: None,
+                timeout: Some(std::time::Duration::from_secs(300)),
+                random_min_gap: None,
+            };
+            let b = apply_defaults(b, Some(&defaults));
+            assert_eq!(
+                compute_config_hash(&a),
+                compute_config_hash(&b),
+                "timeout: field-on-job vs field-from-defaults"
+            );
+        }
+
+        // delete (the new field) -- REQUIRED to guard Warning 3 for the new field.
+        {
+            let mut a = mk_job();
+            a.delete = Some(true);
+            let b = mk_job();
+            let defaults = DefaultsConfig {
+                image: None,
+                network: None,
+                volumes: None,
+                delete: Some(true),
+                timeout: None,
+                random_min_gap: None,
+            };
+            let b = apply_defaults(b, Some(&defaults));
+            assert_eq!(
+                compute_config_hash(&a),
+                compute_config_hash(&b),
+                "delete: field-on-job vs field-from-defaults"
+            );
+        }
+    }
+
+    #[test]
+    fn hash_differs_on_delete_change() {
+        // Guards change-detection: an operator toggling [defaults].delete
+        // must produce a different config_hash so sync_config_to_db
+        // classifies the job as `updated`, not `unchanged`.
+        let mut a = mk_job();
+        a.delete = Some(true);
+        let mut b = mk_job();
+        b.delete = Some(false);
+        assert_ne!(compute_config_hash(&a), compute_config_hash(&b));
+    }
+
+    #[test]
+    fn hash_differs_on_cmd_change() {
+        // Guards change-detection for the new per-job `cmd` field. Four
+        // cases must be pairwise distinct, including the subtle
+        // None vs Some(vec![]) distinction (image's baked-in CMD vs
+        // explicit "no command" override).
+        let mut a = mk_job();
+        a.cmd = Some(vec!["a".to_string()]);
+        let mut b = mk_job();
+        b.cmd = Some(vec!["b".to_string()]);
+        let mut c = mk_job();
+        c.cmd = None;
+        let mut d = mk_job();
+        d.cmd = Some(vec![]);
+
+        let ha = compute_config_hash(&a);
+        let hb = compute_config_hash(&b);
+        let hc = compute_config_hash(&c);
+        let hd = compute_config_hash(&d);
+
+        assert_ne!(ha, hb, "Some([\"a\"]) vs Some([\"b\"])");
+        assert_ne!(ha, hc, "Some([\"a\"]) vs None");
+        assert_ne!(ha, hd, "Some([\"a\"]) vs Some([])");
+        assert_ne!(hb, hc, "Some([\"b\"]) vs None");
+        assert_ne!(hb, hd, "Some([\"b\"]) vs Some([])");
+        assert_ne!(
+            hc, hd,
+            "None vs Some([]) -- image CMD vs explicit empty override"
+        );
     }
 }

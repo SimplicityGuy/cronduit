@@ -206,6 +206,8 @@ mod tests {
             network: None,
             container_name: None,
             timeout: None,
+            delete: None,
+            cmd: None,
         }
     }
 
