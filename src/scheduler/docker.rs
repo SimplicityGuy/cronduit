@@ -43,6 +43,18 @@ pub struct DockerJobConfig {
     /// Explicit container name (optional).
     #[serde(default)]
     pub container_name: Option<String>,
+    /// When Some(false), preserve the container after the run completes so an
+    /// operator can `docker logs <id>` or `docker inspect <id>` for post-mortem.
+    /// When Some(true) or None, cronduit explicitly removes the container after
+    /// logs drain (DOCKER-06: never bollard auto_remove — auto_remove races
+    /// with wait_container and can truncate exit codes, see moby#8441).
+    ///
+    /// Preserved containers accumulate forever and are the operator's
+    /// responsibility to prune (`docker container prune`, etc.). Cronduit
+    /// does NOT reap them on restart — only containers still marked
+    /// `running` in the DB are touched by orphan reconciliation.
+    #[serde(default)]
+    pub delete: Option<bool>,
 }
 
 /// Result of a Docker job execution, extending `ExecResult` with container metadata.
@@ -207,8 +219,10 @@ pub async fn execute_docker(
             format!("[docker start error: {e}]"),
         ));
         sender.close();
-        // Attempt cleanup of the created-but-not-started container.
-        cleanup_container(docker, &container_id).await;
+        // Attempt cleanup of the created-but-not-started container. Honors
+        // `delete = false` even in the error path — operators debugging a
+        // start failure want the container preserved so they can inspect it.
+        maybe_cleanup_container(docker, &container_id, config.delete, job_name, run_id).await;
         return DockerExecResult {
             exec: ExecResult {
                 exit_code: None,
@@ -344,13 +358,54 @@ pub async fn execute_docker(
         }
     };
 
-    // DOCKER-06: Explicitly remove the container after all state is captured.
-    cleanup_container(docker, &container_id).await;
+    // DOCKER-06: Explicitly remove the container after all state is captured,
+    // UNLESS the operator set `delete = false` to preserve it for inspection.
+    maybe_cleanup_container(docker, &container_id, config.delete, job_name, run_id).await;
 
     DockerExecResult {
         exec: exec_result,
         image_digest: Some(image_digest),
     }
+}
+
+/// Either remove or preserve the container based on the job's `delete` field.
+///
+/// - `Some(false)` — preserve. Log at INFO so operators can find the container
+///   by its ID + run_id label and `docker logs <id>` / `docker inspect <id>`
+///   for post-mortem. Preserved containers accumulate forever; operators are
+///   responsible for pruning them (`docker container prune` or a scheduled
+///   cronduit job that shells out to `docker rm`). Cronduit does NOT reap
+///   them on restart — orphan reconciliation only touches rows still marked
+///   `running` in the DB, and a preserved-but-exited container has a final
+///   DB status (success/failed/timeout) so it is invisible to reconciliation.
+///
+/// - `Some(true)` or `None` — remove with `force=true`. This is the default
+///   behavior and matches the `delete = true` semantics documented in
+///   `docs/SPEC.md` and `docs/CONFIG.md`.
+///
+/// DOCKER-06 rationale stays the same: we never use bollard's `auto_remove`
+/// because it races with `wait_container` and can truncate exit codes
+/// (moby#8441). The explicit remove below happens only after all state is
+/// captured in the DB.
+async fn maybe_cleanup_container(
+    docker: &Docker,
+    container_id: &str,
+    delete: Option<bool>,
+    job_name: &str,
+    run_id: i64,
+) {
+    if delete == Some(false) {
+        tracing::info!(
+            target: "cronduit.docker",
+            container_id = %container_id,
+            job_name = %job_name,
+            run_id,
+            "container preserved per job `delete = false`; inspect with `docker logs {}` / `docker inspect {}`, prune with `docker rm {}` when done",
+            container_id, container_id, container_id
+        );
+        return;
+    }
+    cleanup_container(docker, container_id).await;
 }
 
 /// Remove a container with force=true. Logs a warning on failure but does not propagate.
@@ -407,6 +462,25 @@ mod tests {
         assert!(config.volumes.is_none());
         assert!(config.network.is_none());
         assert!(config.container_name.is_none());
+        assert!(
+            config.delete.is_none(),
+            "delete must default to None; `maybe_cleanup_container` treats None as \
+             `delete = true` semantics (remove), consistent with spec"
+        );
+    }
+
+    #[test]
+    fn test_docker_job_config_with_delete_false() {
+        let json = r#"{"image": "hello-world:latest", "delete": false}"#;
+        let config: DockerJobConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.delete, Some(false));
+    }
+
+    #[test]
+    fn test_docker_job_config_with_delete_true() {
+        let json = r#"{"image": "hello-world:latest", "delete": true}"#;
+        let config: DockerJobConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.delete, Some(true));
     }
 
     #[test]
