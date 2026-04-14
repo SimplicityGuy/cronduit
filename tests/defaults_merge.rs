@@ -462,3 +462,51 @@ schedule = "*/5 * * * *"
         }
     }
 }
+
+#[test]
+fn cmd_on_command_job_is_rejected() {
+    // Pre-fix this was silently accepted and the `cmd` field was dropped
+    // from `serialize_config_json` because command jobs never read
+    // `config_json` back through DockerJobConfig. Post-fix the validator
+    // flags the nonsense config loudly so the operator corrects their
+    // intent instead of shipping a silent-no-op.
+    let toml = format!(
+        r#"{SERVER_HEADER}
+[[jobs]]
+name = "cmd-on-command"
+schedule = "*/5 * * * *"
+command = "echo hi"
+cmd = ["ignored", "args"]
+"#
+    );
+    let f = write_toml(&toml);
+    let errors = parse_and_validate(f.path()).expect_err("validator must reject");
+    let cmd_error = errors
+        .iter()
+        .find(|e: &&ConfigError| e.message.contains("cmd") && e.message.contains("docker jobs"))
+        .expect("must have a cmd-on-non-docker error");
+    assert!(cmd_error.message.contains("cmd-on-command"));
+}
+
+#[test]
+fn cmd_on_script_job_is_rejected() {
+    let toml = format!(
+        r##"{SERVER_HEADER}
+[[jobs]]
+name = "cmd-on-script"
+schedule = "*/5 * * * *"
+script = """#!/bin/sh
+echo hi
+"""
+cmd = ["ignored"]
+"##
+    );
+    let f = write_toml(&toml);
+    let errors = parse_and_validate(f.path()).expect_err("validator must reject");
+    assert!(
+        errors
+            .iter()
+            .any(|e: &ConfigError| e.message.contains("cmd-on-script")
+                && e.message.contains("docker jobs"))
+    );
+}

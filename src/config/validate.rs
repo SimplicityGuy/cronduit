@@ -19,6 +19,7 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
     check_duplicate_job_names(&cfg.jobs, path, raw, errors);
     for job in &cfg.jobs {
         check_one_of_job_type(job, path, errors);
+        check_cmd_only_on_docker_jobs(job, path, errors);
         check_network_mode(job, path, errors);
         check_schedule(job, path, errors);
     }
@@ -72,6 +73,27 @@ fn check_network_mode(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError
             col: 0,
             message: format!(
                 "[[jobs]] `{}`: invalid network mode `{net}` (expected bridge|host|none|container:<name>|<named-network>)",
+                job.name
+            ),
+        });
+    }
+}
+
+/// Reject `cmd` on command/script jobs. `cmd` is a Docker container CMD override
+/// with no meaningful analog for command or script jobs (no container to receive
+/// it). Runs AFTER `apply_defaults`, so the merged view of the job is what we
+/// inspect — for command/script jobs the docker-only fields (`image`/`network`/
+/// `volumes`/`delete`) are intentionally not merged by `apply_defaults`, so an
+/// `image.is_none()` test reliably distinguishes "this is a non-docker job" from
+/// "this is a docker job inheriting its image from `[defaults]`".
+fn check_cmd_only_on_docker_jobs(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.cmd.is_some() && job.image.is_none() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: `cmd` is only valid on docker jobs (job with `image = \"...\"` set either directly or via `[defaults].image`); command and script jobs cannot set `cmd` because there is no container to receive it. Remove the `cmd` line, or switch the job to a docker job by setting `image`.",
                 job.name
             ),
         });
@@ -263,5 +285,68 @@ mod tests {
             "error must mention `use_defaults` as the opt-out knob: {}",
             e[0].message
         );
+    }
+
+    #[test]
+    fn check_cmd_only_on_docker_jobs_rejects_on_command_job() {
+        // A command job with `cmd = [...]` is nonsense — there's no container
+        // to pass the args to. Pre-fix this was silently accepted and the
+        // `cmd` field was dropped from serialization because command jobs
+        // never read `config_json` back through DockerJobConfig. Reject
+        // loudly so the operator fixes the config intent.
+        let mut job = stub_job("*/5 * * * *");
+        // stub_job defaults: command = Some, image = None — i.e. a command job.
+        job.cmd = Some(vec!["echo".to_string(), "hi".to_string()]);
+        let mut e = Vec::new();
+        check_cmd_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(
+            e[0].message.contains("test-job"),
+            "error must name the job: {}",
+            e[0].message
+        );
+        assert!(
+            e[0].message.contains("cmd"),
+            "error must name the offending field: {}",
+            e[0].message
+        );
+        assert!(
+            e[0].message.contains("docker jobs"),
+            "error must explain cmd is docker-only: {}",
+            e[0].message
+        );
+    }
+
+    #[test]
+    fn check_cmd_only_on_docker_jobs_rejects_on_script_job() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.script = Some("#!/bin/sh\necho hi\n".to_string());
+        job.cmd = Some(vec!["ignored".to_string()]);
+        let mut e = Vec::new();
+        check_cmd_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("test-job"));
+        assert!(e[0].message.contains("docker jobs"));
+    }
+
+    #[test]
+    fn check_cmd_only_on_docker_jobs_accepts_docker_job_with_cmd() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".to_string());
+        job.cmd = Some(vec!["echo".to_string(), "hi".to_string()]);
+        let mut e = Vec::new();
+        check_cmd_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        assert!(e.is_empty(), "docker job with cmd must pass: got {e:?}");
+    }
+
+    #[test]
+    fn check_cmd_only_on_docker_jobs_accepts_when_cmd_is_none() {
+        // Default case — no cmd set on any job type, validator is a no-op.
+        let job = stub_job("*/5 * * * *"); // command job, cmd = None
+        let mut e = Vec::new();
+        check_cmd_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        assert!(e.is_empty());
     }
 }
