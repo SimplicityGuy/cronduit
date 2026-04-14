@@ -41,20 +41,24 @@ Get from `git clone` to a running scheduled job in under 5 minutes:
 git clone https://github.com/SimplicityGuy/cronduit
 cd cronduit
 
-# 2. Start Cronduit (default -- Linux with group_add for docker.sock access)
-docker compose -f examples/docker-compose.yml up -d
-
-# -- OR, for macOS / Docker Desktop / Rancher Desktop / defense-in-depth --
-# Uses docker-socket-proxy to mediate Docker API access through a narrow
-# allowlist; no direct /var/run/docker.sock mount in cronduit. On macOS
-# the docker socket is typically mode 0600 user-owned, so the default
-# docker-compose.yml CANNOT work there -- you must use this variant.
+# 2. Start Cronduit — pick the variant that matches your host.
 #
-# Rancher Desktop on macOS also needs a socket path override because the
-# real socket lives at ~/.rd/docker.sock, not /var/run/docker.sock:
-# export CRONDUIT_DOCKER_SOCKET=$HOME/.rd/docker.sock
+# On Linux: derive DOCKER_GID from the host socket and start the default compose.
+#   export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+#   docker compose -f examples/docker-compose.yml up -d
 #
-# docker compose -f examples/docker-compose.secure.yml up -d
+# On macOS + Rancher Desktop: the docker daemon socket lives inside the lima
+# VM at /var/run/docker.sock (not ~/.rd/docker.sock — that is the host-side
+# client relay). The VM's socket is root:102, so DOCKER_GID must be 102:
+#   export DOCKER_GID=102
+#   docker compose -f examples/docker-compose.yml up -d
+#
+# On macOS + Docker Desktop, or when you want defense-in-depth (socket-proxy
+# sidecar, narrow allowlist, no direct socket mount in cronduit):
+#   docker compose -f examples/docker-compose.secure.yml up -d
+#
+# See examples/docker-compose.yml and .secure.yml headers for the full
+# rationale and threat model notes.
 
 # 3. Open the web UI
 open http://localhost:8080
