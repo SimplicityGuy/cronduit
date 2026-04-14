@@ -248,6 +248,21 @@ jobs:
           JOBS="echo-timestamp http-healthcheck disk-usage hello-world"
           BUDGET_SECS=120
           POLL_INTERVAL=2
+          COOKIE_JAR=$(mktemp)
+
+          # Prime the CSRF cookie by GETting the dashboard. The
+          # ensure_csrf_cookie middleware sets the `cronduit_csrf` cookie on
+          # first response; subsequent POSTs must echo that value in both the
+          # cookie header and the `csrf_token` form field (validate_csrf
+          # requires byte-equal non-empty strings).
+          curl -sSf -c "${COOKIE_JAR}" -o /dev/null "${BASE}/"
+          CSRF_TOKEN=$(awk '$6 == "cronduit_csrf" { print $7 }' "${COOKIE_JAR}")
+          if [ -z "${CSRF_TOKEN}" ]; then
+            echo "ERROR: cronduit_csrf cookie not set after GET /"
+            cat "${COOKIE_JAR}"
+            exit 1
+          fi
+          echo "primed CSRF cookie (len=${#CSRF_TOKEN})"
 
           # Fetch all jobs once and map name -> id (the Run Now API takes id, not name).
           jobs_json=$(curl -sSf "${BASE}/api/jobs")
@@ -261,7 +276,10 @@ jobs:
               exit 1
             fi
             echo "triggering Run Now for ${name} (id=${id})"
-            curl -sSf -X POST "${BASE}/api/jobs/${id}/run" -o /dev/null || {
+            curl -sSf -b "${COOKIE_JAR}" \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              --data-urlencode "csrf_token=${CSRF_TOKEN}" \
+              -X POST "${BASE}/api/jobs/${id}/run" -o /dev/null || {
               echo "ERROR: POST /api/jobs/${id}/run failed for ${name}"
               exit 1
             }
