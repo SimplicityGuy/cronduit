@@ -168,3 +168,26 @@ check-config PATH:
 
 docker-compose-up:
     docker compose -f examples/docker-compose.yml up
+
+# -------------------- dependency updates (scripts/update-project.sh) --------------------
+
+# Update Cargo.lock within existing Cargo.toml constraints (minor/patch only).
+# Called by scripts/update-project.sh. Major upgrades go through cargo-edit
+# directly and are NOT wrapped by a recipe — the script handles that path.
+update-cargo:
+    cargo update
+
+# Update pre-commit hooks to their latest versions. No-op if pre-commit is not
+# installed or .pre-commit-config.yaml is missing. Called by scripts/update-project.sh.
+update-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f .pre-commit-config.yaml ]; then
+        echo "No .pre-commit-config.yaml — skipping hook updates"
+        exit 0
+    fi
+    if ! command -v pre-commit >/dev/null 2>&1; then
+        echo "pre-commit not installed — skipping hook updates"
+        exit 0
+    fi
+    pre-commit autoupdate

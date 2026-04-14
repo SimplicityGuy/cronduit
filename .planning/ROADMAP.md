@@ -299,9 +299,55 @@ Plans:
 
 ---
 
+### Phase 9: CI/CD Improvements
+
+**Goal:** Bring Cronduit's CI/CD hygiene up to a level that matches a long-lived OSS project: PR caches stop accumulating, old GHCR image revisions get pruned, dependency upgrades are a one-command operation, and every existing workflow exploits the standard caching lanes (cargo registry/index/target, Docker buildx layers, Tailwind binary). Reference implementations come from the SimplicityGuy/discogsography repo, adapted for Cronduit's Rust-only + single-image shape.
+
+**Depends on:** Phase 8
+
+**Requirements**: TBD (DevOps phase — closes operational debt; will be enumerated at plan time)
+
+**Scope (sources of inspiration):**
+1. **PR cache cleanup workflow** — port `cleanup-cache.yml` from discogsography. Triggered on `pull_request: closed`, deletes all caches whose ref matches the merged/closed PR via `gh cache list` + `gh cache delete`. Concurrency-grouped per PR. No matrix needed (Cronduit has a single Rust crate, not sub-projects).
+   - Source: <https://github.com/SimplicityGuy/discogsography/blob/main/.github/workflows/cleanup-cache.yml>
+2. **GHCR image cleanup workflow** — port `cleanup-images.yml`. Monthly schedule (`0 0 15 * *`) plus `workflow_dispatch`. Uses `dataaxiom/ghcr-cleanup-action` with `keep-n-tagged`, `older-than`, `delete-untagged`, `delete-partial-images`. Cronduit publishes one image (`ghcr.io/<owner>/cronduit`), so the matrix collapses to a single package.
+   - Source: <https://github.com/SimplicityGuy/discogsography/blob/main/.github/workflows/cleanup-images.yml>
+3. **`scripts/update-project.sh`** — write a Cronduit-flavored version inspired by the discogsography script. Cronduit's relevant ecosystems are: cargo dependencies (lockfile vs `--major` via `cargo upgrade --incompatible`), GitHub Actions pin updates (SHAs in `ci.yml` / `release.yml` / new cleanup workflows), Dockerfile base image refresh (distroless tag), Tailwind standalone binary version, pre-commit hooks (if any). Must respect the same option surface where it makes sense: `--dry-run`, `--major`, `--no-backup`, `--skip-tests`. Delegate tool invocations to `just` recipes per the discogsography pattern (just is already in use). All commits land on a feature branch — never directly on `main`.
+   - Source: <https://github.com/SimplicityGuy/discogsography/blob/main/scripts/update-project.sh>
+4. **Caching audit** — review `.github/workflows/ci.yml` and `.github/workflows/release.yml` and confirm every cache opportunity is wired:
+   - `Swatinem/rust-cache@v2` on every job that runs `cargo` (currently only on lint/test jobs?)
+   - `actions/cache` for the standalone Tailwind binary (avoid re-downloading per run)
+   - `docker/build-push-action@v6` with `cache-from: type=gha,scope=<job>` and `cache-to: type=gha,mode=max,scope=<job>` for both build matrix arches
+   - cargo-zigbuild output cached per target triple
+   - `cargo nextest` archive reuse if applicable
+   - Document any deliberate cache misses with rationale (e.g., release builds intentionally bypass cache for reproducibility).
+
+**Success Criteria** (what must be TRUE):
+  1. `.github/workflows/cleanup-cache.yml` exists, triggers on `pull_request: closed`, deletes that PR's caches via `gh cache delete`, has the required `actions: write` permission, and is concurrency-grouped per PR. A test PR opened-then-closed shows the workflow ran and removed at least its own cache entries.
+  2. `.github/workflows/cleanup-images.yml` exists, runs on `workflow_dispatch` and a monthly schedule, has `packages: write` permission, uses a pinned-by-SHA `dataaxiom/ghcr-cleanup-action`, keeps the latest N tagged images, deletes images older than the configured window, and a manual `gh workflow run cleanup-images.yml` succeeds against the real `ghcr.io/<owner>/cronduit` package.
+  3. `scripts/update-project.sh` exists, is executable, supports at minimum `--dry-run`, `--major`, `--skip-tests`, `--no-backup`, `--help`, refuses to run outside the project root, runs `just`-routed updates for cargo + Dockerfile base image + GitHub Action SHAs + Tailwind, creates a backup directory unless `--no-backup`, and on success leaves the working tree on a fresh feature branch (never `main`) with one or more atomic commits per ecosystem updated.
+  4. Every existing workflow job that touches cargo uses `Swatinem/rust-cache@v2`; every job that builds the Docker image uses `cache-from`/`cache-to` GHA cache scopes; every job that downloads the Tailwind standalone binary uses `actions/cache` keyed on the binary version. A short "CI caching" section is added to `docs/` (or `THREAT_MODEL.md`-adjacent contributor docs) listing every cache and what evicts it.
+  5. CI green on a PR that exercises the new workflows: `cleanup-cache` does NOT fire on push (only on PR close), `cleanup-images` is verified via a `--dry-run`-equivalent (e.g., manual dispatch with `dry-run: true` if the action supports it), `update-project.sh --dry-run` exits 0 against the current tree, and the caching audit report is committed.
+
+**Pitfalls addressed:**
+- Long-lived OSS repos accumulate stale PR caches (10 GB GHA quota burns out fast on multi-arch Rust builds). Without cleanup, CI silently slows as cache evictions become random.
+- GHCR image registries grow unbounded; for an OSS project that publishes per-tag + per-PR images, monthly pruning keeps the package page navigable and avoids future paid storage tiers.
+- Manual dependency updates drift; a one-command updater plus a feature-branch-only commit policy makes "stay current" a 5-minute monthly chore instead of a phase-sized event.
+- Caching gaps in CI silently 2-3x build times; an explicit audit + documented cache topology prevents regression as workflows evolve.
+
+**Plans:** 4 plans
+
+Plans:
+- [x] 09-01-PLAN.md — port `cleanup-cache.yml` (verbatim, no matrix) with PR-scoped concurrency, `actions: write`, `set +e` delete loop
+- [x] 09-02-PLAN.md — port `cleanup-images.yml` collapsed to single flat job pruning `ghcr.io/<owner>/cronduit` on monthly schedule + workflow_dispatch, action pinned by SHA
+- [x] 09-03-PLAN.md — `scripts/update-project.sh` (cargo + Dockerfile base + GHA SHA pins + Tailwind + pre-commit) + `update-cargo`/`update-hooks` justfile recipes + `backups/` in `.gitignore`
+- [x] 09-04-PLAN.md — caching audit: timeouts + least-privilege permissions + per-arch GHA cache scopes on every Docker build + `docs/CI_CACHING.md` with mermaid flow
+
+---
+
 ## Progress
 
-**Execution Order:** Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
+**Execution Order:** Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -313,6 +359,7 @@ Plans:
 | 6. Live Events, Metrics, Retention & Release Engineering | 5/5 | Complete (UAT pending) | 2026-04-12 |
 | 7. v1.0 Cleanup & Bookkeeping | 0/TBD | Planned (gap closure) | - |
 | 8. v1.0 Final Human UAT Validation | 0/TBD | Planned (gap closure) | - |
+| 9. CI/CD Improvements | 0/TBD | Not planned | - |
 
 ## Coverage Validation
 
@@ -328,9 +375,9 @@ All 86 v1 requirements mapped. Phases 7 and 8 are gap-closure phases derived fro
 | 6 | 5 | UI (1 of 15), OPS (3 of 5), DB (1 of 8) |
 | 7 | (gap closure — closes OPS-04 partial, no new reqs) | n/a |
 | 8 | (gap closure — UAT validation, no new reqs) | n/a |
+| 9 | (CI/CD devops — requirements TBD at plan time) | n/a |
 | **Total** | **86** | **100% coverage** |
-
----
 
 *Roadmap created: 2026-04-09 — derived from requirements, reconciled against ARCHITECTURE.md Phase A-F and FEATURES.md build order. No requirements orphaned.*
 *Phases 7-8 added: 2026-04-12 — gap closure from `/gsd-audit-milestone` v1.0 audit.*
+*Phase 9 added: 2026-04-13 — CI/CD devops improvements.*
