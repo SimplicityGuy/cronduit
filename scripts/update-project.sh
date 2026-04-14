@@ -406,8 +406,13 @@ update_gha_pins() {
     fi
 
     # Build a de-duplicated list of <owner>/<repo> to look up.
-    local -A latest_sha_cache=()
-    local -A latest_tag_cache=()
+    #
+    # [Rule 1 fix] bash 3.2 (system bash on macOS) does not support associative
+    # arrays (`local -A`), so we use parallel simple arrays + a linear-probe
+    # lookup. N is small (a handful of actions) so O(N) per probe is fine.
+    local -a cache_keys=()
+    local -a cache_shas=()
+    local -a cache_tags=()
     local any_change=false
 
     for entry in "${pin_entries[@]}"; do
@@ -420,7 +425,17 @@ update_gha_pins() {
         current_sha="${current_sha%% *}"
         current_tag=$(echo "$action_spec" | sed -E 's/.*# (v[0-9]+\.[0-9]+\.[0-9]+).*/\1/')
 
-        if [[ -z "${latest_sha_cache[$owner_repo]:-}" ]]; then
+        # Linear-probe cache lookup.
+        local cache_idx=-1
+        local i
+        for i in "${!cache_keys[@]}"; do
+            if [[ "${cache_keys[$i]}" == "$owner_repo" ]]; then
+                cache_idx=$i
+                break
+            fi
+        done
+
+        if [[ $cache_idx -eq -1 ]]; then
             local latest_tag latest_sha
             latest_tag=$(gh api "repos/${owner_repo}/releases/latest" --jq '.tag_name' 2>/dev/null || true)
             if [[ -z "$latest_tag" ]] || [[ "$latest_tag" == "null" ]]; then
@@ -436,12 +451,14 @@ update_gha_pins() {
                     latest_sha=$(gh api "repos/${owner_repo}/git/tags/${latest_sha}" --jq '.object.sha' 2>/dev/null || echo "$latest_sha")
                 fi
             fi
-            latest_sha_cache[$owner_repo]="$latest_sha"
-            latest_tag_cache[$owner_repo]="$latest_tag"
+            cache_keys+=("$owner_repo")
+            cache_shas+=("$latest_sha")
+            cache_tags+=("$latest_tag")
+            cache_idx=$((${#cache_keys[@]} - 1))
         fi
 
-        local new_sha="${latest_sha_cache[$owner_repo]}"
-        local new_tag="${latest_tag_cache[$owner_repo]}"
+        local new_sha="${cache_shas[$cache_idx]}"
+        local new_tag="${cache_tags[$cache_idx]}"
 
         if [[ "$new_sha" == "$current_sha" ]]; then
             print_info "${owner_repo}: already at ${current_tag} (${current_sha:0:7})"
