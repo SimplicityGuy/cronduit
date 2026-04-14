@@ -32,18 +32,51 @@ random_min_gap = "0s"
 # ------------------------------------------------------------
 # Quickstart jobs
 # ------------------------------------------------------------
+# Four jobs covering every execution type so a new operator can see
+# commands, scripts, and Docker containers run out of the box:
+#
+#   1. echo-timestamp   -- command   (every 1 min) instant heartbeat
+#   2. http-healthcheck -- command   (every 5 min) realistic uptime canary
+#   3. disk-usage       -- script    (every 15 min) /data volume inspector
+#   4. hello-world      -- docker    (every 5 min) ephemeral container demo
+#
+# All four run against the alpine:3 cronduit runtime image shipped in
+# Phase 8. The command/script jobs rely on busybox applets (date, wget,
+# du, df, /bin/sh); the docker job requires the host Docker socket mount
+# in docker-compose.yml (or the docker-socket-proxy sidecar in
+# docker-compose.secure.yml).
 
-# A local command job. Runs every minute for instant feedback.
+# 1. Instant heartbeat. Runs every minute so you see it in the dashboard
+#    within ~60s of `docker compose up`.
 [[jobs]]
 name = "echo-timestamp"
 schedule = "*/1 * * * *"
 command = "date '+%Y-%m-%d %H:%M:%S -- Cronduit is running!'"
 
-# An ephemeral Docker container job. Runs every 5 minutes.
-# Uses Docker's canonical hello-world image, which prints a greeting from its
-# built-in ENTRYPOINT (no command override needed -- JobConfig requires exactly
-# one of `command`, `script`, or `image`). `delete = true` removes the
-# container after completion.
+# 2. Realistic uptime canary. Hits https://www.google.com using busybox
+#    wget, captures the response headers into cronduit's stdout log via
+#    `2>&1 | head -10`. Validates DNS + egress + TLS from inside the
+#    container. Swap the URL for your own uptime target when adopting.
+[[jobs]]
+name = "http-healthcheck"
+schedule = "*/5 * * * *"
+command = "sh -c \"wget -q -S --spider https://www.google.com 2>&1 | head -10\""
+
+# 3. Script-type job demonstrating the `script = """..."""` path and the
+#    /data named volume. Prints disk usage if /data is mounted, or a
+#    friendly message otherwise. Shebang resolves via alpine's /bin/sh.
+[[jobs]]
+name = "disk-usage"
+schedule = "*/15 * * * *"
+script = """#!/bin/sh
+du -sh /data 2>/dev/null || echo "/data not mounted"
+df -h /data 2>/dev/null || true
+"""
+
+# 4. Ephemeral Docker container demo. Pulls hello-world:latest and runs it;
+#    `delete = true` removes the container on completion. Requires the
+#    Docker socket mount (docker-compose.yml) or the socket-proxy sidecar
+#    (docker-compose.secure.yml).
 [[jobs]]
 name = "hello-world"
 schedule = "*/5 * * * *"
