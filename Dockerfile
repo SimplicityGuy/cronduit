@@ -28,8 +28,34 @@ RUN set -eux; \
 
 RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
+# Install standalone Tailwind CSS binary for the BUILDPLATFORM so build.rs
+# can compile assets/static/app.css from the Tailwind sources before cargo
+# embeds them via rust-embed. Without this step the Docker image ships with
+# a stub `/* tailwind not built yet */` file and the web UI renders unstyled.
+# Version kept in sync with justfile's `just tailwind` recipe.
+RUN set -eux; \
+    TAILWIND_VERSION=v3.4.17; \
+    BUILD_ARCH="$(uname -m)"; \
+    case "$BUILD_ARCH" in \
+      "x86_64") TAILWIND_ARCH="x64" ;; \
+      "aarch64") TAILWIND_ARCH="arm64" ;; \
+      *) echo "unsupported BUILDPLATFORM arch: $BUILD_ARCH" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /usr/local/bin; \
+    curl -fsSL --retry 3 --retry-delay 5 \
+        -o /usr/local/bin/tailwindcss \
+        "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/tailwindcss-linux-${TAILWIND_ARCH}"; \
+    chmod +x /usr/local/bin/tailwindcss; \
+    /usr/local/bin/tailwindcss --help >/dev/null
+
 WORKDIR /build
 COPY . .
+
+# build.rs expects the tailwind binary at ./bin/tailwindcss (relative to the
+# crate root). Symlink into place so both local dev (where `just tailwind`
+# downloads into ./bin/) and the Docker builder (where it's in /usr/local/bin)
+# converge on the same path.
+RUN mkdir -p bin && ln -sf /usr/local/bin/tailwindcss bin/tailwindcss
 
 # Translate buildx TARGETPLATFORM -> rustc target triple.
 RUN set -eux; \
