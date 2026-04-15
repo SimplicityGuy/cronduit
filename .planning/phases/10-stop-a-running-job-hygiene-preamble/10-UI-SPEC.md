@@ -1,10 +1,11 @@
 ---
 phase: 10
 slug: stop-a-running-job-hygiene-preamble
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-04-15
+reviewed_at: 2026-04-15T00:00:00Z
 ---
 
 # Phase 10 — UI Design Contract
