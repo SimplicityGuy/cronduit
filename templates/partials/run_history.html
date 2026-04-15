@@ -23,6 +23,7 @@
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Started</th>
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Duration</th>
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Exit Code</th>
+        <th class="text-right py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary);width:1%"></th>
       </tr>
     </thead>
     <tbody>
@@ -45,6 +46,17 @@
         <td class="py-2 px-4" style="font-size:var(--cd-text-base);color:var(--cd-text-secondary)">
           {% match run.exit_code %}
             {% when Some with (code) %}{{ code }}{% when None %}—{% endmatch %}
+        </td>
+        <td class="py-2 px-4" style="text-align:right">
+          {% if run.status == "running" %}
+          <form hx-post="/api/runs/{{ run.id }}/stop"
+                hx-swap="none"
+                hx-disabled-elt="this"
+                style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="cd-btn-stop cd-btn-stop--compact" aria-label="Stop run #{{ run.id }}">Stop</button>
+          </form>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

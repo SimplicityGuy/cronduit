@@ -60,6 +60,9 @@ struct RunHistoryPartial {
     /// are terminal (SUCCESS/FAILED/TIMEOUT/CANCELLED), the wrapper re-renders
     /// without the trigger and polling stops naturally via HTMX outerHTML swap.
     any_running: bool,
+    /// CSRF token threaded into per-row Stop forms; re-rendered on every 2s
+    /// poll so the browser always has a fresh token paired with its cookie.
+    csrf_token: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +179,7 @@ pub async fn job_detail(
     let any_running = runs.iter().any(|r| r.status == "running");
 
     if is_htmx {
+        let csrf_token = csrf::get_token_from_cookies(&cookies);
         RunHistoryPartial {
             job_id,
             runs,
@@ -183,6 +187,7 @@ pub async fn job_detail(
             page,
             total_pages,
             any_running,
+            csrf_token,
         }
         .into_web_template()
         .into_response()
@@ -235,6 +240,7 @@ pub async fn job_runs_partial(
     State(state): State<AppState>,
     Path(job_id): Path<i64>,
     Query(params): Query<PaginationParams>,
+    cookies: axum_extra::extract::CookieJar,
 ) -> impl IntoResponse {
     // Ensure the job exists — return 404 for unknown IDs so polling against a
     // deleted job cleanly terminates rather than rendering an empty table.
@@ -277,6 +283,8 @@ pub async fn job_runs_partial(
 
     let any_running = runs.iter().any(|r| r.status == "running");
 
+    let csrf_token = csrf::get_token_from_cookies(&cookies);
+
     RunHistoryPartial {
         job_id,
         runs,
@@ -284,6 +292,7 @@ pub async fn job_runs_partial(
         page,
         total_pages,
         any_running,
+        csrf_token,
     }
     .into_web_template()
     .into_response()
