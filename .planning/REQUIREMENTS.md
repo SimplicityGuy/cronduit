@@ -139,42 +139,52 @@ Explicit boundaries; NOT in v1.1 or v1.2. Duplicated from PROJECT.md § Out of S
 
 ## Traceability
 
-| REQ-ID | Phase | Status |
-|--------|-------|--------|
-| SCHED-09 | _TBD by roadmapper_ | Pending |
-| SCHED-10 | _TBD_ | Pending |
-| SCHED-11 | _TBD_ | Pending |
-| SCHED-12 | _TBD_ | Pending |
-| SCHED-13 | _TBD_ | Pending |
-| SCHED-14 | _TBD_ | Pending |
-| DB-09 | _TBD_ | Pending |
-| DB-10 | _TBD_ | Pending |
-| DB-11 | _TBD_ | Pending |
-| DB-12 | _TBD_ | Pending |
-| DB-13 | _TBD_ | Pending |
-| DB-14 | _TBD_ | Pending |
-| UI-16 | _TBD_ | Pending |
-| UI-17 | _TBD_ | Pending |
-| UI-18 | _TBD_ | Pending |
-| UI-19 | _TBD_ | Pending |
-| UI-20 | _TBD_ | Pending |
-| OBS-01 | _TBD_ | Pending |
-| OBS-02 | _TBD_ | Pending |
-| OBS-03 | _TBD_ | Pending |
-| OBS-04 | _TBD_ | Pending |
-| OBS-05 | _TBD_ | Pending |
-| ERG-01 | _TBD_ | Pending |
-| ERG-02 | _TBD_ | Pending |
-| ERG-03 | _TBD_ | Pending |
-| ERG-04 | _TBD_ | Pending |
-| OPS-06 | _TBD_ | Pending |
-| OPS-07 | _TBD_ | Pending |
-| OPS-08 | _TBD_ | Pending |
-| FOUND-12 | _TBD_ | Pending |
-| FOUND-13 | _TBD_ | Pending |
+| REQ-ID   | Phase    | Status  |
+| -------- | -------- | ------- |
+| SCHED-09 | Phase 10 | Pending |
+| SCHED-10 | Phase 10 | Pending |
+| SCHED-11 | Phase 10 | Pending |
+| SCHED-12 | Phase 10 | Pending |
+| SCHED-13 | Phase 10 | Pending |
+| SCHED-14 | Phase 10 | Pending |
+| DB-09    | Phase 11 | Pending |
+| DB-10    | Phase 11 | Pending |
+| DB-11    | Phase 11 | Pending |
+| DB-12    | Phase 11 | Pending |
+| DB-13    | Phase 11 | Pending |
+| DB-14    | Phase 14 | Pending |
+| UI-16    | Phase 11 | Pending |
+| UI-17    | Phase 11 | Pending |
+| UI-18    | Phase 11 | Pending |
+| UI-19    | Phase 11 | Pending |
+| UI-20    | Phase 11 | Pending |
+| OBS-01   | Phase 13 | Pending |
+| OBS-02   | Phase 13 | Pending |
+| OBS-03   | Phase 13 | Pending |
+| OBS-04   | Phase 13 | Pending |
+| OBS-05   | Phase 13 | Pending |
+| ERG-01   | Phase 14 | Pending |
+| ERG-02   | Phase 14 | Pending |
+| ERG-03   | Phase 14 | Pending |
+| ERG-04   | Phase 14 | Pending |
+| OPS-06   | Phase 12 | Pending |
+| OPS-07   | Phase 12 | Pending |
+| OPS-08   | Phase 12 | Pending |
+| FOUND-12 | Phase 10 | Pending |
+| FOUND-13 | Phase 10 | Pending |
 
-**Total:** 31 requirements across 7 categories. All pending roadmapping.
+**Total:** 31 requirements across 7 categories, mapped to 5 phases (10–14). All pending implementation.
+
+### Phase → requirement rollup
+
+| Phase | Requirements (count)                                           | rc target                     |
+| ----- | -------------------------------------------------------------- | ----------------------------- |
+| 10    | SCHED-09..14, FOUND-12..13 (8)                                 | `v1.1.0-rc.1`                 |
+| 11    | DB-09..13, UI-16..20 (10)                                      | `v1.1.0-rc.1`                 |
+| 12    | OPS-06..08 (3)                                                 | `v1.1.0-rc.1` ◀ (tag cut)     |
+| 13    | OBS-01..05 (5)                                                 | `v1.1.0-rc.2` ◀ (tag cut)     |
+| 14    | ERG-01..04, DB-14 (5)                                          | `v1.1.0-rc.3` ◀ + `v1.1.0`    |
 
 ---
 
-*Defined: 2026-04-14 — milestone kickoff, after the 4-dimension research pass. The Pitfalls research surfaced four corrections to the Architecture research (see `.planning/research/SUMMARY.md` § Research-Phase Corrections); those corrections are incorporated into the requirement language above. No additional research phase is needed before phase planning.*
+*Defined: 2026-04-14 — milestone kickoff, after the 4-dimension research pass. The Pitfalls research surfaced four corrections to the Architecture research (see `.planning/research/SUMMARY.md` § Research-Phase Corrections); those corrections are incorporated into the requirement language above. Traceability populated 2026-04-14 during roadmap creation — all 31 requirements mapped to Phase 10–14.*
