@@ -102,8 +102,8 @@ axum-extra = { version = "0.12", features = ["cookie", "query"] }
 # ANSI to HTML (D-06)
 ansi-to-html = "0.2"
 
-# Random bytes for CSRF tokens (D-11)
-rand = "0.8"
+# Random bytes for CSRF tokens and @random cron slot picker (D-13/FOUND-12)
+rand = "0.9"
 
 # Hex encoding for CSRF tokens
 hex = "0.4"

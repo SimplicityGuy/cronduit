@@ -94,7 +94,7 @@ fn resolve_fields(fields: &[&str], rng: &mut impl Rng) -> String {
         .map(|(i, &field)| {
             if field == "@random" {
                 let (min, max) = FIELD_RANGES[i];
-                rng.gen_range(min..=max).to_string()
+                rng.random_range(min..=max).to_string()
             } else {
                 field.to_string()
             }
