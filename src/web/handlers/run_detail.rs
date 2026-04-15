@@ -11,6 +11,7 @@ use serde::Deserialize;
 use crate::db::queries;
 use crate::web::AppState;
 use crate::web::ansi;
+use crate::web::csrf;
 use crate::web::format::format_duration_ms;
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,7 @@ struct RunDetailPage {
     total_logs: i64,
     has_older: bool,
     next_offset: i64,
+    csrf_token: String,
 }
 
 #[derive(Template)]
@@ -136,6 +138,7 @@ pub async fn run_detail(
     State(state): State<AppState>,
     Path((_job_id, run_id)): Path<(i64, i64)>,
     Query(params): Query<LogPaginationParams>,
+    cookies: axum_extra::extract::CookieJar,
 ) -> impl IntoResponse {
     let run = match queries::get_run_by_id(&state.pool, run_id).await {
         Ok(Some(run)) => run,
@@ -175,6 +178,8 @@ pub async fn run_detail(
 
         let is_running = run_view.status == "running";
 
+        let csrf_token = csrf::get_token_from_cookies(&cookies);
+
         RunDetailPage {
             run: run_view,
             run_id,
@@ -183,6 +188,7 @@ pub async fn run_detail(
             total_logs,
             has_older,
             next_offset,
+            csrf_token,
         }
         .into_web_template()
         .into_response()
