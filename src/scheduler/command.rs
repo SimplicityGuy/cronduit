@@ -135,9 +135,9 @@ pub(crate) async fn execute_child(
         _ = cancel.cancelled() => {
             // D-17 PRESERVATION: kill the child process group FIRST via pgid kill.
             // This is the `.process_group(0)` + `libc::kill(-pid, SIGKILL)` pattern
-            // locked by SCHED-12 (see `kill_process_group` below). We do NOT use
-            // `kill_on_drop(true)` because it would orphan shell-pipeline
-            // grandchildren (PITFALLS §1.3, Research Correction #1).
+            // locked by SCHED-12 (see `kill_process_group` below). The tokio
+            // drop-kill convenience was deliberately NOT adopted because it would
+            // orphan shell-pipeline grandchildren (PITFALLS §1.3, Correction #1).
             kill_process_group(&child);
             let _ = child.wait().await;
             let _ = stdout_task.await;

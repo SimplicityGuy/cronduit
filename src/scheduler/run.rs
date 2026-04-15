@@ -104,6 +104,12 @@ pub async fn run_job(
         .await
         .insert(run_id, broadcast_tx.clone());
 
+    // 1c. Construct per-run control (SCHED-10). The spike variant builds it
+    // locally from the existing cancel token — plan 10-04 will merge it into
+    // the active_runs map. The default reason is Shutdown, so any bare
+    // `cancel.cancel()` (shutdown drain path) is still classified correctly.
+    let run_control = crate::scheduler::control::RunControl::new(cancel.clone());
+
     // 2. Create log channel.
     let (sender, receiver) = log_pipeline::channel(DEFAULT_CHANNEL_CAPACITY);
 
@@ -142,7 +148,10 @@ pub async fn run_job(
                     script: None,
                 });
             match config.command {
-                Some(cmd) => command::execute_command(&cmd, timeout, cancel, sender.clone()).await,
+                Some(cmd) => {
+                    command::execute_command(&cmd, timeout, cancel, sender.clone(), &run_control)
+                        .await
+                }
                 None => {
                     sender.close();
                     command::ExecResult {
@@ -170,6 +179,7 @@ pub async fn run_job(
                         timeout,
                         cancel,
                         sender.clone(),
+                        &run_control,
                     )
                     .await
                 }
@@ -195,6 +205,7 @@ pub async fn run_job(
                     timeout,
                     cancel,
                     sender.clone(),
+                    &run_control,
                 )
                 .await;
                 container_id_for_finalize = docker_result.image_digest.clone();

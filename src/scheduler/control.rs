@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 pub enum StopReason {
     /// Default cancel path — graceful shutdown of the whole scheduler. This
     /// is the reason any bare `CancellationToken::cancel()` will produce,
-    /// because `RunControl::new` initializes the atomic to `Shutdown = 0`.
+    /// because `RunControl::new` initializes the atomic to this variant.
     Shutdown = 0,
     /// Operator-initiated stop via the UI / API Stop button. Set explicitly
     /// by `RunControl::stop(StopReason::Operator)`.

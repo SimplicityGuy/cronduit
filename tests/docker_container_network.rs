@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use bollard::Docker;
 use cronduit::scheduler::command::RunStatus;
+use cronduit::scheduler::control::RunControl;
 use cronduit::scheduler::docker::execute_docker;
 use cronduit::scheduler::docker_preflight::{PreflightError, preflight_network};
 use cronduit::scheduler::log_pipeline;
@@ -62,6 +63,7 @@ async fn test_container_network_mode() {
 
     let (sender, receiver) = log_pipeline::channel(256);
     let cancel = CancellationToken::new();
+    let control = RunControl::new(cancel.clone());
 
     let result = execute_docker(
         &docker,
@@ -71,6 +73,7 @@ async fn test_container_network_mode() {
         Duration::from_secs(30),
         cancel,
         sender,
+        &control,
     )
     .await;
 
@@ -146,6 +149,7 @@ async fn test_container_network_target_stopped() {
 
     let (sender, _receiver) = log_pipeline::channel(256);
     let cancel = CancellationToken::new();
+    let control = RunControl::new(cancel.clone());
 
     let result = execute_docker(
         &docker,
@@ -155,6 +159,7 @@ async fn test_container_network_target_stopped() {
         Duration::from_secs(30),
         cancel,
         sender,
+        &control,
     )
     .await;
 

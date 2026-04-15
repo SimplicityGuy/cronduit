@@ -23,6 +23,7 @@ use bollard::query_parameters::CreateContainerOptions;
 use cronduit::db::DbPool;
 use cronduit::db::queries;
 use cronduit::scheduler::command::RunStatus;
+use cronduit::scheduler::control::RunControl;
 use cronduit::scheduler::docker::execute_docker;
 use cronduit::scheduler::docker_orphan::reconcile_orphans;
 use cronduit::scheduler::docker_preflight::{PreflightError, preflight_network};
@@ -53,6 +54,7 @@ async fn test_docker_basic_echo() {
     let docker = docker_client().await;
     let (sender, receiver) = log_pipeline::channel(256);
     let cancel = CancellationToken::new();
+    let control = RunControl::new(cancel.clone());
 
     // Spawn a collector task that drains logs as they arrive. execute_docker
     // closes the sender when done, so drain_batch_async will eventually return
@@ -80,6 +82,7 @@ async fn test_docker_basic_echo() {
         Duration::from_secs(30),
         cancel,
         sender,
+        &control,
     )
     .await;
 
@@ -118,6 +121,7 @@ async fn test_docker_timeout_stops_container() {
     let docker = docker_client().await;
     let (sender, _receiver) = log_pipeline::channel(256);
     let cancel = CancellationToken::new();
+    let control = RunControl::new(cancel.clone());
 
     // Long-running container with a very short timeout.
     let config_json = r#"{"image": "alpine:latest", "cmd": ["sleep", "300"]}"#;
@@ -130,6 +134,7 @@ async fn test_docker_timeout_stops_container() {
         Duration::from_secs(2),
         cancel,
         sender,
+        &control,
     )
     .await;
 
@@ -273,6 +278,7 @@ async fn test_docker_execute_preflight_failure_returns_error() {
     let docker = docker_client().await;
     let (sender, _receiver) = log_pipeline::channel(256);
     let cancel = CancellationToken::new();
+    let control = RunControl::new(cancel.clone());
 
     // Config referencing a nonexistent container for network mode.
     let config_json = r#"{"image": "alpine:latest", "network": "container:nonexistent_xyz_99999"}"#;
@@ -285,6 +291,7 @@ async fn test_docker_execute_preflight_failure_returns_error() {
         Duration::from_secs(30),
         cancel,
         sender,
+        &control,
     )
     .await;
 
