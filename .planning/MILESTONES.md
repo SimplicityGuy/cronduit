@@ -2,7 +2,7 @@
 
 ## v1.0 — Docker-Native Cron Scheduler (Shipped: 2026-04-14)
 
-**Tag:** `v1.0.0` · **Phases:** 9 · **Plans:** 49 · **Requirements shipped:** 86 / 86 v1
+**Tags:** `v1.0.0`, `v1.0.1` (latest) · **Phases:** 9 · **Plans:** 49 · **Requirements shipped:** 86 / 86 v1
 
 **Delivered:** A self-hosted, single-binary Rust cron scheduler with a terminal-green HTMX web UI, full Docker-API job execution (including `--network container:<name>` for VPN-bound jobs), `@random` schedule resolution, hot config reload, Prometheus metrics, SSE live log tail, multi-arch release engineering, and a documented threat model — all gated by a green CI matrix on `linux/{amd64,arm64} × {SQLite, Postgres}` from Phase 1.
 
