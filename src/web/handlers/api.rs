@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::db::queries;
-use crate::scheduler::cmd::{ReloadStatus, SchedulerCmd};
+use crate::scheduler::cmd::{ReloadStatus, SchedulerCmd, StopResult};
 use crate::web::AppState;
 use crate::web::csrf;
 
@@ -306,6 +306,114 @@ pub async fn list_jobs(State(state): State<AppState>) -> impl IntoResponse {
             tracing::error!(target: "cronduit.web", error = %err, "GET /api/jobs query failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response()
         }
+    }
+}
+
+/// POST /api/runs/{run_id}/stop -- stop an in-flight run (SCHED-14).
+///
+/// CSRF-gated (T-10-07-01). Dispatches `SchedulerCmd::Stop` with a oneshot
+/// reply so the scheduler loop can look up the `RunEntry` in `active_runs`,
+/// fire `control.stop(StopReason::Operator)`, and report back whether the
+/// run was stopped or had already finalized (race case).
+///
+/// Response contract (UI-SPEC §HTMX Interaction Contract):
+/// - `StopResult::Stopped`       → 200 + `HX-Trigger: showToast` + `HX-Refresh: true`
+/// - `StopResult::AlreadyFinalized` → 200 + `HX-Refresh: true` (D-07 silent refresh,
+///   NO `HX-Trigger` so the UI stays quiet and a page reload surfaces the truth)
+/// - channel send / oneshot recv err → 503 "Scheduler is shutting down"
+/// - CSRF mismatch                → 403 "CSRF token mismatch"
+///
+/// The handler does NOT write to job_runs — all terminal-status updates flow
+/// through the executor's cancel branch (PITFALLS §1.5, single-writer
+/// invariant). The run lookup is read-only and only used for the toast text.
+pub async fn stop_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<i64>,
+    cookies: CookieJar,
+    axum::Form(form): axum::Form<CsrfForm>,
+) -> impl IntoResponse {
+    // 1. Validate CSRF (T-10-07-01) — copy-verbatim from run_now.
+    let cookie_token = cookies
+        .get(csrf::CSRF_COOKIE_NAME)
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
+
+    if !csrf::validate_csrf(&cookie_token, &form.csrf_token) {
+        return (StatusCode::FORBIDDEN, "CSRF token mismatch").into_response();
+    }
+
+    // 2. Look up the run to recover the job name for the toast. DbRunDetail
+    //    already joins jobs.name so a single query suffices — no separate
+    //    get_job_by_id needed. If the run doesn't exist at all, reply as if
+    //    it had already finalized (D-07 collapses "unknown" and "finalized"
+    //    into the same silent-refresh response because the refreshed page
+    //    will show the truth either way).
+    let run = match queries::get_run_by_id(&state.pool, run_id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("HX-Refresh", "true".parse().unwrap());
+            return (headers, StatusCode::OK).into_response();
+        }
+        Err(err) => {
+            tracing::error!(target: "cronduit.web", error = %err, run_id, "stop_run: run lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    };
+
+    // 3. Dispatch Stop command with oneshot reply (analog: reroll L222-235).
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    match state
+        .cmd_tx
+        .send(SchedulerCmd::Stop {
+            run_id,
+            response_tx: resp_tx,
+        })
+        .await
+    {
+        Ok(()) => match resp_rx.await {
+            Ok(StopResult::Stopped) => {
+                tracing::info!(
+                    target: "cronduit.web",
+                    run_id,
+                    job_name = %run.job_name,
+                    "stop requested via API"
+                );
+
+                // Normal path — toast + HX-Refresh (verbatim pattern from run_now).
+                let event = HxEvent::new_with_data(
+                    "showToast",
+                    json!({"message": format!("Stopped: {}", run.job_name), "level": "info"}),
+                )
+                .expect("toast event serialization");
+
+                let mut headers = axum::http::HeaderMap::new();
+                headers.insert("HX-Refresh", "true".parse().unwrap());
+
+                (HxResponseTrigger::normal([event]), headers, StatusCode::OK).into_response()
+            }
+            Ok(StopResult::AlreadyFinalized) => {
+                // D-07: silent refresh, NO HX-Trigger header so no toast fires.
+                tracing::debug!(
+                    target: "cronduit.web",
+                    run_id,
+                    "stop_run: run already finalized (race case) — replying with silent refresh"
+                );
+                let mut headers = axum::http::HeaderMap::new();
+                headers.insert("HX-Refresh", "true".parse().unwrap());
+                (headers, StatusCode::OK).into_response()
+            }
+            Err(_) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Scheduler is shutting down",
+            )
+                .into_response(),
+        },
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Scheduler is shutting down",
+        )
+            .into_response(),
     }
 }
 
