@@ -55,6 +55,7 @@ All status colors share the same saturation range (~55-70%) and lightness range 
 | `--cd-status-running` | `#60a5fa` | `#2563eb` | Running/In-Progress | Job currently executing |
 | `--cd-status-disabled` | `#fbbf24` | `#d97706` | Disabled/Warning | Paused jobs, warnings |
 | `--cd-status-error` | `#f87171` | `#dc2626` | Error/Failed | Failed jobs, errors |
+| `--cd-status-stopped` | `#94a3b8` | `#64748b` | Operator-Interrupt | Jobs stopped via UI; NOT a failure |
 
 #### Status Background Tints (for badges, pills, table rows)
 
@@ -64,6 +65,7 @@ All status colors share the same saturation range (~55-70%) and lightness range 
 | `--cd-status-running-bg` | `rgba(96, 165, 250, 0.12)` | `rgba(37, 99, 235, 0.08)` |
 | `--cd-status-disabled-bg` | `rgba(251, 191, 36, 0.12)` | `rgba(217, 119, 6, 0.08)` |
 | `--cd-status-error-bg` | `rgba(248, 113, 113, 0.12)` | `rgba(220, 38, 38, 0.08)` |
+| `--cd-status-stopped-bg` | `rgba(148, 163, 184, 0.12)` | `rgba(100, 116, 139, 0.08)` |
 
 ### 2.3 Surface & Background Colors
 
@@ -278,11 +280,13 @@ Always render with dark terminal styling, even in light mode:
   --cd-status-running: #60a5fa;
   --cd-status-disabled: #fbbf24;
   --cd-status-error: #f87171;
+  --cd-status-stopped: #94a3b8;
 
   --cd-status-active-bg: rgba(52, 211, 153, 0.12);
   --cd-status-running-bg: rgba(96, 165, 250, 0.12);
   --cd-status-disabled-bg: rgba(251, 191, 36, 0.12);
   --cd-status-error-bg: rgba(248, 113, 113, 0.12);
+  --cd-status-stopped-bg: rgba(148, 163, 184, 0.12);
 
   --cd-bg-primary: #050508;
   --cd-bg-surface: #0a0d0b;
@@ -311,11 +315,13 @@ Always render with dark terminal styling, even in light mode:
   --cd-status-running: #2563eb;
   --cd-status-disabled: #d97706;
   --cd-status-error: #dc2626;
+  --cd-status-stopped: #64748b;
 
   --cd-status-active-bg: rgba(5, 150, 105, 0.08);
   --cd-status-running-bg: rgba(37, 99, 235, 0.08);
   --cd-status-disabled-bg: rgba(217, 119, 6, 0.08);
   --cd-status-error-bg: rgba(220, 38, 38, 0.08);
+  --cd-status-stopped-bg: rgba(100, 116, 139, 0.08);
 
   --cd-bg-primary: #f8f8f6;
   --cd-bg-surface: #ffffff;
