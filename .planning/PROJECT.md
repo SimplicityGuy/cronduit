@@ -2,7 +2,7 @@
 
 ## Current State
 
-**Shipped:** v1.0.0 (2026-04-14) — single-binary Rust cron scheduler with terminal-green HTMX web UI, full Docker-API job execution including `--network container:<name>`, `@random` schedule resolver, hot config reload, Prometheus metrics, SSE log tail, multi-arch (amd64+arm64) GHCR release, and a documented threat model. 86/86 v1 requirements complete; audit verdict `passed`. See [`MILESTONES.md`](MILESTONES.md) for the full v1.0 summary.
+**Shipped:** v1.0.0 (2026-04-14), patched to v1.0.1 (2026-04-14) — single-binary Rust cron scheduler with terminal-green HTMX web UI, full Docker-API job execution including `--network container:<name>`, `@random` schedule resolver, hot config reload, Prometheus metrics, SSE log tail, multi-arch (amd64+arm64) GHCR release, and a documented threat model. 86/86 v1 requirements complete; audit verdict `passed`. v1.0.1 follow-up (PR #22) closed four post-ship gaps: GHCR OCI manifest annotations, `cmd`-on-non-docker validator, `delete = false` honored at cleanup, Debian 13 (trixie) builder, MIT license metadata. See [`MILESTONES.md`](MILESTONES.md) for the full v1.0 summary.
 
 **Next milestone:** Not yet scoped — run `/gsd-new-milestone` to begin v1.1 planning.
 

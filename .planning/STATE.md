@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Docker-Native Cron Scheduler
-status: shipped-pending-retag
+status: shipped
 shipped_at: "2026-04-14"
-tag: v1.0.0 (DELETED — pending re-cut from fix/defaults-merge-issue-20 after PR merge)
+tag: v1.0.1 (latest); v1.0.0 also tagged
 last_updated: "2026-04-14"
 last_activity: 2026-04-14
 progress:
@@ -36,7 +36,7 @@ flowchart LR
     P6 --> P7[Phase 7<br/>Cleanup]
     P7 --> P8[Phase 8<br/>Human UAT]
     P8 --> P9[Phase 9<br/>CI/CD]
-    P9 --> SHIP([v1.0.0 SHIPPED])
+    P9 --> SHIP([v1.0.1 SHIPPED])
 
     classDef done fill:#0a3d0a,stroke:#00ff7f,stroke-width:2px,color:#e0ffe0
     classDef ship fill:#00ff7f,stroke:#00ff7f,stroke-width:3px,color:#0a1a0a
@@ -45,7 +45,7 @@ flowchart LR
 ```
 
 Milestone: v1.0 — Docker-Native Cron Scheduler
-Tag: v1.0.0
+Tag: v1.0.1 (latest); v1.0.0 also tagged
 Status: SHIPPED
 Last activity: 2026-04-14
 
@@ -63,13 +63,14 @@ None.
 
 ### Blockers/Concerns
 
-**2026-04-14 post-ship gap discovery:** v1.0.0 git tag and GitHub release were DELETED after two critical gaps surfaced post-ship:
-1. **Issue #20** — `[defaults]` section parsed but never applied to jobs. Every defaults-eligible field (`image`, `network`, `volumes`, `delete`, `timeout`) was silently ignored except `random_min_gap`, which is a global scheduler knob. `cronduit check` rejected any docker job relying on `[defaults].image`; all other fields silently produced wrong behavior including silent VPN bypass for `[defaults] network = "container:vpn"`.
-2. **`cmd` field gap** — `DockerJobConfig.cmd` existed on the executor side since Phase 2 but `JobConfig` had no matching field, so docker jobs had no TOML way to override the image's baked-in `CMD`. On images with no default CMD (like `alpine:latest`), docker jobs started and immediately exited with no output.
+None. `v1.0.0` was re-cut and `v1.0.1` shipped on top (PR #22, commit `eb91e52`) closing the post-ship gaps:
+1. **Issue #20** — `[defaults]` section now correctly merged into per-job config (PR #21).
+2. **`cmd` field gap** — `JobConfig.cmd` field added and threaded through (PR #21); validator now rejects `cmd` on non-docker jobs (PR #22).
+3. **`delete = false` honored** — `cleanup_container` branches on `JobConfig.delete` instead of always force-removing (PR #22).
+4. **GHCR OCI annotations** — `DOCKER_METADATA_ANNOTATIONS_LEVELS=index,manifest` lands annotations on both top-level and per-platform manifests (PR #22).
+5. **Builder base + license metadata** — Debian 13 (trixie) builder, `Cargo.toml` license corrected to `MIT` (PR #22).
 
-Quick task `260414-gbf` addressed both + a third latent gap caught by a parity audit (`container_name` decision undocumented in `apply_defaults`) + a GHCR manifest-annotations gap in the release workflow. Quick task completed via `fix/defaults-merge-issue-20` branch and is ready for PR review → merge → `v1.0.0` re-cut.
-
-Everything else from the v1.0 milestone audit verdict still applies (86/86 requirements Complete, 9/9 nyquist-compliant). CONF-03, CONF-04, and CONF-06 carry retroactive notes in `v1.0-REQUIREMENTS.md` linking to the fix — the requirements remain `[x]` because they are now genuinely satisfied.
+Both `v1.0.0` and `v1.0.1` git tags exist on `main`. `Cargo.toml` is at `1.0.1`. v1.0 milestone audit verdict (86/86 requirements Complete, 9/9 nyquist-compliant) still holds.
 
 Three Phase 9 UAT items are accepted as deferred to natural post-merge validation per the audit verdict — see `.planning/milestones/v1.0-MILESTONE-AUDIT.md` § `deferred_post_merge_observation`. They are NOT blockers.
 
@@ -81,8 +82,8 @@ Three Phase 9 UAT items are accepted as deferred to natural post-merge validatio
 
 ## Session Continuity
 
-Last session: 2026-04-14 — quick task 260414-gbf (issue #20 + cmd field + docker labels + QUICKSTART/CONFIG docs) — branch `fix/defaults-merge-issue-20` ready for PR review
-Stopped at: Feature branch committed, awaiting user review + PR + merge + v1.0.0 re-tag
-Resume command: `/gsd-ship` after user confirms UAT on the branch
+Last session: 2026-04-14 — PR #22 merged (`v1.0.1` minor fixes: GHCR annotations, cmd/delete validation, trixie base, MIT license metadata). v1.0.0 re-cut and v1.0.1 tagged on top.
+Stopped at: v1.0 milestone fully shipped — both `v1.0.0` and `v1.0.1` tags live on `main`.
+Resume command: `/gsd-new-milestone` to begin v1.1 planning.
 
-Last activity: 2026-04-14 - Completed quick task 260414-gbf: [defaults] merge bug fix + cmd field + docker labels + docs
+Last activity: 2026-04-14 - Shipped v1.0.1 via PR #22 (eb91e52)
