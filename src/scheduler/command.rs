@@ -348,14 +348,7 @@ mod tests {
         let control_for_stop = control.clone();
 
         let handle = tokio::spawn(async move {
-            execute_command(
-                "sleep 30",
-                Duration::from_secs(600),
-                cancel,
-                tx,
-                &control,
-            )
-            .await
+            execute_command("sleep 30", Duration::from_secs(600), cancel, tx, &control).await
         });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -385,14 +378,7 @@ mod tests {
         let cancel_for_shutdown = cancel.clone();
 
         let handle = tokio::spawn(async move {
-            execute_command(
-                "sleep 30",
-                Duration::from_secs(600),
-                cancel,
-                tx,
-                &control,
-            )
-            .await
+            execute_command("sleep 30", Duration::from_secs(600), cancel, tx, &control).await
         });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
