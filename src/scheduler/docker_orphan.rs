@@ -111,7 +111,15 @@ pub async fn reconcile_orphans(docker: &Docker, pool: &DbPool) -> anyhow::Result
 ///
 /// T-04-12: WHERE clause includes `AND status = 'running'` to prevent
 /// overwriting finalized runs.
-async fn mark_run_orphaned(pool: &DbPool, run_id: i64) -> anyhow::Result<()> {
+///
+/// Exposed `pub` (not `pub(crate)`) so that `tests/docker_orphan_guard.rs`
+/// integration test (T-V11-STOP-12..14 regression lock for plan 10-06) can
+/// call it directly without needing a live Docker daemon to go through
+/// `reconcile_orphans`. The SQL guard `AND status = 'running'` is the only
+/// load-bearing semantic in this function and the regression lock asserts it
+/// on every terminal status (stopped, success, failed, cancelled, timeout)
+/// plus the positive `running -> error` transition.
+pub async fn mark_run_orphaned(pool: &DbPool, run_id: i64) -> anyhow::Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
 
     match pool.writer() {

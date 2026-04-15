@@ -119,6 +119,15 @@ async-stream = "0.3"
 mime_guess = "2"
 notify = "8.2"
 
+[features]
+# Opt-in feature gate for test suites that require real backing services
+# (currently: Postgres regression tests in tests/docker_orphan_guard.rs under
+# `#[cfg(feature = "integration")]`). Declared here so that `cfg` checks do
+# not trip the `unexpected_cfgs` lint under `clippy -D warnings`. Enable with
+# `cargo test --features integration` on hosts where a Docker daemon is
+# available for testcontainers-backed Postgres tests.
+integration = []
+
 [dev-dependencies]
 testcontainers = "0.27.2"
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
