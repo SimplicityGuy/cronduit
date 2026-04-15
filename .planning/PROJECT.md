@@ -115,6 +115,9 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 - [ ] Operator can stop a running job from the UI; run terminates with a new `stopped` status (distinct from `cancelled`/`failed`/`timeout`) — force kill, single hard stop
 - [ ] Run records have a per-job sequential number (`job_run_number`) alongside the existing global ID, backfilled on startup for existing rows via an idempotent migration
 
+*Deployment / packaging*
+- [ ] `docker compose up` with the shipped quickstart compose file reports the cronduit container as `healthy`, not `unhealthy`. Root cause hypothesis: busybox `wget --spider` misparses chunked-encoded responses from axum's `/health` handler even though the endpoint returns 200 + valid JSON. Fix path (TBD at phase-plan time): ship a `cronduit health` CLI subcommand that self-checks the local `/health` endpoint, OR embed a `HEALTHCHECK` directive in the Dockerfile, OR change the wget invocation pattern — whichever gives the smallest image + most reliable signal.
+
 *Log tail / UX*
 - [ ] Navigating back to a running job's page shows prior log lines from DB, then attaches to the live SSE stream without a gap
 - [ ] Log lines remain in chronological order across the live→static transition when a run completes
