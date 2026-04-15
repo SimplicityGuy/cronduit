@@ -33,7 +33,9 @@ pub async fn sse_logs(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let maybe_rx = {
         let active = state.active_runs.read().await;
-        active.get(&run_id).map(|tx| tx.subscribe())
+        active
+            .get(&run_id)
+            .map(|entry| entry.broadcast_tx.subscribe())
     };
 
     let s = stream! {

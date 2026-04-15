@@ -25,7 +25,6 @@ pub mod sync;
 
 use crate::db::DbPool;
 use crate::db::queries::DbJob;
-use crate::scheduler::log_pipeline::LogLine;
 use bollard::Docker;
 use chrono::Utc;
 use chrono_tz::Tz;
@@ -43,6 +42,28 @@ pub struct RunResult {
     pub status: String,
 }
 
+/// Per-run authoritative record: log broadcast + control plane + job name for toast.
+///
+/// D-01: merged map from active_runs + running_handles separation. The scheduler
+/// loop, the executor's run_job, and the SSE handler all look up the same
+/// RunEntry via active_runs. broadcast_tx and control are both Clone (Sender is
+/// Clone; CancellationToken is Clone via Arc; Arc<AtomicU8> is Clone) so cloning
+/// the entry into/out of the map is cheap.
+///
+/// Invariant (10-RESEARCH.md §Architecture §1 Invariant 1): the broadcast_tx
+/// refcount arithmetic — executor inserts ONE clone at run.rs:102, executor
+/// drops ITS clone at run.rs:277 after .remove(&run_id) at run.rs:276, leaving
+/// zero references and triggering RecvError::Closed on SSE subscribers. This
+/// must be preserved exactly.
+#[derive(Clone)]
+pub struct RunEntry {
+    pub broadcast_tx: tokio::sync::broadcast::Sender<log_pipeline::LogLine>,
+    pub control: crate::scheduler::control::RunControl,
+    /// Job name stashed at run-start (Pitfall 4 recommendation: accept the
+    /// staleness-on-rename semantic — "the name the run was started with").
+    pub job_name: String,
+}
+
 /// The main scheduler loop. Owns the fire queue, job set, and shutdown token.
 pub struct SchedulerLoop {
     pub pool: DbPool,
@@ -53,8 +74,9 @@ pub struct SchedulerLoop {
     pub shutdown_grace: Duration,
     pub cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
     pub config_path: PathBuf,
-    /// Broadcast channels for active runs (shared with AppState for SSE, UI-14).
-    pub active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
+    /// Per-run authoritative records (shared with AppState for SSE, UI-14, and
+    /// for plan 10-05 SchedulerCmd::Stop lookup). D-01: merged map.
+    pub active_runs: Arc<RwLock<HashMap<i64, RunEntry>>>,
 }
 
 impl SchedulerLoop {
@@ -386,7 +408,7 @@ pub fn spawn(
     shutdown_grace: Duration,
     cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
     config_path: PathBuf,
-    active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
+    active_runs: Arc<RwLock<HashMap<i64, RunEntry>>>,
 ) -> JoinHandle<()> {
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
@@ -415,8 +437,7 @@ mod tests {
         pool
     }
 
-    fn test_active_runs()
-    -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<log_pipeline::LogLine>>>> {
+    fn test_active_runs() -> Arc<RwLock<HashMap<i64, RunEntry>>> {
         Arc::new(RwLock::new(HashMap::new()))
     }
 

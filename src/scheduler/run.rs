@@ -68,7 +68,7 @@ pub async fn run_job(
     job: DbJob,
     trigger: String,
     cancel: CancellationToken,
-    active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
+    active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
 ) -> RunResult {
     let start = tokio::time::Instant::now();
 
@@ -99,16 +99,26 @@ pub async fn run_job(
 
     // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
-    active_runs
-        .write()
-        .await
-        .insert(run_id, broadcast_tx.clone());
 
-    // 1c. Construct per-run control (SCHED-10). The spike variant builds it
-    // locally from the existing cancel token — plan 10-04 will merge it into
-    // the active_runs map. The default reason is Shutdown, so any bare
-    // `cancel.cancel()` (shutdown drain path) is still classified correctly.
+    // 1c. Construct per-run control (SCHED-10, D-09). Default reason is
+    // Shutdown, so any bare `cancel.cancel()` (existing shutdown drain path
+    // in `mod.rs`) continues to be classified correctly. Plan 10-04 (this
+    // plan) merges the control plane into the active_runs RunEntry so the
+    // scheduler Stop arm (plan 10-05) can look it up by run_id.
     let run_control = crate::scheduler::control::RunControl::new(cancel.clone());
+
+    // 1d. Insert the merged RunEntry (D-01). Atomic single-statement write
+    // (10-RESEARCH.md §Architecture §1 Invariant 2): the .write().await guard
+    // is held only across the .insert() call — never across any subsequent
+    // await — so concurrent .read().await in sse.rs cannot deadlock.
+    active_runs.write().await.insert(
+        run_id,
+        crate::scheduler::RunEntry {
+            broadcast_tx: broadcast_tx.clone(),
+            control: run_control.clone(),
+            job_name: job.name.clone(),
+        },
+    );
 
     // 2. Create log channel.
     let (sender, receiver) = log_pipeline::channel(DEFAULT_CHANNEL_CAPACITY);
@@ -375,7 +385,7 @@ mod tests {
         pool
     }
 
-    fn test_active_runs() -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>> {
+    fn test_active_runs() -> Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>> {
         Arc::new(RwLock::new(HashMap::new()))
     }
 

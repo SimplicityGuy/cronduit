@@ -35,15 +35,12 @@ pub struct AppState {
     pub watch_config: bool,
     /// Prometheus metrics handle for rendering /metrics endpoint (OPS-02).
     pub metrics_handle: metrics_exporter_prometheus::PrometheusHandle,
-    /// Broadcast channels for active (in-progress) runs, keyed by run_id.
-    /// SSE handlers subscribe to these for real-time log streaming (UI-14).
+    /// Per-run authoritative records keyed by run_id (D-01 merged map).
+    /// SSE handlers subscribe to `entry.broadcast_tx` for real-time log streaming
+    /// (UI-14); plan 10-07's stop_run handler will look up `entry.control` to
+    /// fire `RunControl::stop(StopReason::Operator)` (SCHED-10).
     pub active_runs: std::sync::Arc<
-        tokio::sync::RwLock<
-            std::collections::HashMap<
-                i64,
-                tokio::sync::broadcast::Sender<crate::scheduler::log_pipeline::LogLine>,
-            >,
-        >,
+        tokio::sync::RwLock<std::collections::HashMap<i64, crate::scheduler::RunEntry>>,
     >,
 }
 
