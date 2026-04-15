@@ -66,7 +66,7 @@ Cronduit ships one binary with two subcommands:
 |---|---|
 | `cronduit run [--config PATH]` | Start the scheduler + web server. Default config path: `/etc/cronduit/config.toml`. |
 | `cronduit check <PATH>` | Parse and validate the config without starting anything. Surfaces every error in a single GCC-style report (no fail-fast). Exit `0` on valid, non-zero on invalid. Used by `just check-config`. |
-| `cronduit --version` | Prints `cronduit 1.0.0` (the value from `Cargo.toml`'s `version =` field via `env!("CARGO_PKG_VERSION")`). |
+| `cronduit --version` | Prints `cronduit <version>` where `<version>` is the current `Cargo.toml` `version =` field value, resolved at compile time via `env!("CARGO_PKG_VERSION")`. |
 
 The `cronduit check` command is the supported pre-flight for any config change in production: run it before reloading.
 

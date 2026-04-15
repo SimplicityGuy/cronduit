@@ -2,9 +2,17 @@
 #
 # Multi-stage Dockerfile for cronduit. Cross-compiles amd64 + arm64 musl-static
 # via cargo-zigbuild (no QEMU), packages into an alpine:3 runtime.
+#
+# Builder base is Debian 13 (trixie) — the current Debian stable. Upgraded
+# from bookworm in minor-fixes after v1.0.0: the cargo-zigbuild cross-compile
+# path produces a musl-static binary for the runtime stage, so the builder's
+# glibc version does not affect the output; the only observable difference is
+# CVE exposure on the builder itself. The apt package names used below
+# (ca-certificates, curl, xz-utils, pkg-config) are stable across bookworm and
+# trixie, so no install-line changes are needed.
 
 # ---- builder ----
-FROM --platform=$BUILDPLATFORM rust:1.94-slim-bookworm AS builder
+FROM --platform=$BUILDPLATFORM rust:1.94-slim-trixie AS builder
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
@@ -95,7 +103,7 @@ FROM alpine:3
 # https://docs.github.com/packages/working-with-a-github-packages-registry/working-with-the-container-registry#labelling-container-images
 LABEL org.opencontainers.image.source="https://github.com/SimplicityGuy/cronduit"
 LABEL org.opencontainers.image.description="Self-hosted Docker-native cron scheduler with a web UI"
-LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
+LABEL org.opencontainers.image.licenses="MIT"
 
 # Install minimal runtime dependencies: CA bundle for HTTPS (bollard image
 # pulls, busybox wget against https://www.google.com) and IANA timezone data

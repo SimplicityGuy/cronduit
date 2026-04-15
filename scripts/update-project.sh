@@ -236,37 +236,42 @@ update_dockerfile_base() {
     backup_file "Dockerfile"
 
     # Cronduit uses two base images:
-    #   builder:  rust:<version>-slim-bookworm
-    #   runtime:  gcr.io/distroless/static-debian12:nonroot
+    #   builder:  rust:<version>-slim-trixie   (Debian 13, the current stable)
+    #   runtime:  alpine:3                      (Phase 8 walk-back from distroless)
     #
-    # The distroless tag is already version-floating (:nonroot pulls the latest
-    # nonroot variant of debian12 on each docker build), so we only update the
-    # rust:<N.M>-slim-bookworm tag by looking up the latest minor on Docker Hub.
+    # The alpine:3 tag is already version-floating (minor bumps within the
+    # alpine 3.x line), so we only update the rust:<N.M>-slim-trixie tag by
+    # looking up the latest minor on Docker Hub.
+    #
+    # Upgraded from bookworm -> trixie in minor-fixes post-v1.0.0. The builder
+    # produces a musl-static binary for the runtime stage, so the builder's
+    # glibc version does not affect the output; the upgrade only changes the
+    # CVE exposure of the builder layer itself.
 
     # Rule 1 fix: the original 'FROM[^r]*rust:...' regex fails because the
     # word 'platform' in `FROM --platform=$BUILDPLATFORM rust:...` contains a
-    # lowercase 'r'. Match the `rust:<ver>-slim-bookworm` substring directly.
+    # lowercase 'r'. Match the `rust:<ver>-slim-trixie` substring directly.
     local current_rust
-    current_rust=$(grep -Eo 'rust:[0-9]+\.[0-9]+(\.[0-9]+)?-slim-bookworm' Dockerfile | head -1 | grep -Eo 'rust:[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
+    current_rust=$(grep -Eo 'rust:[0-9]+\.[0-9]+(\.[0-9]+)?-slim-trixie' Dockerfile | head -1 | grep -Eo 'rust:[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
     if [[ -z "$current_rust" ]]; then
-        print_warning "No 'rust:<version>-slim-bookworm' line found in Dockerfile — skipping"
+        print_warning "No 'rust:<version>-slim-trixie' line found in Dockerfile — skipping"
         return
     fi
-    print_info "Current builder image: $current_rust-slim-bookworm"
+    print_info "Current builder image: $current_rust-slim-trixie"
 
-    # Look up latest rust tag matching 'N.M-slim-bookworm' on Docker Hub.
+    # Look up latest rust tag matching 'N.M-slim-trixie' on Docker Hub.
     local latest_rust
-    latest_rust=$(curl -sf 'https://hub.docker.com/v2/repositories/library/rust/tags/?page_size=200&name=-slim-bookworm' \
+    latest_rust=$(curl -sf 'https://hub.docker.com/v2/repositories/library/rust/tags/?page_size=200&name=-slim-trixie' \
         | jq -r '.results[].name' \
-        | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?-slim-bookworm$' \
-        | sed 's/-slim-bookworm$//' \
+        | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?-slim-trixie$' \
+        | sed 's/-slim-trixie$//' \
         | sort -V \
         | tail -1 || true)
     if [[ -z "$latest_rust" ]]; then
         print_warning "Could not determine latest rust image tag from Docker Hub — skipping"
         return
     fi
-    print_info "Latest builder image:  rust:${latest_rust}-slim-bookworm"
+    print_info "Latest builder image:  rust:${latest_rust}-slim-trixie"
 
     if [[ "$current_rust" == "rust:${latest_rust}" ]]; then
         print_info "Dockerfile already uses the latest rust base — no change"
@@ -274,19 +279,19 @@ update_dockerfile_base() {
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
-        print_info "[DRY RUN] Would rewrite ${current_rust}-slim-bookworm → rust:${latest_rust}-slim-bookworm in Dockerfile"
+        print_info "[DRY RUN] Would rewrite ${current_rust}-slim-trixie → rust:${latest_rust}-slim-trixie in Dockerfile"
         return
     fi
 
     # Portable sed (GNU vs BSD).
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s|${current_rust}-slim-bookworm|rust:${latest_rust}-slim-bookworm|g" Dockerfile
+        sed -i '' "s|${current_rust}-slim-trixie|rust:${latest_rust}-slim-trixie|g" Dockerfile
     else
-        sed -i "s|${current_rust}-slim-bookworm|rust:${latest_rust}-slim-bookworm|g" Dockerfile
+        sed -i "s|${current_rust}-slim-trixie|rust:${latest_rust}-slim-trixie|g" Dockerfile
     fi
 
     # Verify sed applied.
-    if grep -q "rust:${latest_rust}-slim-bookworm" Dockerfile; then
+    if grep -q "rust:${latest_rust}-slim-trixie" Dockerfile; then
         print_success "Dockerfile updated: ${current_rust} → rust:${latest_rust}"
     else
         print_error "sed rewrite failed — Dockerfile not updated"

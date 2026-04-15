@@ -83,6 +83,25 @@ jobs:
       - name: Extract Docker metadata (labels, tags, annotations)
         id: meta
         uses: docker/metadata-action@v5
+        # DOCKER_METADATA_ANNOTATIONS_LEVELS controls which manifest levels
+        # the action's `annotations` output targets. By default metadata-action
+        # only emits `manifest`-level annotations (per-platform manifests),
+        # which GHCR's multi-arch "Connected to repository" sidebar does NOT
+        # read. Setting `index,manifest` tells it to emit both the top-level
+        # index annotations AND the per-platform manifest annotations, which
+        # build-push-action@v6 then routes via the `manifest:` and `index:`
+        # prefixes in the `annotations` output.
+        #
+        # v1.0.0's initial release (tag 94e324e) shipped with this env var
+        # UNSET, so annotations were silently dropped from both the index and
+        # per-platform manifests -- only the image-config LABELs landed. The
+        # LABELs are sufficient for GitHub's documented three-label recipe
+        # (source/description/licenses), but annotations are the OCI-canonical
+        # path and are required for some downstream tooling that inspects
+        # manifests directly. See also:
+        # https://github.com/docker/metadata-action/blob/master/README.md#annotations
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index,manifest
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # Tag templates replace the hand-rolled multi-tag list below. The
@@ -107,20 +126,20 @@ jobs:
           labels: |
             org.opencontainers.image.title=Cronduit
             org.opencontainers.image.description=Self-hosted Docker-native cron scheduler with a web UI
-            org.opencontainers.image.licenses=MIT OR Apache-2.0
+            org.opencontainers.image.licenses=MIT
             org.opencontainers.image.vendor=SimplicityGuy
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          # Annotations are written to the manifest INDEX (and per-platform
-          # manifests) rather than the image config. GHCR's "Connected to
-          # repository" link for multi-arch images reads the index manifest,
-          # so org.opencontainers.image.source MUST be present here, not
-          # only as a label on the platform images. metadata-action emits an
-          # `index:` prefix internally so the value lands on the top-level
-          # manifest list -- do not add the prefix manually.
+          # Annotations are written to the manifest INDEX and per-platform
+          # manifests (not the image config). `DOCKER_METADATA_ANNOTATIONS_LEVELS`
+          # above opts the metadata-action output into BOTH levels; without
+          # that env var, annotations are silently scoped to manifest-only and
+          # do not reach the top-level index. build-push-action@v6 then routes
+          # each annotation line via the `manifest:` and `index:` prefixes
+          # that metadata-action prepends in its output.
           annotations: |
             org.opencontainers.image.title=Cronduit
             org.opencontainers.image.description=Self-hosted Docker-native cron scheduler with a web UI
-            org.opencontainers.image.licenses=MIT OR Apache-2.0
+            org.opencontainers.image.licenses=MIT
             org.opencontainers.image.vendor=SimplicityGuy
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 

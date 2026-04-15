@@ -189,14 +189,17 @@ If you want a common mount on every job **plus** job-specific mounts, set them a
 
 ### `[defaults].delete`
 
-Default "remove container after run completes" flag. When `true`, Cronduit explicitly removes the container after `wait_container` drains and the log pipeline closes. This is NOT bollard's `auto_remove` — Cronduit always sets `auto_remove=false` to avoid the moby#8441 race, then explicitly removes the container after all state is captured. See [`SPEC.md § Job Execution`](./SPEC.md#docker-container-jobs).
+Controls whether Cronduit removes the container after the run completes.
+
+- `delete = true` (the default behavior when the field is unset) — Cronduit explicitly removes the container after `wait_container` drains and the log pipeline closes. This is NOT bollard's `auto_remove`; Cronduit always sets `auto_remove=false` to avoid the moby#8441 race that can truncate exit codes, then explicitly removes the container after all state is captured. See [`SPEC.md § Job Execution`](./SPEC.md#docker-container-jobs).
+- `delete = false` — Cronduit preserves the container after the run ends so an operator can inspect it with `docker logs <id>` or `docker inspect <id>` for post-mortem debugging. Cronduit emits an INFO-level log line on every preserved run with the container ID, the job name, and the cleanup command so the container can be found later.
 
 ```toml
 [defaults]
 delete = true
 ```
 
-**Known gap in v1.0:** setting `delete = false` (to keep failed containers around for inspection) is currently a silent no-op. The value flows through the config → DB → executor correctly, but the executor always force-removes the container regardless. A future release will honor `delete = false`. Today, `delete = true` matches actual behavior.
+**Operator responsibility when `delete = false`:** preserved containers accumulate forever. Cronduit does NOT reap them on restart — orphan reconciliation only touches rows still marked `running` in the database, and a preserved-but-exited container has a final `success`/`failed`/`timeout` status, so it is invisible to reconciliation. Prune preserved containers yourself with `docker container prune` (clears all stopped containers on the host) or a targeted loop using the `cronduit.job_name=<name>` label that every Cronduit-spawned container carries. Consider scheduling this as a Cronduit docker job of its own.
 
 ### `[defaults].timeout`
 
@@ -395,10 +398,10 @@ cmd = ["sh", "-c", "pg_dump mydb | gzip > /backup/db.sql.gz"]
 #### `[[jobs]].delete`
 
 - **Type:** boolean.
-- **Optional.** Falls back to `[defaults].delete`, then to implicit removal.
-- **Example:** `delete = true`
+- **Optional.** Falls back to `[defaults].delete`, then to implicit removal (equivalent to `true`).
+- **Example:** `delete = true`, `delete = false`
 
-When `true`, Cronduit explicitly removes the container after the run completes and logs are drained. See [`[defaults].delete`](#defaultsdelete) for the longer explanation and the known gap on `delete = false`.
+When `true` (or unset), Cronduit explicitly removes the container after the run completes and logs are drained. When `false`, the container is preserved so an operator can `docker logs <id>` or `docker inspect <id>` for post-mortem debugging — at the cost of owning the cleanup themselves. See [`[defaults].delete`](#defaultsdelete) for the full semantics, including the operator-responsibility note on preserved containers accumulating.
 
 #### `[jobs.env]` — environment variables
 
