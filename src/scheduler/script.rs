@@ -22,12 +22,16 @@ use super::log_pipeline::LogSender;
 /// The tempfile is converted to a `TempPath` (closing the write FD to avoid
 /// ETXTBSY on Linux) and kept alive during execution; when it drops,
 /// the file is automatically deleted (D-16).
+///
+/// `control` is threaded through to `command::execute_child` so the shared
+/// cancel-arm can distinguish operator-Stop from shutdown (SCHED-10).
 pub async fn execute_script(
     script_body: &str,
     shebang: &str,
     timeout: Duration,
     cancel: CancellationToken,
     sender: LogSender,
+    control: &crate::scheduler::control::RunControl,
 ) -> ExecResult {
     let effective_shebang = if shebang.is_empty() {
         "#!/bin/sh"
@@ -101,7 +105,7 @@ pub async fn execute_script(
     };
 
     // Execute with timeout/cancel support (reuses command.rs logic)
-    let result = execute_child(child, timeout, cancel, sender).await;
+    let result = execute_child(child, timeout, cancel, sender, control).await;
 
     // temp_path drops here -> file is deleted (D-16)
     drop(temp_path);
@@ -112,6 +116,7 @@ pub async fn execute_script(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scheduler::control::{RunControl, StopReason};
     use crate::scheduler::log_pipeline;
     use tempfile::NamedTempFile;
 
@@ -119,12 +124,14 @@ mod tests {
     async fn execute_script_captures_stdout() {
         let (tx, rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
         let result = execute_script(
             "echo script-out",
             "#!/bin/sh",
             Duration::from_secs(5),
             cancel,
             tx,
+            &control,
         )
         .await;
         assert!(
@@ -144,8 +151,16 @@ mod tests {
     async fn execute_script_nonzero_exit() {
         let (tx, _rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
-        let result =
-            execute_script("exit 42", "#!/bin/sh", Duration::from_secs(5), cancel, tx).await;
+        let control = RunControl::new(cancel.clone());
+        let result = execute_script(
+            "exit 42",
+            "#!/bin/sh",
+            Duration::from_secs(5),
+            cancel,
+            tx,
+            &control,
+        )
+        .await;
         assert_eq!(result.status, RunStatus::Failed);
         assert_eq!(result.exit_code, Some(42));
     }
@@ -154,11 +169,19 @@ mod tests {
     async fn execute_script_tempfile_cleaned_up() {
         let (tx, _rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
 
         // We need to capture the tempfile path. We'll run a script that
         // prints its own path via /proc/self or $0.
-        let result =
-            execute_script("echo $0", "#!/bin/sh", Duration::from_secs(5), cancel, tx).await;
+        let result = execute_script(
+            "echo $0",
+            "#!/bin/sh",
+            Duration::from_secs(5),
+            cancel,
+            tx,
+            &control,
+        )
+        .await;
         assert!(
             result.status == RunStatus::Success,
             "expected Success, got {:?}: {:?}",
@@ -175,6 +198,7 @@ mod tests {
         // Directly test that tempfile cleanup works
         let (tx, _rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
 
         // Create a script that outputs its path
         let tmpfile = NamedTempFile::new().unwrap();
@@ -184,8 +208,15 @@ mod tests {
         assert!(!path.exists(), "NamedTempFile should delete on drop");
 
         // Now verify via execute_script (we trust NamedTempFile's drop behavior)
-        let result =
-            execute_script("echo done", "#!/bin/sh", Duration::from_secs(5), cancel, tx).await;
+        let result = execute_script(
+            "echo done",
+            "#!/bin/sh",
+            Duration::from_secs(5),
+            cancel,
+            tx,
+            &control,
+        )
+        .await;
         assert!(
             result.status == RunStatus::Success,
             "expected Success, got {:?}: {:?}",
@@ -198,9 +229,17 @@ mod tests {
     async fn execute_script_default_shebang() {
         let (tx, rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
         // Empty shebang should default to #!/bin/sh
-        let result =
-            execute_script("echo default-shell", "", Duration::from_secs(5), cancel, tx).await;
+        let result = execute_script(
+            "echo default-shell",
+            "",
+            Duration::from_secs(5),
+            cancel,
+            tx,
+            &control,
+        )
+        .await;
         assert!(
             result.status == RunStatus::Success,
             "expected Success, got {:?}: {:?}",
@@ -211,5 +250,45 @@ mod tests {
         let stdout_lines: Vec<_> = batch.iter().filter(|l| l.stream == "stdout").collect();
         assert!(!stdout_lines.is_empty());
         assert_eq!(stdout_lines[0].line, "default-shell");
+    }
+
+    /// T-V11-STOP-09 (script variant): RunControl::stop(Operator) must
+    /// produce RunStatus::Stopped for a long-running script just like for
+    /// a command. script.rs inherits the cancel-arm from command.rs's
+    /// execute_child, so this test validates that the signature plumbing
+    /// is correct.
+    #[tokio::test]
+    async fn stop_operator_yields_stopped() {
+        let (tx, _rx) = log_pipeline::channel(256);
+        let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
+        let control_for_stop = control.clone();
+
+        let handle = tokio::spawn(async move {
+            execute_script(
+                "sleep 30",
+                "#!/bin/sh",
+                Duration::from_secs(600),
+                cancel,
+                tx,
+                &control,
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        control_for_stop.stop(StopReason::Operator);
+
+        let result = handle.await.unwrap();
+        assert_eq!(result.status, RunStatus::Stopped);
+        assert!(
+            result
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("operator"),
+            "expected 'operator' in error_message, got: {:?}",
+            result.error_message
+        );
     }
 }
