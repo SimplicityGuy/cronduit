@@ -1,30 +1,66 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: Docker-Native Cron Scheduler
-status: shipped
-shipped_at: "2026-04-14"
-tag: v1.0.1 (latest); v1.0.0 also tagged
+milestone: v1.1
+milestone_name: Operator Quality of Life
+status: roadmap-created
+previous_milestone:
+  version: v1.0
+  name: Docker-Native Cron Scheduler
+  shipped_at: "2026-04-14"
+  tags: [v1.0.0, v1.0.1]
 last_updated: "2026-04-14"
 last_activity: 2026-04-14
 progress:
-  total_phases: 9
-  completed_phases: 9
-  total_plans: 49
-  completed_plans: 49
-  percent: 100
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-14 after v1.0.0 milestone)
+See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** v1.0.0 shipped — next milestone not yet scoped. Run `/gsd-new-milestone` to begin v1.1 planning.
+**Current focus:** v1.1 "Operator Quality of Life" — bug fixes + observability polish + bulk ergonomics, shipped iteratively via `v1.1.0-rc.N` cuts. v1.0.1 is the stable baseline.
 
 ## Current Position
+
+Milestone: v1.1 — Operator Quality of Life
+Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
+Phase: Not started — Phase 10 is next (`/gsd-plan-phase 10`)
+Plan: —
+Status: Roadmap created — ready for phase planning
+Last activity: 2026-04-14 — v1.1 roadmap created (5 phases, 10–14, mapped to 3 rcs)
+
+Progress: [░░░░░░░░░░] 0% (0 of 5 v1.1 phases complete)
+
+## v1.1 Phase Shape
+
+```mermaid
+flowchart LR
+    P10["Phase 10<br/>Stop + Hygiene"] --> P11["Phase 11<br/>Run Numbers<br/>+ Log UX"]
+    P11 --> P12["Phase 12<br/>Healthcheck<br/>+ rc.1 cut"]
+    P12 --> RC1(["v1.1.0-rc.1"])
+    RC1 --> P13["Phase 13<br/>Observability<br/>+ rc.2 cut"]
+    P13 --> RC2(["v1.1.0-rc.2"])
+    RC2 --> P14["Phase 14<br/>Bulk Toggle<br/>+ rc.3 + final"]
+    P14 --> SHIP(["v1.1.0<br/>FINAL SHIP"])
+
+    classDef phase fill:#1a1a1a,stroke:#7fbfff,stroke-width:2px,color:#e0e0ff
+    classDef rc fill:#2a1a3d,stroke:#bf7fff,stroke-width:2px,color:#f0e0ff
+    classDef ship fill:#00ff7f,stroke:#00ff7f,stroke-width:3px,color:#0a1a0a
+    class P10,P11,P12,P13,P14 phase
+    class RC1,RC2 rc
+    class SHIP ship
+```
+
+Phase 10 is the first active phase. No phase is currently in-flight.
+
+## v1.0 Recap (archived)
 
 ```mermaid
 flowchart LR
@@ -44,46 +80,47 @@ flowchart LR
     class SHIP ship
 ```
 
-Milestone: v1.0 — Docker-Native Cron Scheduler
-Tag: v1.0.1 (latest); v1.0.0 also tagged
-Status: SHIPPED
-Last activity: 2026-04-14
-
-Progress: [██████████] 100% (49/49 plans, 9/9 phases)
+Full v1.0 archive: `.planning/milestones/v1.0-ROADMAP.md`, `.planning/milestones/v1.0-REQUIREMENTS.md`, `.planning/milestones/v1.0-MILESTONE-AUDIT.md`.
 
 ## Accumulated Context
 
 ### Decisions
 
-All v1.0 decisions are now logged in `.planning/PROJECT.md` § Key Decisions (every row marked `✓ Settled (v1.0)` after the milestone evolution review). Full archive in `.planning/milestones/v1.0-ROADMAP.md` and `.planning/milestones/v1.0-MILESTONE-AUDIT.md`.
+All v1.0 decisions remain in `.planning/PROJECT.md` § Key Decisions. v1.1 scoping decisions (recorded 2026-04-14):
+
+- **Shape A: "Polish then expand"** — v1.1 is operator quality-of-life only. Net-new feature surface (webhooks, concurrency/queuing) deferred to v1.2.
+- **Iterative rc releases** — `v1.1.0-rc.N` cut at chunky checkpoints (after each functional block: bug fixes → observability → ergonomics). `:latest` GHCR tag stays at `v1.0.1` until final `v1.1.0`. Tag format uses semver pre-release notation (`v1.1.0-rc.1`, not `v1.1.0-rc1`).
+- **Phase numbering continues** — v1.1 starts at Phase 10 (v1.0 ended at Phase 9). No reset.
+- **Five phases, three rcs** — Phases 10–12 ship as rc.1, Phase 13 ships as rc.2, Phase 14 ships as rc.3 then is promoted to final v1.1.0. The rc tag is cut at the end of Phase 12, Phase 13, and Phase 14 respectively.
+- **Out of Scope reshuffled** — webhook notifications and job queuing/concurrency moved from "Out of Scope" to "Future Requirements (v1.2)" because Shape A's premise is that those capabilities *are* coming, just not this milestone. Email notifications remain fully out of scope.
+- **Bulk-disable design resolved** — `jobs.enabled_override` nullable tri-state column (NULL/0/1); `upsert_job` does NOT touch it; `disable_missing_jobs` clears it. Locked in Phase 14 details; no re-discussion needed at phase-plan time.
+- **Log dedupe design deferred** — Option A (insert-then-broadcast with `RETURNING id`) vs Option B (monotonic `seq: u64`) must be picked in Phase 11's PLAN.md before implementation. Recommendation: Option A with latency benchmark.
+
+### Open questions for phase plans
+
+1. **Phase 10:** Merge `running_handles` into `active_runs` as a single `RunEntry { broadcast_tx, control }` map, or keep separate? (SUMMARY.md § Open Questions #2)
+2. **Phase 11:** Option A vs Option B for log-line id propagation. (SUMMARY.md § Open Questions #1)
+3. **Phase 12:** Reproduce the `(unhealthy)` root cause before declaring the fix complete. (SUMMARY.md § Open Questions #3)
 
 ### Pending Todos
 
-None.
+- `/gsd-plan-phase 10` — next step; decomposes Phase 10 (Stop-a-Job + hygiene preamble) into plans.
+- Create feature branch `gsd/phase-10-stop-a-job` (or similar) before landing any Phase 10 commits. All v1.1 work lands via PR on feature branches — no direct commits to `main`.
 
 ### Blockers/Concerns
 
-None. `v1.0.0` was re-cut and `v1.0.1` shipped on top (PR #22, commit `eb91e52`) closing the post-ship gaps:
-1. **Issue #20** — `[defaults]` section now correctly merged into per-job config (PR #21).
-2. **`cmd` field gap** — `JobConfig.cmd` field added and threaded through (PR #21); validator now rejects `cmd` on non-docker jobs (PR #22).
-3. **`delete = false` honored** — `cleanup_container` branches on `JobConfig.delete` instead of always force-removing (PR #22).
-4. **GHCR OCI annotations** — `DOCKER_METADATA_ANNOTATIONS_LEVELS=index,manifest` lands annotations on both top-level and per-platform manifests (PR #22).
-5. **Builder base + license metadata** — Debian 13 (trixie) builder, `Cargo.toml` license corrected to `MIT` (PR #22).
+None.
 
-Both `v1.0.0` and `v1.0.1` git tags exist on `main`. `Cargo.toml` is at `1.0.1`. v1.0 milestone audit verdict (86/86 requirements Complete, 9/9 nyquist-compliant) still holds.
-
-Three Phase 9 UAT items are accepted as deferred to natural post-merge validation per the audit verdict — see `.planning/milestones/v1.0-MILESTONE-AUDIT.md` § `deferred_post_merge_observation`. They are NOT blockers.
+Three Phase 9 UAT items from v1.0 are accepted as deferred to natural post-merge validation per the v1.0 audit verdict — see `.planning/milestones/v1.0-MILESTONE-AUDIT.md` § `deferred_post_merge_observation`. They are NOT blockers for v1.1.
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commit | Status | Directory |
-|---|-------------|------|--------|--------|-----------|
-| 260414-gbf | Fix [defaults] merge bug + `delete`/`cmd` threading + GHCR labels/annotations + parity audit + QUICKSTART/CONFIG docs | 2026-04-14 | 41f61e4 | Verified | [260414-gbf-fix-defaults-merge-bug-issue-20-defaults](./quick/260414-gbf-fix-defaults-merge-bug-issue-20-defaults/) |
+_(None during v1.1 so far. v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE-AUDIT.md`.)_
 
 ## Session Continuity
 
-Last session: 2026-04-14 — PR #22 merged (`v1.0.1` minor fixes: GHCR annotations, cmd/delete validation, trixie base, MIT license metadata). v1.0.0 re-cut and v1.0.1 tagged on top.
-Stopped at: v1.0 milestone fully shipped — both `v1.0.0` and `v1.0.1` tags live on `main`.
-Resume command: `/gsd-new-milestone` to begin v1.1 planning.
+Last session: 2026-04-14 — `/gsd-new-milestone` kickoff + requirements definition + roadmap creation. Locked Shape A + rc cadence, wrote PROJECT.md + REQUIREMENTS.md + research/{STACK,FEATURES,ARCHITECTURE,PITFALLS,SUMMARY}.md, then created ROADMAP.md with 5 phases (10–14) mapped to 3 rcs. All 31 v1.1 requirements assigned to exactly one phase.
+Stopped at: Roadmap created; ready to run `/gsd-plan-phase 10` to begin Phase 10 execution.
+Resume command: `/gsd-plan-phase 10` — decomposes Stop-a-Running-Job + hygiene preamble into executable plans. Recommended to do the Stop spike (validate `RunControl` + `StopReason::Operator` round-trip on all three executors) as the first plan in Phase 10.
 
-Last activity: 2026-04-14 - Shipped v1.0.1 via PR #22 (eb91e52)
+Last activity: 2026-04-14 — v1.1 roadmap created (5 phases, 3 rcs)

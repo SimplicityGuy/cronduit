@@ -1,987 +1,1222 @@
-# Pitfalls Research
+# Cronduit v1.1 — Pitfalls Research
 
-**Domain:** Self-hosted Docker-native cron scheduler (Rust + bollard + sqlx + web UI)
-**Researched:** 2026-04-09
-**Confidence:** HIGH (for core bollard/Docker/SQLite/cron DST pitfalls — multiple independent sources and known ecosystem bugs); MEDIUM (for @random correctness — largely original design territory, cross-checked against cron library behavior)
+**Dimension:** Integration Pitfalls (subsequent milestone, not greenfield)
+**Milestone:** v1.1 "Operator Quality of Life"
+**Researched:** 2026-04-14
+**Confidence:** HIGH — every pitfall is grounded in a direct read of the shipped v1.0.1 source tree. Line numbers and file paths included where nontrivial.
 
-This document catalogs pitfalls specifically relevant to Cronduit's architecture. Generic "write good Rust" advice is excluded. Each pitfall maps to a roadmap phase and a concrete prevention strategy.
-
----
-
-## Critical Pitfalls
-
-### Pitfall 1: Docker socket mount is quietly root-equivalent, and the README doesn't say so
-
-**What goes wrong:**
-Cronduit mounts `/var/run/docker.sock` read-write. Any code path that reaches the Docker API — including a future bug in the web UI that lets a user influence `image`, `volumes`, or `command` — is effectively arbitrary code execution as root on the host. A user reading the README as "it's a cron runner" will not intuit that exposing the web UI to a LAN they don't fully trust, or letting a compromised job container influence config, is equivalent to handing out host root.
-
-**Why it happens:**
-The docker.sock owner is root, and granting access to it is equivalent to unrestricted root on the host. An attacker can trivially `docker run -v /:/host ...` and write to the real filesystem. Read-only mounting the socket does NOT mitigate this — the API accepts GETs that still allow container creation via workarounds, and most Cronduit operations need write access anyway. With the unauthenticated v1 web UI, any network-adjacent actor who can reach `:8080` AND trigger a "Run Now" on a job whose config they can influence has host root. Even without config influence, a "Run Now" plus the ability to submit an arbitrary image is full compromise.
-
-**How to avoid:**
-1. **README SECURITY section is non-negotiable and must be above the fold.** State plainly: "Cronduit requires read-write access to the Docker socket. This is equivalent to root on the host. Do not expose the Cronduit web UI to any network you do not fully trust. v1 ships without authentication."
-2. **Ship a THREAT_MODEL.md** enumerating: (a) what mounting the socket grants, (b) what happens if the web UI is reachable by an untrusted client, (c) what happens if an attacker can edit the config file, (d) what happens if a malicious image is scheduled.
-3. **Default bind to `127.0.0.1:8080`, not `0.0.0.0:8080`.** Force the operator to consciously opt into LAN exposure. This single decision prevents most accidental internet exposure.
-4. **Refuse to start if bound to `0.0.0.0` AND config file contains no warning acknowledgment** (e.g., require `[server] i_understand_no_auth = true`). Annoying but correct for v1.
-5. **Log a loud warning every 5 minutes** while bound to non-loopback without auth: `"WARN: web UI bound to <addr> without authentication — equivalent to root-level access if reachable"`.
-6. **docker-compose.example.yml must use `expose:` not `ports:`** for the web UI, forcing users to consciously add a reverse proxy.
-
-**Warning signs:**
-- README reviewer says "wait, what does mounting the socket actually allow?"
-- Default config has `bind = "0.0.0.0:8080"` with no auth nag.
-- First issue from an adopter is "my Cronduit was compromised."
-
-**Phase to address:** Phase 1 (binding default + startup nag) AND Phase N-1 release-prep (README/THREAT_MODEL). This pitfall cannot be deferred — it's table stakes for responsible OSS release.
-
-**Severity:** CRITICAL
+> This document adapts the default `research-project/PITFALLS.md` template. The standard template is greenfield-oriented ("what domain mistakes should we avoid?"); for v1.1 the interesting pitfalls are **integration pitfalls** — where newly added v1.1 code meets the existing v1.0.1 code surface. Each pitfall below is anchored to a specific file + line in the current tree, with a prevention strategy that can be transformed into a named test case by REQUIREMENTS.md.
+>
+> v1.0's domain pitfalls (`auto_remove` race, `container:<name>` target-gone, log back-pressure, orphan reconciliation, unauthenticated UI + docker.sock) are already mitigated in the shipped code; this document references them rather than re-flagging them. Where a v1.1 feature re-enters one of those hazard zones, the pitfall below calls it out explicitly as a **regression risk**.
 
 ---
 
-### Pitfall 2: `container:<name>` network mode breaks silently when the target container restarts
+## How to Read This File
 
-**What goes wrong:**
-A job configured with `network = "container:vpn"` runs fine for weeks. The VPN container restarts (update, crash, host reboot). The next Cronduit run attempting to spawn into `container:vpn` fails with `cannot join network namespace of a non running container`, or the job starts into a *stale* network namespace that no longer has external connectivity. Worst case: the operator sees "job failed" in the dashboard but has no signal that the root cause is upstream container health, not their job.
+Each feature section has the pitfalls ranked **Critical → Moderate → Minor** for that feature. Every pitfall has:
 
-**Why it happens:**
-Docker's `container:<name>` mode attaches the new container to another container's network namespace at spawn time. If the target is not running, the create call fails. If the target has been restarted but has a different PID/ns, the attachment may still succeed but the namespace lifecycle is fragile — Moby has known races here ([moby#50326](https://github.com/moby/moby/issues/50326)). Cronduit is explicitly designed around this mode (it's the ofelia-killer feature), so this is a first-class failure mode, not an edge case.
+- **Where:** the file(s) and (where relevant) line numbers the pitfall touches
+- **What goes wrong:** the failure mode in plain language
+- **Why:** the specific v1.0 code shape or external ecosystem bug that causes it
+- **Prevention:** an actionable fix — ideally a named test case or a specific code pattern
+- **Test case name (T-xxx):** a stable identifier REQUIREMENTS.md can reference
 
-**How to avoid:**
-1. **Pre-flight check before spawn:** If the job uses `container:<name>`, inspect the target container first via bollard. If it's not `running`, record a structured failure reason (`network_target_not_running`) — do NOT just surface Docker's raw error.
-2. **Distinct failure category in the UI and metrics:** `failures_total{reason="network_target_unavailable"}` — this is the single most useful operational signal for the homelab VPN use case.
-3. **Document clearly** in README and job config docs: "If your target container restarts, dependent jobs will fail. This is a Docker limitation, not a Cronduit bug. Consider using named networks instead if your workload tolerates it."
-4. **Optionally (v1.1):** Add `network_wait_for_target = "30s"` — poll the target container until running, or fail with the structured reason after timeout.
-5. **Never silently retry into a different network.** That would violate operator intent (the whole point is "this job MUST go through the VPN").
-
-**Warning signs:**
-- Dashboard shows "failed" with only Docker's raw error message.
-- Operator can't distinguish "my script had a bug" from "the VPN was down."
-- No metric dimension for network-target failures.
-
-**Phase to address:** Phase 3 (Docker execution) must implement the pre-flight check and structured failure. This is the single feature that justifies Cronduit existing over ofelia — it must be best-in-class.
-
-**Severity:** CRITICAL
+A pitfall marked with 🔗 **v1.0-P#N** indicates it touches a hazard zone already documented in `.planning/milestones/v1.0-research/PITFALLS.md` — fixing it must not re-open that v1.0 pitfall.
 
 ---
 
-### Pitfall 3: `wait_container` vs `auto_remove` race loses exit codes
+## Feature 1 — Stop a Running Job (new `stopped` status)
 
-**What goes wrong:**
-Job container exits with code 1. Because `auto_remove = true` (the v1 default), the Docker daemon removes the container. Meanwhile Cronduit's `wait_container` stream is racing to read the exit code. If the daemon wins, `wait_container` returns an error like `No such container` instead of the exit code — and Cronduit records "failed with unknown exit code" instead of "failed with exit code 1." Worse, the run log stream (`logs` with `follow=true`) may be torn down mid-read, truncating stdout/stderr.
+### 1.1 CRITICAL — Cancellation-token identity collision (per-run vs shutdown)
 
-**Why it happens:**
-This is a well-documented Docker architecture race ([docker-py#2655](https://github.com/docker/docker-py/issues/2655), also referenced in [moby#8441](https://github.com/moby/moby/issues/8441)). The Docker daemon doesn't guarantee that `wait` completes before `auto_remove` fires. Airflow and other schedulers hit this intermittently. A naive bollard implementation that calls `create_container(auto_remove=true)` → `start` → `wait` → `logs` will lose data on a non-trivial fraction of runs.
+**Where:** `src/scheduler/mod.rs` L98, L122, L166, L215 — every spawn site creates `let child_cancel = self.cancel.child_token();`. `src/scheduler/command.rs` L127–L140 and `src/scheduler/docker.rs` L338–L358 both match on `cancel.cancelled()` and return `RunStatus::Shutdown`. `src/scheduler/run.rs` L238–L244 maps `Shutdown → "cancelled"`.
 
-**How to avoid:**
-1. **Do NOT use Docker's `auto_remove=true` flag for job execution.** Instead, create the container WITHOUT auto-remove, then:
-   - Start the container
-   - Attach/stream logs concurrently (see Pitfall 4)
-   - Call `wait_container` and collect exit code
-   - Explicitly call `remove_container(force=false)` AFTER wait completes and logs drain
-2. **Structure execution as a state machine:** `Creating → Starting → Running → Exited → LogsDrained → Removed`. Each transition is observable and recordable. If Cronduit crashes between `Exited` and `Removed`, startup reconciliation (Pitfall 9) cleans up the orphan.
-3. **Record exit code BEFORE remove.** Persist to SQLite as soon as wait returns, not after remove.
-4. **Integration test that explicitly triggers this race:** spawn a container that exits in <50ms, assert exit code and full stdout are captured reliably across 1000 runs.
+**What goes wrong:** Today there is **one single path** from a cancelled token to a finalized status string: `Shutdown → "cancelled"`. If v1.1 adds `SchedulerCmd::Stop { run_id }` that simply calls `.cancel()` on a per-run child token, the executor has no way to distinguish "operator clicked Stop" from "SIGTERM arrived" — both paths reach the same `cancel.cancelled()` arm and both produce `status="cancelled"`. The user-visible effect: the Stop button writes `cancelled` rows that are indistinguishable from graceful-shutdown rows, the `/metrics` counter `cronduit_runs_total{status="stopped"}` stays flat forever, and the UI run-history badge shows the wrong label.
 
-**Warning signs:**
-- Run records with status="success" but empty logs.
-- Run records with exit_code=NULL and status="failed".
-- Intermittent test flakes in container execution tests.
-- "No such container" errors in tracing output.
+**Why:** `CancellationToken` carries no payload. Both `self.cancel` (graceful shutdown root) and every `child_token()` derived from it fire on `.cancelled()` with zero context. A naive `SchedulerCmd::Stop` handler that cancels a stored child token is **observationally identical to the shutdown path** from inside the executor.
 
-**Phase to address:** Phase 3 (Docker execution). This must be correct from day one; retrofitting the state machine later is painful because it changes the persistence schema.
+**Prevention:** Adopt ARCHITECTURE.md §3.1 "Option A" — per-run `Arc<AtomicU8> stop_reason` set by the scheduler **before** calling `.cancel()`. The executor's cancelled-branch reads the reason **after** it fires and returns `RunStatus::Stopped { reason: Operator }` or `RunStatus::Shutdown` based on the atomic. Never infer the cause of cancellation from the token identity.
 
-**Severity:** CRITICAL
+**Test case:**
+- **T-V11-STOP-01:** Spawn a long-running command job, set `stop_reason = Operator`, cancel, assert `status="stopped"` in DB and `RunStatus::Stopped` returned from executor.
+- **T-V11-STOP-02:** Same setup but instead cancel the **root** `self.cancel`; assert `status="cancelled"` is still produced (no regression for shutdown path).
+- **T-V11-STOP-03:** Cancel with `stop_reason = Operator` **before** spawn completes (pre-insert); assert behavior is safe and the row either never exists or exists as `stopped`, never as `running`.
+
+**Severity:** CRITICAL — breaks the entire feature signal.
 
 ---
 
-### Pitfall 4: Log streaming back-pressure causes OOM or dropped lines
+### 1.2 CRITICAL — Stop-vs-natural-completion race (already called out in ARCHITECTURE.md §5.1)
 
-**What goes wrong:**
-A job container produces 500 MB of stdout in 30 seconds (not unusual for a backup or rsync job). Cronduit calls `Docker::logs(follow=true)` and pipes the stream into a channel that feeds both (a) the SQLite writer and (b) any live web UI viewers via SSE. Two failure modes:
-- **Unbounded buffering:** The SQLite writer can't keep up, the channel is unbounded, memory grows to 500 MB+, OOM-kill in a memory-constrained homelab.
-- **Silent drops:** The channel is bounded with `try_send`, failures are dropped on the floor, the stored log is missing chunks with no indication.
+**Where:** `src/scheduler/mod.rs::SchedulerLoop::run` — the main `tokio::select!` arm at L143 (`join_set.join_next()`) runs in the **same event loop** as the `cmd_rx.recv()` arm at L162. Without a dedicated per-run control map, a `SchedulerCmd::Stop { run_id: 42 }` arriving at T=0 can race a `JoinNext → RunResult { run_id: 42, status: "success" }` arriving at T=+1μs.
 
-Additionally: very long lines (e.g., a single 100 MB JSON blob, or a binary dump) break naive "split on newline → one DB row per line" schemas — either one row is enormous, or the "line" concept is meaningless.
+**What goes wrong:** Three bad outcomes are possible:
 
-**Why it happens:**
-Bollard exposes logs as an async Stream, which follows Rust's zero-cost abstractions by design: the stream doesn't apply back-pressure to the producer (Docker daemon) — it applies back-pressure to the consumer. If the consumer doesn't handle the buffering strategy explicitly, both failure modes are the default. The SSE path compounds this because the UI viewer is a second consumer that can stall (slow browser, closed tab, network hiccup) without the server noticing promptly.
+1. Stop handler cancels the token of an already-finished task (harmless but a race-condition-y API shape).
+2. Stop handler overwrites a `success` / `failed` DB row to `stopped` — a **lie** about what actually happened.
+3. The executor's `cancel.cancelled()` branch fires **after** the task has already moved past the `tokio::select!` and is waiting on `finalize_run`'s DB write, producing an inconsistent dual-write.
 
-**How to avoid:**
-1. **Bounded channels with an explicit drop policy.** Use `tokio::sync::mpsc::channel(N)` with N small (e.g., 256 lines or 1 MB). On full, apply *tail-sampling*: drop oldest non-critical chunks and record a `[cronduit: N lines dropped due to back-pressure]` marker in the DB so operators see the gap.
-2. **Chunk-based, not line-based, storage.** Store log blobs as `(run_id, stream, seq, bytes, captured_at)` where `bytes` is capped (e.g., 64 KB per row). A single giant line spans multiple rows. A line-oriented view can reconstruct lines at query time; a "raw bytes" view is always correct.
-3. **Decouple DB writer from SSE broadcast.** SSE viewers subscribe to an in-memory broadcast channel (`tokio::sync::broadcast`) that is ALLOWED to drop for slow consumers. The DB writer is a separate fire-and-forget task with its own bounded buffer. A slow browser MUST NOT cause log loss to SQLite.
-4. **Enforce per-run output cap** (configurable, default e.g. 10 MB). On exceed: truncate, mark run metadata with `log_truncated=true`, display prominently in UI.
-5. **Sanitize for UI rendering:** binary bytes, NUL bytes, and very long lines must be safe to render (see Pitfall 13).
+**Why:** The existing executor `tokio::select!` does not have a deterministic ordering between "child exited" and "cancel fired" — whichever arm yields first wins. Once one arm wins, the other is structurally ignored by `select!`. But the scheduler loop has no visibility into which arm won, so a Stop issued at the same wall-clock moment as natural exit is a TOCTOU.
 
-**Warning signs:**
-- Cronduit RSS grows linearly with job output size.
-- Reports of "some log lines missing" but no error in metrics.
-- OOM-kills in `docker stats` for the Cronduit container during long jobs.
-- Browser tab freezing when opening a run detail page for a chatty job.
+**Prevention:** Pin the ordering in **the scheduler loop**, not in the executor. Concretely:
 
-**Phase to address:** Phase 3 (execution) — the bounded channel and chunk storage must exist from the first execution implementation. Phase 5/6 (web UI) — SSE decoupling.
+1. Every `run_job` spawn registers a `RunControl` into `running_handles: HashMap<i64, RunControl>` before the spawn returns (use a startup barrier).
+2. `join_set.join_next() → RunResult` **removes** the entry from `running_handles` atomically before returning control to the main loop.
+3. `SchedulerCmd::Stop { run_id }` acquires the map entry **once** — if present, sets `stop_reason = Operator` then cancels; if absent, returns `StopResult::AlreadyFinished { final_status }` by reading `job_runs` directly. **No DB write from the Stop handler ever**; only the executor's cancel branch writes `stopped`.
+4. The executor's `stop_reason` read is the **single** authoritative source for "operator stopped this run"; any `success/failed/timeout/error` return path **wins** over a racing Stop because the executor never consults `stop_reason` on those paths.
 
-**Severity:** CRITICAL
+**Test cases:**
+- **T-V11-STOP-04:** Use `tokio::time::pause` to spawn a job that exits at T+1ms; send Stop at T+0. Assert the **natural** status wins (no `stopped` overwrite). Run 1000 iterations to catch order-of-operations bugs.
+- **T-V11-STOP-05:** Stop for an unknown `run_id` → API handler returns 404; no DB touch; `running_handles` unchanged.
+- **T-V11-STOP-06:** Stop for a `run_id` that completed 5 minutes ago → API handler returns `AlreadyFinished { final_status: "success" }`; no DB touch.
+
+**Severity:** CRITICAL. This is the highest-risk integration pitfall in v1.1.
 
 ---
 
-### Pitfall 5: DST and timezone handling is hand-rolled, not delegated to a library that explicitly tests DST
+### 1.3 CRITICAL — `FEATURES.md` proposes `kill_on_drop(true)` for command/script — that is a REGRESSION
 
-**What goes wrong:**
-- **Spring forward:** A job scheduled `30 2 * * *` (daily at 02:30) on the day of DST spring-forward either (a) silently never runs (gap doesn't exist), (b) runs 30 min late at 03:00, or (c) runs twice.
-- **Fall back:** A job scheduled `30 1 * * *` runs twice on the fall-back day because 01:30 occurs twice in wall-clock time.
-- **Container `TZ` drift:** The Cronduit container has no `TZ` set, uses UTC. The operator interprets schedules in America/Los_Angeles. Everything is 7-8 hours off and intermittently wrong across DST.
-- **Timezone not persisted:** The operator changes the system timezone, Cronduit now computes different "next run" times for the same schedule. Previously-scheduled runs get weird semantics.
+**Where:** `.planning/research/FEATURES.md` L93 literally says: *"the spawned process is killed via the existing tokio cancellation token + `kill_on_drop(true)` pattern. No process-group walk."*
 
-**Why it happens:**
-Cron libraries vary wildly in DST handling. `cron` (zslayton) has known weekday numbering quirks inherited from Quartz. Hand-rolling cron arithmetic over `chrono::NaiveDateTime` works 99.5% of the time and subtly breaks twice a year. DST is the single most common "we ran in production for a year, then March came" pitfall for any scheduler.
+**What goes wrong:** The current v1.0 code is **strictly better** than the proposed v1.1 pattern. `src/scheduler/command.rs` L203 spawns with `.process_group(0)` and L150–L167 kills the entire process group via `libc::kill(-pid, SIGKILL)`. Same for `src/scheduler/script.rs` L89. This kills **all grandchildren** of a shell pipeline like `sh -c 'curl … | tee log.txt'`. Switching to `kill_on_drop(true)` would:
 
-**How to avoid:**
-1. **Use `croner-rust`** — it explicitly documents DST behavior aligned with Vixie-cron / OCPS spec: spring-forward gap → fixed-time jobs run at first valid second after gap; fall-back overlap → fixed-time jobs run once at first occurrence. This matches operator intuition and is testable.
-2. **Mandatory `[server] timezone = "..."` in config,** defaulting to `UTC`. Never implicitly use host timezone. Document that changing this retroactively changes "next run" semantics.
-3. **Compute all schedule arithmetic in the configured timezone using `chrono_tz::Tz`.** Store UTC in the database (`next_run_at`, `started_at`, `ended_at`) and convert at render/compute time.
-4. **DST regression test suite:** Unit tests with frozen clocks on March 9 2025 02:00, Nov 2 2025 01:00 (and equivalent for 2026/2027) asserting spring-forward and fall-back behavior for fixed-time and wildcard schedules.
-5. **Web UI shows both UTC and local for next_run / last_run.** An operator eyeballing "last run was 02:30" on a DST day needs to see `02:30 PDT (09:30 UTC)` to debug correctly.
-6. **Dockerfile sets `TZ=UTC`** by default in the image, and docs explicitly recommend operators set `TZ` in compose to match their config timezone.
+1. Only kill the direct child (the `sh`), leaving `curl` and `tee` as orphans adopted by PID 1 (inside the container, that's `cronduit` itself — the parent).
+2. Produce zombie processes on long-running shell pipelines — exactly the "zombie processes on local jobs" pitfall the question flagged.
+3. Rely on `Drop` timing which is **not** deterministic when the child future is inside a `JoinSet`.
 
-**Warning signs:**
-- `cron` crate in Cargo.toml (not `croner`) — warrants a second look.
-- Any scheduling arithmetic using `Local::now()` or `chrono::NaiveDateTime`.
-- No DST tests in the test suite.
-- Dashboard shows only local time with no UTC reference.
+Also: `kill_on_drop(true)` must be set on the `Command` **before** spawn. You cannot retrofit it onto an existing `Child`. The existing code structure cannot absorb this change without rewriting both executors.
 
-**Phase to address:** Phase 2 (scheduler core). Choosing the cron library and the timezone model is a Phase 2 decision that cannot be deferred; rewriting it later breaks persistence.
+**Prevention:**
+1. **Do NOT adopt `kill_on_drop(true)` for command/script executors.** The existing `.process_group(0)` + `libc::kill(-pid, SIGKILL)` pattern is already correct; the Stop feature just needs a distinct cancel path that reaches the existing `kill_process_group` call with a different `stop_reason`.
+2. **Update FEATURES.md L93** to match the actual implementation pattern before phase planning begins. The architecture doc (§3.1) and the code both already use process-group kill — FEATURES.md is the outlier.
+3. Document in code comments that the existing process-group kill also handles shell-pipeline grandchildren — prevents a future refactor from silently adopting `kill_on_drop`.
 
-**Severity:** CRITICAL
+**Test case:**
+- **T-V11-STOP-07:** Run a command `sh -c 'sleep 120 | cat | cat'`; issue Stop; assert **all three** of `sh`, `cat`, `cat` are reaped (check via `/proc/<pid>` inspection inside a test container, or use `ps --ppid` in an integration test that mounts `/proc`).
+- **T-V11-STOP-08:** Same test against a script job body that launches a background process (`(sleep 300 &); echo started`); assert the background sleep is also killed by the process-group walk.
+
+**Severity:** CRITICAL (latent regression — correct today, would be broken by FEATURES.md proposal).
 
 ---
 
-### Pitfall 6: `@random` min-gap is "best effort" instead of an actual guarantee, and its state is invisible
+### 1.4 MODERATE — Bollard `kill_container` race with natural completion
 
-**What goes wrong:**
-- Operator configures 5 jobs with `schedule = "@random"` and `random_min_gap = "90m"` expecting jobs to be spread out. Implementation randomizes each job independently, then checks gaps pairwise — if there's a conflict, it shuffles one. But pathological inputs (e.g., 20 jobs with 90m gap in a 24h day) are mathematically infeasible and the implementation either infinite-loops, silently drops the gap constraint, or generates a non-random distribution (first jobs keep their random slots, later ones get crammed).
-- Operator reloads config. All `@random` schedules re-randomize silently. Yesterday's "daily random" ran at 03:14; today it runs at 21:47. The operator has no idea when "today's random" is, can't plan around it, can't correlate with upstream events.
-- Operator asks "when will job X next run?" The UI shows a computed next-run based on the resolved schedule, but the resolution process is opaque — they can't tell it's random vs. fixed without reading the config file.
-- Cronduit restarts. `@random` re-rolls. A job that was scheduled for 04:00 is now scheduled for 19:00. An operator who was waiting for it to run "any minute now" is now waiting 15 hours.
+**Where:** `src/scheduler/docker.rs` L265–L358 — the `tokio::select!` over `wait_container`, `sleep(timeout)`, and `cancel.cancelled()`.
 
-**Why it happens:**
-`@random` is Cronduit's second marquee feature (after `container:<name>` networking). It's also entirely original — there's no established library or spec. It's tempting to implement it as "pick a random time and call it a day" without thinking about: persistence, feasibility, observability, reloads, restarts, min-gap as a hard constraint, or the operator mental model.
+**What goes wrong:** Operator clicks Stop at T=0. Scheduler cancels per-run token. `cancel.cancelled()` arm fires and calls `docker.stop_container(t=10)`. Between the cancel firing and the `stop_container` request reaching the daemon, the container naturally exits. `stop_container` returns either:
 
-**How to avoid:**
-1. **Treat `@random` resolution as a first-class, persisted event.** On resolution, write a `schedule_resolutions` row: `(job_id, resolved_cron, resolved_at, expires_at, reason)`. This is what `next_run_at` reads from. The DB is the source of truth for "what is today's random."
-2. **Re-roll on a predictable cadence, not on every reload.** Default: once per calendar day in the configured timezone, at a stable time (e.g., 00:00 local). Config reloads do NOT re-roll unless the job's other fields changed. Restarts do NOT re-roll unless the resolution has expired.
-3. **Feasibility check at config-load time.** Given N `@random` jobs sharing the same day and a `min_gap` of G, verify `N * G ≤ 24h`. If infeasible, FAIL LOUDLY at startup (not silently drop the constraint). Error message: `"@random min_gap of 90m cannot be satisfied for 20 jobs in 24h (max 16). Reduce job count or lower min_gap."`
-4. **Constraint satisfaction, not retry-until-fits.** Use a deterministic feasibility algorithm: divide the day into N slots each of size (24h / N), place each job's random offset inside its slot with jitter bounded to preserve min-gap. This is guaranteed to satisfy min-gap if feasibility passes. Seed with a deterministic RNG keyed by `(date, job_name)` so the schedule is reproducible for debugging.
-5. **Surface resolutions in the UI.** Job detail shows: "Schedule: `@random` (today resolved to `14 17 * * *`, re-rolls at 00:00 tomorrow)." Dashboard badge distinguishes `@random` from fixed schedules.
-6. **Manual "re-roll now" and "pin to today's resolution" actions** for operators debugging.
-7. **Structured log event on every re-roll:** `{"event": "random_resolved", "job": "...", "previous": "...", "next": "...", "reason": "daily_rollover"}`. Makes log-based audit trivial.
-8. **Metric:** `cronduit_random_resolutions_total{job, reason}` and `cronduit_random_feasibility_failures_total`.
+- `BollardError::DockerResponseServerError { status_code: 304, message: "Container already stopped" }` — the expected case; we should treat it as success.
+- `BollardError::DockerResponseServerError { status_code: 404, message: "No such container" }` — possible if the post-drain remove fired first from another code path (shouldn't happen today because `maybe_cleanup_container` runs **after** the select, but worth testing).
+- Network error mid-request — genuine error.
 
-**Warning signs:**
-- `@random` resolution lives in an in-memory `HashMap` rather than a DB table.
-- No feasibility check — or the check logs a warning and continues.
-- UI shows `@random` without revealing the resolved value.
-- Re-roll cadence is "on config reload" or "on restart" rather than time-based.
-- No tests for N jobs with infeasible min-gap.
+The first case is **not** a failure but today's `cancel.cancelled()` arm calls `.await.ok()`-style on `stop_container` (L341) and ignores the result entirely. That's fine for graceful shutdown but the **Stop feature** needs to confirm the container was reaped before writing `status="stopped"`, otherwise you can get `stopped` rows whose containers are still running.
 
-**Phase to address:** Phase 2 (scheduler core) — data model and resolution algorithm. Phase 5 (UI) — surface resolutions. This is the single feature most likely to embarrass Cronduit publicly if shipped sloppily — it's novel, visible, and "how does `@random` work?" will be the top README question.
+**Why:** The v1.0 cancel path assumes the container MUST be stopped because the whole process is exiting. The v1.1 Stop path needs stronger guarantees because the process continues. The daemon-side race is documented in moby#8441 (referenced in v1.0 PITFALLS.md Pitfall #3) and historical bollard issues where `stop_container` on an already-exited container returns 304.
 
-**Severity:** CRITICAL
+**Prevention:**
+1. On operator-initiated stop, after `stop_container` returns, **inspect the container** to confirm state transitioned to `exited` or `dead`. If `stop_container` returned 304/404, treat as success (container already reaped). Only a network/daemon error should surface as an executor `Error`.
+2. Log the 304/404 case at `debug` level with a `cronduit.docker.stop_raced_natural_exit` target so operators can distinguish benign races in post-mortems.
+3. **Do not re-introduce `auto_remove=true`.** The existing `maybe_cleanup_container` runs after the select and must remain the single removal point (🔗 **v1.0-P#3 `auto_remove` race**).
+
+**Test cases:**
+- **T-V11-STOP-09:** Stop a docker job whose container has just exited (race window <10ms); assert `status="stopped"`, `exit_code` is captured if available, no orphan left behind.
+- **T-V11-STOP-10:** Stop a docker job whose daemon returns transport error on `stop_container`; assert `status="error"` with a distinct `error_message` (not `"stopped"`).
+- **T-V11-STOP-11:** Verify `cargo tree -i openssl-sys` stays empty after adding the new Stop path (no new crate dep should pull OpenSSL).
+
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 7: SQLite write contention kills throughput the first time the log writer and the scheduler step on each other
+### 1.5 MODERATE — `stopped` status vs orphan reconciliation (§5.5 — already covered, pre-fixed)
 
-**What goes wrong:**
-Cronduit ships with SQLite as the default. A long-running job produces chatty logs; the log-writer task hammers `INSERT INTO job_logs`. Meanwhile the scheduler is trying to `UPDATE jobs SET next_run_at = ?` on its tick, and the web UI is trying to `INSERT INTO job_runs` for a "Run Now" click. SQLite's WAL mode serializes writers — if `busy_timeout` is unset (default: 0), the second writer gets `SQLITE_BUSY` immediately and sqlx returns an error. Cronduit either crashes, drops the write, or livelocks on retry.
+**Where:** `src/scheduler/docker_orphan.rs::mark_run_orphaned` L114–L142.
 
-Even WITH WAL mode and a long busy timeout, using a default sqlx connection pool of multiple connections for writes creates ping-pong lock contention: each connection thinks it's the writer, they take turns waiting for each other, and throughput collapses.
+**What goes wrong in theory:** Cronduit is killed mid-stop (operator clicks Stop, cronduit crashes before `finalize_run` writes `stopped`). Container is left with label `cronduit.run_id=42`; on next startup, orphan reconciler finds it, stops/removes it, and overwrites the DB row's status to `error` / `orphaned at restart`. The run was **explicitly stopped**, not orphaned.
 
-**Why it happens:**
-- SQLite's concurrency model: many concurrent readers, exactly one writer. WAL allows readers to proceed during a write, but writes serialize.
-- Default sqlx SqlitePool has multiple connections and will round-robin writes across them, causing them to wait on each other.
-- `busy_timeout` is not set by default in sqlx — you must enable it explicitly via `PoolOptions::after_connect` or connection URL params.
-- The "happy path" works in development with one user and few logs. It falls over the first time a real homelab workload with 20 jobs and chatty output hits it.
+**Why it is NOT a pitfall today:** `mark_run_orphaned` already includes `AND status = 'running'` in its WHERE clause (L120, L131). If the row has been finalized to `stopped` by the time reconciliation runs, the UPDATE is a no-op. The worry is inverted: the pitfall is only real if the **Stop path finalizes AFTER** the cancel fires, leaving the row briefly at `running` when cronduit crashes.
 
-**How to avoid:**
-1. **Separate read and write pools.**
-   - `write_pool`: `SqlitePool` with `max_connections = 1` — a single dedicated writer. All writes go through an in-process queue backed by this pool. Writes never conflict with each other.
-   - `read_pool`: `SqlitePool` with `max_connections = N` (e.g., 4-8) — concurrent readers for UI queries.
-2. **Enable WAL mode and pragmas on every connection.** sqlx `after_connect`:
+**Prevention:**
+1. The Stop handler in the scheduler loop **must not** touch the DB. Only the executor's finalize path writes `stopped`. This keeps the atomicity story identical to the existing graceful-shutdown path.
+2. Order of operations inside the executor on operator-stop: `kill container/process` → `wait for child/container exit` → `finalize_run(status="stopped")` → scheduler-loop removes `running_handles[run_id]`. If cronduit crashes at **any** step before `finalize_run`, the row stays at `running` and orphan reconciliation on next boot produces `error`/`orphaned at restart`. **This is acceptable** — a crashed stop becomes an orphan from the operator's perspective.
+3. Make the `status = 'running'` guard a test invariant so future refactors don't drop it.
+
+**Test cases:**
+- **T-V11-STOP-12:** Pre-seed a `job_runs` row with `status='stopped'`, run `reconcile_orphans` against a matching container; assert row stays `stopped` (the existing guard catches this, but lock the invariant in v1.1).
+- **T-V11-STOP-13:** Pre-seed a row with `status='cancelled'`; reconcile; assert row stays `cancelled`.
+- **T-V11-STOP-14:** Pre-seed with `status='running'`; reconcile; assert row transitions to `error` (existing behavior preserved).
+
+**Severity:** MODERATE (covered by existing guard; test lock prevents regression).
+
+---
+
+### 1.6 MODERATE — `classify_failure_reason` bounded-cardinality label break
+
+**Where:** `src/scheduler/run.rs::classify_failure_reason` L298–L313. Metric: `cronduit_run_failures_total{reason}`.
+
+**What goes wrong:** v1.0's run.rs L270 logs a `cronduit_run_failures_total` counter only when `status_str != "success"`. Adding `stopped` as a new status will, by default, flow through the `match status` branch at L299 and land in `_ => FailureReason::Unknown`, polluting the `reason="unknown"` bucket with every operator-stop. That corrupts the signal Prometheus alerts currently key off of.
+
+Also relevant: the `metrics` facade + `metrics-exporter-prometheus` setup eagerly describes label values at boot (see v1.0 STACK.md). If a new label value `stopped` on `cronduit_runs_total{status}` is not pre-declared in the describe step, Prometheus scrapers may see intermittent label creation — tolerable in practice but worth double-checking.
+
+**Why:** v1.0 explicitly chose bounded-cardinality enums (v1.0 Phase 6 decision) and any new status must be pre-declared; silently falling into `Unknown` also violates the "every failure is classified" discipline.
+
+**Prevention:**
+1. **Do NOT count operator-stopped runs in `cronduit_run_failures_total`.** A stopped run is a user action, not a failure. Exclude `status == "stopped"` from the failure-counter branch at `run.rs` L270.
+2. **Do** add `stopped` to the `cronduit_runs_total{status}` counter — increment with `status="stopped"`. Ensure the exporter's describe step lists `stopped` as a possible value alongside `success/failed/timeout/error/cancelled`.
+3. Optional: add a new metric `cronduit_runs_stopped_total{job}` (no labels beyond `job`) so operators can alert on "too many operator-stops" if they want. Keep it behind a documented decision; not required for v1.1.
+
+**Test cases:**
+- **T-V11-STOP-15:** Stop a running job; scrape `/metrics`; assert `cronduit_runs_total{status="stopped"}` incremented and `cronduit_run_failures_total` unchanged.
+- **T-V11-STOP-16:** Enumerate the describe step and assert `stopped` is in the declared set for `cronduit_runs_total`.
+
+**Severity:** MODERATE.
+
+---
+
+### 1.7 MINOR — Permission / authorization surface (documentation, not code)
+
+**Where:** `THREAT_MODEL.md` at repo root.
+
+**What goes wrong:** v1 has no auth. Anyone who can reach `:8080` can now kill any running job. This is **not a regression** — anyone who can reach `:8080` can already click "Run Now" on any job, and Run Now has a larger blast radius than Stop. But the threat model currently enumerates Run Now explicitly; Stop must be added to the same enumeration so an operator reading the threat model doesn't feel blindsided.
+
+**Prevention:** Add a one-paragraph entry to `THREAT_MODEL.md` under the "Untrusted Client" section: *"An attacker with LAN access to the Cronduit UI can stop any running job. This is strictly less dangerous than the existing Run Now capability and does not expand the documented blast radius."*
+
+**Test case:** N/A — documentation only. Phase-plan checklist item.
+
+**Severity:** MINOR.
+
+---
+
+## Feature 2 — Log Line Ordering (live→static transition)
+
+### 2.1 CRITICAL — Broadcast-before-insert means SSE id-less events cannot dedupe
+
+**Where:** `src/scheduler/run.rs::log_writer_task` L320–L350. Key lines:
+
+```rust
+for line in &batch {
+    let _ = broadcast_tx.send(line.clone());     // L334-L336: broadcast FIRST
+}
+...
+if let Err(e) = insert_log_batch(&pool, run_id, &tuples).await { ... }   // L341: insert SECOND
+```
+
+And `src/scheduler/log_pipeline.rs::LogLine` L22–L29 has only `{stream, ts, line}` — **no id field**.
+
+**What goes wrong:** ARCHITECTURE.md §3.3 proposes adding `id: Option<i64>` to `LogLine` and using it for SSE-backfill dedupe. But the current write path **broadcasts before insert**. At the moment a line reaches the SSE subscriber, the DB row does not yet exist — so no id is available. The architecture's proposed fix requires inverting this ordering: insert first, then broadcast with the assigned id.
+
+Inverting the order has a second-order effect: if the DB insert is slow, SSE subscribers see a visible lag that doesn't exist today. The current broadcast-before-insert is a deliberate latency optimization for live-tail UX.
+
+**Why:** `insert_log_batch` (`src/db/queries.rs` L365) uses a multi-row `INSERT` bulk statement without `RETURNING`. SQLite's `RETURNING` on bulk inserts returns **one row per inserted row** but requires changing the insert shape. Postgres supports it out of the box.
+
+**Prevention:** Two options, pick one and commit:
+
+**Option A (recommended) — Insert-then-broadcast.**
+1. Change `insert_log_batch` to `INSERT … RETURNING id` on both backends, returning `Vec<i64>` matching the input slice order.
+2. `log_writer_task` inserts the batch, populates `line.id = Some(returned_id)` on each line, THEN broadcasts.
+3. Measure insert latency before/after — if above ~50ms on SQLite for 64-line batches, reduce batch size or keep the broadcast path concurrent but tag every broadcast line with a monotonic-per-run counter that does NOT collide with future DB ids (see Option B).
+
+**Option B — Two-id scheme.**
+1. Add a monotonic `seq: u64` to `LogLine`, assigned by the log writer in receive order. Do NOT pretend it's the DB id.
+2. Broadcast carries `seq`; DB insert also writes `seq` into a new column.
+3. Backfill query returns `(seq, stream, ts, line)`; JS dedupes by `seq`. The `job_logs.id` primary key stays as-is.
+
+**Option A is simpler and matches the architecture doc; Option B avoids the latency hit but requires a schema change.** Recommendation: Option A, measure, fall back to Option B only if latency regression is user-visible.
+
+**Test case:**
+- **T-V11-LOG-01:** Produce a burst of 500 log lines; subscribe to SSE and concurrently paginate the static log viewer; assert every line appears exactly once (no duplicates, no gaps) in the SSE-then-static merge using `id`-based dedupe.
+- **T-V11-LOG-02:** Measure log insert latency on SQLite before/after the Option A change; assert p95 stays under 50ms for a 64-line batch.
+
+**Severity:** CRITICAL — blocks the entire §3.3 architecture plan unless resolved.
+
+---
+
+### 2.2 CRITICAL — Live→static swap target collision
+
+**Where:** `templates/pages/run_detail.html` L64–L82 (per ARCHITECTURE.md §2 row), the `#log-lines` div that hosts both the live SSE stream and the static partial.
+
+**What goes wrong:** When the SSE `run_complete` event fires today, the client swaps a static partial into the container. But the live SSE stream may still be mid-flight: the last 1–5 lines written just before `close()` are in the broadcast channel's buffer, not yet consumed, and arrive on the SSE socket **after** the static partial has been swapped in. The HTMX swap replaces `#log-lines` with the DB-backed full log, and the trailing SSE events then append inside the new static container — producing duplicates of the last handful of lines.
+
+**Why:** HTMX OOB (out-of-band) swaps and `hx-swap="innerHTML"` target the DOM by selector. The SSE handler writes to `#log-lines` via its own append logic. The static swap writes to `#log-lines` via HTMX. The two writers have no ordering guarantee because SSE is a separate network stream from the HTMX request that fetched the static partial.
+
+**Prevention:**
+1. **Use id-based dedupe (Feature 2.1 Option A).** After the static swap lands, late-arriving SSE events whose id is `<= max_backfill_id` are dropped client-side. The `static_log_viewer.html` partial must carry `data-max-id="{{ max_id }}"` on the container so the SSE listener can read it.
+2. **Alternatively**, close the SSE stream **before** fetching the static partial: listen for `run_complete`, call `sse.close()`, THEN fire `hx-get` for the static partial. Guarantees ordering but adds a blank-frame visual glitch on slow connections. Prefer id-based dedupe.
+3. **Test with a log-flush timing probe:** spawn a job whose final 10 lines are emitted in the last 100ms before exit; assert no duplicates in the DOM after the run-complete swap.
+
+**Test cases:**
+- **T-V11-LOG-03:** Browser-level test (or hand-rolled Playwright) — job completes, SSE `run_complete` fires, static partial swaps in, assert no line appears twice.
+- **T-V11-LOG-04:** Same test with artificial 200ms SSE delivery lag; assert dedupe still holds.
+
+**Severity:** CRITICAL — the feature title says "log lines rendering out of order"; this is the canonical failure mode.
+
+---
+
+### 2.3 MODERATE — `broadcast::Sender` ring-buffer lag races static backfill
+
+**Where:** `src/web/handlers/sse.rs` L48–L54. `tokio::sync::broadcast::error::RecvError::Lagged(n)` is handled today by emitting a `[skipped N lines -- reload page for full log]` marker.
+
+**What goes wrong:** The broadcast channel has capacity 256 (`run.rs` L101). A subscriber that's slow for even 500ms during a log burst (network hiccup, browser hidden tab) gets `Lagged(n)` and loses `n` lines. Today's behavior surfaces a marker string. With the v1.1 static-backfill flow, the correct recovery is **different**: on `Lagged`, the client should stop the SSE stream, re-fetch the static partial (which now contains the missed lines from the DB), and **not** attach a fresh SSE subscription unless the run is still running.
+
+Also: today's marker says *"reload page for full log"* — that's a manual step. v1.1 can do better.
+
+**Prevention:**
+1. Change the SSE handler's `Lagged` branch to emit a distinct `log_lag` event (not the current `log_line` with embedded HTML).
+2. Client HTMX handler for `log_lag` fetches `/partials/runs/{id}/static-log` (the existing static-log partial handler at `run_detail.rs::static_log_partial`) and swaps it in, automatically recovering the missed lines.
+3. Only emit the fallback "reload" marker if the static partial fetch fails.
+
+**Test cases:**
+- **T-V11-LOG-05:** Force a broadcast lag (stall a subscriber); assert the `log_lag` event fires and client auto-recovers via static fetch.
+- **T-V11-LOG-06:** Assert the client never gets stuck in a lag-recovery loop (recovery path must be idempotent and must not re-subscribe to SSE if the run has since completed).
+
+**Severity:** MODERATE — improves an existing signal rather than fixing a crash.
+
+---
+
+### 2.4 MINOR — Wall-clock timestamps are untrustworthy for ordering
+
+**Where:** `src/scheduler/log_pipeline.rs::make_log_line` L178–L184 — `ts: chrono::Utc::now().to_rfc3339()`.
+
+**What goes wrong:** Naive implementations use `ts` as the ordering key for merge-dedupe. Two lines captured in the **same millisecond** from a log burst get identical timestamps, so any dedupe-by-`(ts, line)` is broken. SSE reconnection adds to the hazard: a reconnected stream does not restart timestamps.
+
+**Why:** RFC3339 strings are not monotonic and cannot be compared as strict-less-than for ordering.
+
+**Prevention:** All ordering and dedupe must use the `id` (or `seq` per Feature 2.1 Option B). The timestamp stays in the UI as a display value only; it is never the dedupe key. Document this in a code comment on `LogLine`.
+
+**Test case:**
+- **T-V11-LOG-07:** Unit test that produces 100 lines in a tight loop; assert none share a `(ts, line)` pair in the output; assert every `id` is unique.
+
+**Severity:** MINOR.
+
+---
+
+## Feature 3 — "Error Getting Logs" Transient
+
+### 3.1 CRITICAL — Handler fires before `runs` row is committed (TOCTOU)
+
+**Where:** `src/web/handlers/run_detail.rs::run_detail` L140–L144 queries `get_run_by_id`; the scheduler path is `src/scheduler/run.rs::run_job` L75–L90 which inserts the row FIRST, then dispatches. Combined with `src/scheduler/mod.rs::SchedulerCmd::RunNow` at L164–L187.
+
+**What goes wrong:** Operator clicks "Run Now" in the dashboard. The API handler sends `SchedulerCmd::RunNow { job_id }` on an mpsc channel and returns immediately with a toast. The dashboard then auto-refreshes (HTMX polling). The new run appears in the list. Operator clicks into it. The run_detail handler queries `get_run_by_id(run_id)` — but the dashboard saw a stale copy from a previous poll, and the actual run_id from the most recent Run Now has not yet been inserted because the scheduler loop hasn't scheduled the task yet. Result: `Ok(None)` → 404.
+
+This is the classic TOCTOU: dashboard sees "run 42", user navigates, database doesn't have "run 42" yet.
+
+**Why:** The scheduler loop is single-threaded. Between `cmd_rx.recv()` at L162 and `join_set.spawn(run_job(…))` at L167, time passes. Inside `run_job`, `insert_running_run` at `run.rs` L76 is the commit point. A fast user clicking in under ~5ms can win the race.
+
+**Prevention:**
+1. **Insert the running row on the API thread** before returning from the `run_now` handler. This guarantees the row exists at the moment the dashboard ever sees the id. Pass the pre-inserted `run_id` in the `SchedulerCmd::RunNow` message (`SchedulerCmd::RunNow { job_id, run_id }`), and adjust `run_job` to accept an optional pre-inserted id instead of always calling `insert_running_run`.
+2. Alternatively, **never expose a run_id to the client until the row is committed.** Make the `run_now` handler synchronous on the DB write — the handler awaits a `oneshot::Sender<i64>` reply from the scheduler loop carrying the `run_id`. The toast then includes the id and the dashboard can safely reference it.
+3. As a defensive backstop, `run_detail` on `Ok(None)` should respond with a **retry-friendly 404** that the client transforms into a "still starting, please wait" HTMX partial with `hx-trigger="load delay:500ms"` instead of an error.
+
+**Recommendation:** Option 1 (insert on the API thread) is the cleanest. The run row is trivial (`{job_id, status='running', trigger, start_time}`) and can be written from the web process without touching the scheduler mpsc path at all.
+
+**Test cases:**
+- **T-V11-LOG-08:** Rapid-click "Run Now" then immediately navigate to the run detail; assert no 404 in 1000 iterations (use `tokio::time::pause` + deterministic ordering).
+- **T-V11-LOG-09:** `run_detail` on a non-existent run_id still returns 404 (the fix must not mask genuine 404s).
+
+**Severity:** CRITICAL — root cause of the reported "error getting logs" bug.
+
+---
+
+### 3.2 MODERATE — `job_logs` empty at t=0, handler treats "no logs yet" as error
+
+**Where:** `src/web/handlers/run_detail.rs::fetch_logs` L102–L111 wraps `get_log_lines` in `match`, returning `{items: vec![], total: 0}` on `Err`. At L104 it also **logs an error** via `tracing::error!`. The actual bug: the error log is loud, the empty-list case looks like the error case to a casual reader.
+
+**What goes wrong:** When a brand-new running job has zero log lines yet (very common — script hasn't produced output in the first 200ms), the handler path is fine (returns empty vec). But if `get_log_lines` errors for **any** reason (read-pool exhausted, transient SQLite busy, Postgres network blip), the page shows empty logs and the server tracing shows a loud error. A busy operator interprets this as "the system lost my logs."
+
+Additionally: there's no distinction between "no logs yet because the job just started" and "logs failed to load due to an error." The UI should make this clear.
+
+**Prevention:**
+1. Split the error path from the empty path. On `Err`, propagate a 500 (or a structured partial error) instead of an empty list. An empty list must **only** mean "no logs yet."
+2. In the template, render a contextual message when `logs.is_empty() && is_running`: "Waiting for output…" — distinct from "No logs for this run" which is shown for completed runs with no output.
+3. If the error is transient (e.g., pool exhausted), expose a retry via HTMX rather than a hard failure.
+
+**Test cases:**
+- **T-V11-LOG-10:** Brand-new running run with no log rows yet; assert `logs == []` is returned AND the template renders "Waiting for output…" (not an error).
+- **T-V11-LOG-11:** Force `get_log_lines` to `Err`; assert the handler returns an error partial, not an empty-list success.
+
+**Severity:** MODERATE.
+
+---
+
+### 3.3 MODERATE — HTMX `sseError` handler wipes content on transient reconnect
+
+**Where:** v1.0 HTMX integration in `templates/pages/run_detail.html`. The existing `hx-on::sse-error` handler (or equivalent) needs review — if it currently `innerHTML`-replaces `#log-lines` with an error, any transient SSE disconnect silently wipes the loaded static logs.
+
+**What goes wrong:** Browser briefly loses network. HTMX SSE extension fires the error event. If the handler clears `#log-lines` to show "connection error," the operator sees their existing logs disappear — even though they're safe in the DB and the next refresh will show them. Feels like a data-loss bug.
+
+**Prevention:**
+1. The SSE error handler must **append** a "reconnecting…" toast to a sibling `#log-status` banner, NEVER modify `#log-lines`.
+2. On `sse-connect` (reconnect success), remove the toast without touching `#log-lines`.
+3. If the error is permanent (run completed, server said close), fire the static-partial fetch flow (Feature 2.2).
+
+**Test case:**
+- **T-V11-LOG-12:** Simulate an SSE network hiccup while viewing a running job; assert existing log content in `#log-lines` is untouched; assert a transient banner appears and then clears on reconnect.
+
+**Severity:** MODERATE.
+
+---
+
+### 3.4 MODERATE — SSE endpoint fails when the run transitioned to finished between handler spawn and subscribe
+
+**Where:** `src/web/handlers/sse.rs::sse_logs` L34–L37:
+
+```rust
+let maybe_rx = {
+    let active = state.active_runs.read().await;
+    active.get(&run_id).map(|tx| tx.subscribe())
+};
+```
+
+Followed by L40–L65 which emits `run_complete` immediately if `maybe_rx` is `None`.
+
+**What goes wrong:** Page loads, renders `is_running=true`, template attaches SSE. Network latency is 100ms. Meanwhile the run completes on the server and `run.rs::run_job` L276 removes the entry from `active_runs`. The SSE handler acquires the read lock, finds nothing, and immediately sends `run_complete`. The client triggers its run_complete handler, which fetches the static partial. **This is actually the correct behavior today** — the page self-heals.
+
+**However:** the v1.1 backfill flow (§3.3) needs to render the existing `logs` inside `#log-lines` on the initial page load. If the run is actually still running at page-render time but completes before the SSE subscribe, the sequence becomes: render static backfill → attach SSE → SSE immediately says `run_complete` → fetch static partial again → duplicate render. Without id-based dedupe (Feature 2.1), the operator briefly sees log lines rendered twice.
+
+**Prevention:**
+1. The static-partial fetch triggered by `run_complete` must be **idempotent on the client side** — replacing `#log-lines` innerHTML is safe because the static partial contains the full log. The flash of duplicate content lasts <1 frame but is visible.
+2. Alternatively: if the SSE handler's first event is `run_complete` with no prior `log_line` events, the client should treat that as "already finished" and trigger the static fetch **without** any intermediate state.
+3. Race test: deterministically ensure the transition doesn't produce a visible duplicate render.
+
+**Test case:**
+- **T-V11-LOG-13:** Start a short-lived job; navigate to its detail page; assert the page settles to the static state without visible duplication of any line.
+
+**Severity:** MODERATE.
+
+---
+
+## Feature 4 — Log Backfill on Navigate-Back
+
+### 4.1 CRITICAL — Gap between backfill and SSE subscribe
+
+**Where:** The sequence in the proposed §3.3 flow:
+1. `run_detail` handler queries `get_log_lines` → returns rows `[0..N]`
+2. Handler returns HTML; browser parses; SSE client attaches to `/events/runs/{id}/logs`
+3. SSE stream delivers lines `[M..]` where M is whatever was in the broadcast ring at subscribe time
+
+**What goes wrong:** If steps 1→3 span 50ms and 10 lines are written in that window, they're persisted to DB (visible at step 1's `max_id + 1..max_id + 10`) but NOT in the broadcast buffer at step 3 (already shifted out). The client sees a gap: DB lines `[0..N]`, then SSE lines `[N+11..]`, missing `[N+1..N+10]`.
+
+Alternatively: broadcast channel re-delivers lines `[N-5..]` (they're still in the ring); client sees 5 duplicates at the seam.
+
+**Why:** `tokio::sync::broadcast` has no replay-from-id semantics. A new subscriber gets whatever happens to be in the ring buffer at subscribe time, bounded by capacity (256).
+
+**Prevention:**
+1. **Id-based dedupe and gap detection.** Client records `max_backfill_id` (see Feature 2.1). On every SSE event:
+   - If `event.id <= max_backfill_id` → drop (duplicate).
+   - If `event.id == last_seen_id + 1` → append.
+   - If `event.id > last_seen_id + 1` → **gap detected**; re-fetch `/partials/runs/{id}/static-log?after={last_seen_id}` to fill the hole, then update `last_seen_id`.
+2. The gap-fill partial handler is new — add `fetch_logs_after(run_id, after_id) -> Vec<LogLineView>` to the DB layer.
+3. Log gap-detection events at `debug` level so operators can track how often they happen.
+
+**Test cases:**
+- **T-V11-BACK-01:** Navigate back to a running job in the middle of a 500-line burst; assert exactly 500 lines rendered at the end (no gaps, no duplicates). Run against both SQLite and Postgres.
+- **T-V11-BACK-02:** Force a deliberate gap (subscribe 10ms after backfill, inject 50 DB-only lines in between); assert the client auto-fills via `?after=` refetch.
+
+**Severity:** CRITICAL.
+
+---
+
+### 4.2 MODERATE — Duplicate lines on navigate-back (covered by Feature 2.1 + 4.1)
+
+**Where:** Same as 4.1. Covered by id-based dedupe.
+
+**Test case:**
+- **T-V11-BACK-03:** Load run detail twice in quick succession (simulating back-button navigation); assert both loads show identical line counts and identical last-id.
+
+**Severity:** MODERATE (covered by dedupe).
+
+---
+
+### 4.3 MINOR — Retention pruner race with backfill
+
+**Where:** `src/scheduler/retention.rs` (daily pruner) + `src/db/queries.rs::get_log_lines`.
+
+**What goes wrong:** Retention pruner runs at 03:00 and deletes old log rows. Operator opens a run-detail page at 03:00:00.500 for a run whose logs are about to be pruned. Backfill query runs at 03:00:00.600 during the prune batch, returns partial results, SSE attaches, and on refresh the static partial now shows 500 lines where the last page showed 1000.
+
+**Why:** v1.0 retention is batched with WAL checkpoint (see v1.0 STACK.md), so an in-progress prune can partially overlap a concurrent read.
+
+**Prevention:**
+1. Retention is a **background maintenance** task, not a user-facing guarantee. Document in code comments that log-line visibility for pruned runs is best-effort.
+2. If a job's start_time is within the retention window, its log rows must not be pruned. Double-check the prune query's WHERE clause.
+3. Test retention pruning concurrent with a read flow; assert the reader either sees old lines or sees pruned-empty — never an inconsistent mid-state (this is inherent to SQLite MVCC read snapshots via the reader pool, but worth an explicit test).
+
+**Test case:**
+- **T-V11-BACK-04:** Concurrently run the retention pruner and `get_log_lines` against the same run (before its retention cutoff); assert the reader always sees a consistent snapshot.
+
+**Severity:** MINOR.
+
+---
+
+## Feature 5 — Per-Job Run Numbers Migration
+
+**This is the single highest-risk migration in v1.1.** Deep pitfall coverage follows.
+
+### 5.1 CRITICAL — Migration step ordering (three-step split is mandatory)
+
+**Where:** New migrations in `migrations/{sqlite,postgres}/20260415_00000{0,1,2}_job_run_number*.up.sql`.
+
+**What goes wrong:** Combining "add column + backfill + add NOT NULL constraint" in a single migration creates multiple failure modes:
+
+1. **SQLite `ALTER TABLE ADD COLUMN` with `NOT NULL DEFAULT`** requires a default expression. A literal `DEFAULT 0` is wrong (not a real run number). A subquery default is not supported. You must add as nullable first.
+2. **Postgres DDL inside a transaction** can combine all three, but if the backfill fails mid-statement, the whole migration rolls back, leaving the column absent — which is the least bad outcome but still requires a re-run.
+3. **Resume after crash:** if the process is killed between the backfill UPDATE and the `ALTER TABLE … SET NOT NULL`, the partially-applied schema is inconsistent on Postgres (column exists, some nulls, no constraint) and **SQLx migration tracking will mark the migration as applied** because it's all one file.
+
+**Why:** SQLx applies each migration file atomically based on filename. An in-file crash leaves the tracking table in whatever state it was in at crash time — usually "not applied" if the transaction rolled back, but the failure mode depends on the backend.
+
+**Prevention:** Split into **three separate migration files** per backend:
+
+```
+20260415_000000_job_run_number_add_column.up.sql       -- ALTER TABLE ADD COLUMN job_run_number INTEGER (nullable)
+20260415_000001_job_run_number_backfill.up.sql         -- UPDATE … SET job_run_number = ROW_NUMBER() … WHERE job_run_number IS NULL
+20260415_000002_job_run_number_not_null.up.sql         -- ALTER TABLE … SET NOT NULL (Postgres) / table-rewrite (SQLite)
+```
+
+**Rationale:**
+- SQLx tracks each file separately. A crash in file 1 rolls back cleanly; re-run picks up where it left off.
+- The backfill file is idempotent (`WHERE job_run_number IS NULL`) — rerunning is safe.
+- The NOT NULL file can only succeed if the backfill completed; if not, the migration fails loudly and operators get a clear error instead of a silently corrupt schema.
+
+**Test cases:**
+- **T-V11-RUNNUM-01:** Start with a DB at migration file 0 (column exists, all nulls); run migrate; assert files 1+2 apply in order.
+- **T-V11-RUNNUM-02:** Start with a DB at migration file 1 partially applied (some rows backfilled); run migrate; assert remaining rows get backfilled and file 2 succeeds.
+- **T-V11-RUNNUM-03:** Start with a DB where file 1 was applied but file 2 failed mid-way; re-run migrate; assert the NOT NULL constraint applies cleanly.
+
+**Severity:** CRITICAL.
+
+---
+
+### 5.2 CRITICAL — SQLite `ALTER TABLE` restrictions vs Postgres `UPDATE … FROM`
+
+**Where:** The backfill migration SQL.
+
+**What goes wrong:** SQLite 3.33+ supports `UPDATE … FROM` (which is what ARCHITECTURE.md §3.2 recommends), but:
+
+1. **SQLite `ALTER TABLE … SET NOT NULL` does not exist.** The only way to add NOT NULL to an existing column is the 12-step table-rewrite pattern (`CREATE new table → INSERT SELECT → DROP old → RENAME`). This is documented in the SQLite "making other kinds of table schema changes" docs.
+2. **`sqlx-sqlite` 0.8.6 bundles SQLite ~3.46.** 3.33 is the minimum for `UPDATE … FROM`, so the bundled version is fine — but verify in CI via `SELECT sqlite_version()` to lock the assumption.
+3. **Postgres `UPDATE … FROM`** is standard and works cleanly; `ALTER TABLE … ALTER COLUMN … SET NOT NULL` is also standard.
+
+**Why:** SQLite's `ALTER TABLE` is intentionally limited. The table-rewrite pattern is mechanical but easy to get wrong (`PRAGMA foreign_keys` must be disabled during the rewrite; indexes must be recreated on the new table; triggers must be preserved).
+
+**Prevention:**
+1. **SQLite NOT NULL migration must use the table-rewrite pattern verbatim from the SQLite docs:**
+   ```sql
+   PRAGMA foreign_keys=OFF;
+   BEGIN TRANSACTION;
+   CREATE TABLE job_runs_new ( ... job_run_number INTEGER NOT NULL ...);
+   INSERT INTO job_runs_new SELECT id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, container_id, error_message, job_run_number FROM job_runs;
+   DROP TABLE job_runs;
+   ALTER TABLE job_runs_new RENAME TO job_runs;
+   -- Recreate indexes
+   CREATE INDEX idx_job_runs_job_id_start ON job_runs(job_id, start_time DESC);
+   CREATE INDEX idx_job_runs_start_time ON job_runs(start_time);
+   COMMIT;
+   PRAGMA foreign_keys=ON;
    ```
-   PRAGMA journal_mode = WAL;
-   PRAGMA synchronous = NORMAL;
-   PRAGMA busy_timeout = 5000;
-   PRAGMA foreign_keys = ON;
-   PRAGMA temp_store = MEMORY;
+2. **Assert SQLite version in a test** (`SELECT sqlite_version()`) so the `UPDATE … FROM` syntax requirement is locked.
+3. **Recreate every index** listed in the initial migration (`idx_job_runs_job_id_start`, `idx_job_runs_start_time`). Missing an index here silently regresses dashboard query performance.
+4. **Run the migration against a fixture database** with realistic data (≥100k rows) in CI before merging the migration.
+
+**Test cases:**
+- **T-V11-RUNNUM-04:** Unit test that runs the full migration chain against a seeded SQLite DB with 100k `job_runs` rows across 20 distinct `job_id`s; assert post-migration row count unchanged, all indexes present via `PRAGMA index_list`.
+- **T-V11-RUNNUM-05:** Same test against `testcontainers` Postgres.
+- **T-V11-RUNNUM-06:** Regression test that asserts `SELECT sqlite_version()` from the bundled sqlx-sqlite is `>= 3.33.0`.
+
+**Severity:** CRITICAL.
+
+---
+
+### 5.3 CRITICAL — Long-running migration vs container healthcheck timeout
+
+**Where:** `src/db/mod.rs::migrate` is called before `scheduler::spawn` — migrations run synchronously at startup. The Docker healthcheck (Feature 10) polls `/health` but the HTTP server isn't up until migrations complete.
+
+**What goes wrong:** On a homelab SQLite DB with 2M `job_runs` rows and slow spinning-rust storage, the backfill migration's `UPDATE … FROM (ROW_NUMBER() …)` could take 30+ seconds. Meanwhile:
+
+1. Docker healthcheck `start-period` defaults to `0s` unless explicitly set, so the container is marked `(unhealthy)` the moment the first check fires.
+2. `docker compose up -d` with `depends_on: { cronduit: { condition: service_healthy } }` deadlocks other services.
+3. SQLite's `UPDATE … FROM` with `ROW_NUMBER()` is effectively `O(N log N)` because the window function sorts. On 2M rows this is meaningful.
+
+**Why:** v1.0 never had a long-running startup migration; the initial migration was empty-table-only. v1.1 introduces the first migration that can take non-trivial wall time proportional to existing data.
+
+**Prevention:**
+1. **Dockerfile `HEALTHCHECK` must set `start-period` generously** — e.g., `--start-period=60s` (or higher) to accommodate realistic backfill times. Document the exact number in the compose example with a comment explaining why.
+2. **Chunk the backfill** if the table size exceeds a threshold. Instead of one giant UPDATE, loop in 10k-row batches with a `WHERE job_run_number IS NULL LIMIT 10000` clause. Preserves progress across crashes, reduces WAL pressure on SQLite, and keeps the write lock short on Postgres.
+3. **Log progress at INFO level** during the backfill (`backfilled 10000/2000000 rows`). Operators watching `docker logs` see activity and don't assume the process is hung.
+4. **Add a `cronduit_migration_progress` gauge** (bounded-cardinality, label `migration_name`) for Prometheus observability during upgrade windows.
+
+**Test cases:**
+- **T-V11-RUNNUM-07:** Seed a DB with 500k rows; run migration; assert it completes under 30s on CI hardware.
+- **T-V11-RUNNUM-08:** Kill the process after 1s during backfill; restart; assert migration resumes cleanly without losing rows.
+- **T-V11-RUNNUM-09:** Assert INFO log lines appear at regular intervals during a long backfill.
+
+**Severity:** CRITICAL — a failed upgrade for an existing operator is the worst possible rc.1 signal.
+
+---
+
+### 5.4 MODERATE — Scheduler-startup race (pre-resolved, must be test-locked)
+
+**Where:** `src/cli/run.rs` startup ordering: `DbPool::connect → pool.migrate() → reconcile_orphans → sync_config_to_db → scheduler::spawn`.
+
+**What goes wrong:** ARCHITECTURE.md §5.2 confirms migrations run strictly before the scheduler spawns, so **no race exists**. But this is a structural invariant that could be easily broken by a future refactor — someone moving the migrate call inside `scheduler::spawn` would silently reintroduce the race.
+
+**Prevention:**
+1. Lock the invariant in a test that asserts `pool.migrate()` is called before `scheduler::spawn` in the startup path. Use a spy/mock if necessary.
+2. Code comment in `src/cli/run.rs`: `// INVARIANT: pool.migrate() must complete before scheduler::spawn — the job_run_number backfill migration (v1.1) depends on this ordering.`
+3. Document in `src/db/mod.rs::migrate` that callers must not spawn scheduler tasks concurrently.
+
+**Test cases:**
+- **T-V11-RUNNUM-10:** Integration test that asserts the migration observed zero concurrent writes during backfill (count rows at start of backfill and end, ensure delta is zero).
+
+**Severity:** MODERATE.
+
+---
+
+### 5.5 MODERATE — Option B (dedicated counter on `jobs`) requires its own migration
+
+**Where:** ARCHITECTURE.md §3.2 recommends Option B: a new column `jobs.next_run_number BIGINT NOT NULL DEFAULT 1`, with insert becoming `UPDATE … RETURNING next_run_number - 1`.
+
+**What goes wrong:** The counter column needs its own migration **and must be initialized correctly for existing jobs**. `DEFAULT 1` means a job with existing runs would get the next id = 1, colliding with backfilled run numbers. The migration must:
+
+1. Add the column with `DEFAULT 1`.
+2. Backfill: `UPDATE jobs SET next_run_number = (SELECT COALESCE(MAX(job_run_number), 0) + 1 FROM job_runs WHERE job_runs.job_id = jobs.id)`.
+3. Order relative to the `job_runs.job_run_number` migrations is critical: the `jobs.next_run_number` backfill must run **AFTER** `job_runs.job_run_number` is backfilled.
+
+**Prevention:**
+1. Order migration files so the `jobs.next_run_number` backfill is strictly after `job_runs.job_run_number` backfill. Use the filename timestamp to enforce.
+2. Use a correlated subquery in the backfill as shown above.
+3. Test that a fresh install (empty `job_runs`) results in `next_run_number = 1` for new jobs.
+
+**Test case:**
+- **T-V11-RUNNUM-11:** Insert 5 runs for a job, run full migration chain, assert `jobs.next_run_number = 6` for that job.
+- **T-V11-RUNNUM-12:** Insert new run post-migration; assert `job_run_number = 6`; assert `jobs.next_run_number` was incremented to 7.
+
+**Severity:** MODERATE.
+
+---
+
+### 5.6 MODERATE — URL stability: do NOT rekey `/jobs/{job_id}/runs/{run_id}` by `job_run_number`
+
+**Where:** Routes in `src/web/mod.rs`, the `run_detail` handler, and the SSE handler.
+
+**What goes wrong:** Tempting to expose nicer URLs like `/jobs/foo/runs/42` where `42` is the per-job number. But this collides with:
+
+1. **Orphan reconciliation:** containers are labelled `cronduit.run_id=<global_id>`; the label is the global id, not the per-job number. The reconciler cannot look up a container by `(job_id, job_run_number)`.
+2. **The SSE handler:** `active_runs` is keyed by global `run_id` (see `src/scheduler/mod.rs` L56). Changing the URL key to per-job number adds a lookup layer and a new 404 surface.
+3. **Historical URLs:** bookmarks from v1.0 use the global id path. Rekeying silently breaks them.
+
+**Prevention:**
+1. URLs stay on the global id: `/jobs/{job_id}/runs/{run_id}` where `run_id` is the global `job_runs.id`. **Non-negotiable.**
+2. The per-job number is a **display** value only, shown in breadcrumbs and titles as `Run #{{ run.job_run_number }}` while the URL and internal identifiers use the global id.
+3. Code-review checklist item: no handler may accept a `job_run_number` path parameter in v1.1.
+
+**Test case:**
+- **T-V11-RUNNUM-13:** Assert every route matching `/runs/{id}` uses the global id via a macro or router introspection test.
+
+**Severity:** MODERATE.
+
+---
+
+## Feature 6 — Run Timeline (Gantt)
+
+### 6.1 CRITICAL — N+1 query on the timeline handler
+
+**Where:** Proposed `src/db/queries.rs::get_timeline_runs` (new). ARCHITECTURE.md §3.4 recommends a single query with `WHERE end_time >= $since OR status = 'running'`.
+
+**What goes wrong:** A naive implementation iterates over `get_enabled_jobs()` and queries runs for each job: `for job in jobs { get_job_runs(job.id, since, until) }`. For 50 jobs and a 7-day window this is 50 round-trips to SQLite, each requiring a read-pool acquire. Total latency: 50 × (5ms acquire + 10ms query) = ~750ms page load.
+
+Also: the dashboard query (`get_dashboard_jobs` L474–L597 of `queries.rs`) is already a complex LEFT JOIN — reusing that shape verbatim for the timeline compounds the cost.
+
+**Prevention:**
+1. **Single SELECT** shape:
+   ```sql
+   SELECT jr.id, jr.job_id, j.name AS job_name, jr.status, jr.start_time, jr.end_time
+   FROM job_runs jr
+   JOIN jobs j ON j.id = jr.job_id
+   WHERE (jr.end_time >= ?1 OR jr.status = 'running')
+     AND j.enabled = 1
+   ORDER BY j.name, jr.start_time
+   LIMIT 10000;
    ```
-3. **Batch log inserts.** Group log lines from a single run into a transaction (e.g., every 500 lines or 250 ms, whichever first). One transaction = one write lock acquisition = 10-100x throughput vs. per-line inserts.
-4. **WAL checkpointing strategy.** Default is `PASSIVE` on commit; if a reader is perpetually open (e.g., a stuck SSE viewer), the WAL grows unbounded. Run `PRAGMA wal_checkpoint(TRUNCATE)` on a timer (e.g., every 5 min) from the writer task. Log if WAL file exceeds threshold (e.g., 100 MB).
-5. **Load test explicitly:** simulate 10 concurrent jobs each emitting 1000 lines/sec for 60 seconds. Assert: no errors, WAL size stable, DB size grows linearly with data.
-6. **Document** in README that SQLite is appropriate for typical homelab (10-100 jobs, modest output); PostgreSQL recommended for heavier workloads.
+2. **Limit the result set** with a hard cap (`LIMIT 10000`). A 7-day window for 50 jobs running every minute is ~500k runs — rendering the full set in HTML would OOM the page. Document the cap in the UI ("Showing first 10000 runs in this window").
+3. **Index usage:** the query must hit `idx_job_runs_start_time` (already exists per the initial migration at `migrations/sqlite/20260410_000000_initial.up.sql` L46). Verify via `EXPLAIN QUERY PLAN` in a test.
 
-**Warning signs:**
-- Intermittent `SQLITE_BUSY` or "database is locked" errors in tracing.
-- WAL file (`cronduit.db-wal`) growing to hundreds of MB.
-- SqlitePool configured with `max_connections > 1` and no write-queue wrapper.
-- No `busy_timeout` in connection pragmas.
-- Log writes happening outside a transaction batch.
+**Test cases:**
+- **T-V11-TIME-01:** Seed 10 jobs × 1000 runs each; query the timeline for the full window; assert single query executed (use sqlx query counter middleware), under 100ms on CI.
+- **T-V11-TIME-02:** `EXPLAIN QUERY PLAN` on the timeline query contains `USING INDEX idx_job_runs_start_time`.
 
-**Phase to address:** Phase 4 (persistence) — must be correct from first implementation. Retrofitting a write queue after the codebase assumes "sqlx pool handles it" is a painful refactor.
-
-**Severity:** CRITICAL
+**Severity:** CRITICAL.
 
 ---
 
-### Pitfall 8: Schema parity between SQLite and PostgreSQL silently diverges
+### 6.2 MODERATE — Rendering long-running "now" bars
 
-**What goes wrong:**
-Cronduit ships with one migration set that "works on both" SQLite and Postgres. Over time, a developer adds a column with `DEFAULT now()` (works in Postgres, SQLite wants `CURRENT_TIMESTAMP`), or uses `JSONB` (Postgres-only), or an enum type (Postgres-only), or relies on Postgres trigger behavior. CI runs tests against SQLite only. A Postgres user runs migrations and gets a cryptic error, or — worse — migrations succeed but queries return different results across the two backends.
+**Where:** Template `templates/pages/timeline.html` (new).
 
-**Why it happens:**
-SQLx does NOT abstract SQL dialect; you write raw SQL and it validates against whatever database `DATABASE_URL` points to. The overlap between SQLite and Postgres SQL is real but narrow. Type mappings differ (booleans, timestamps, JSON). It's easy to add a "small tweak" that works on your dev SQLite and breaks on a user's Postgres.
+**What goes wrong:** A run that started 8 hours ago and is still running has `end_time IS NULL`. The template must render its bar as extending to "now." Options:
 
-**How to avoid:**
-1. **Two migration directories:** `migrations/sqlite/` and `migrations/postgres/`. Parallel files with the same version numbers and conceptual schema but dialect-appropriate syntax. Forces every schema change to be consciously applied to both.
-2. **CI matrix:** every PR runs the full test suite against BOTH SQLite and Postgres. Non-optional. Use testcontainers or the `postgres` service in GitHub Actions.
-3. **Query abstraction policy:** either (a) all queries written as raw SQL with per-dialect variants for anything non-portable, or (b) strictly limit to a "lowest common denominator" SQL subset (no `JSONB`, no enums, no array columns, no `ON CONFLICT DO UPDATE SET col = EXCLUDED.col` if behavior differs, etc.). Document the policy in `CONTRIBUTING.md`.
-4. **Type policy:** timestamps as `TEXT ISO-8601` (SQLite) and `TIMESTAMPTZ` (Postgres) — sqlx handles both if the Rust type is `DateTime<Utc>`. Booleans as `INTEGER 0/1` (SQLite) and `BOOLEAN` (Postgres) — sqlx handles if type is `bool`. JSON fields as `TEXT` (SQLite) and `JSONB` (Postgres) — store serialized JSON and deserialize in Rust. No clever per-backend features.
-5. **Integration test for log retention pruning:** tests against both backends to catch dialect-specific `DELETE ... LIMIT` vs. `DELETE WHERE ctid IN (SELECT ctid ...)` differences.
-6. **Schema doc (`docs/SCHEMA.md`):** single source of truth describing the conceptual schema. Migrations reference it.
+1. **Server-side substitution**: handler computes `end_time_or_now` via `COALESCE(end_time, strftime('now'))`. Works but the rendered HTML is stale the moment the page is loaded — the bar doesn't extend as time passes.
+2. **Client-side animation**: render a CSS `width: calc(... * (now - start))` with a JS ticker. Works but adds custom JS, violating the "no JS framework" rule. A tiny 10-line vanilla JS ticker is acceptable.
+3. **Polling the partial**: re-fetch the timeline partial every 5s while the window contains running runs (ARCHITECTURE.md §3.4 already proposes this).
 
-**Warning signs:**
-- `migrations/` has only one set of files.
-- CI runs tests against only one backend.
-- A query uses `JSONB`, `ARRAY`, enum types, `ILIKE`, `RETURNING *` without testing the SQLite path.
-- `sqlx::query!` macro compile-time checks against one DATABASE_URL without offline-mode JSON for both.
+**Prevention:**
+1. Adopt option 3 (polling) as the primary mechanism. The 5s cadence is visually sufficient for "now" bars and reuses the existing HTMX polling pattern.
+2. Server computes `end_time_or_now` in Rust from `chrono::Utc::now()`, NOT from SQLite `strftime('now')` — this ensures timezone consistency with the rest of the UI (see 6.3).
 
-**Phase to address:** Phase 4 (persistence). Schema + migration layout + CI matrix must be set up at the same time as the first schema.
+**Test case:**
+- **T-V11-TIME-03:** Render the timeline with a running run; assert `end_time_or_now` in the output equals `start_time + (now - start_time)` within a 1s tolerance.
 
-**Severity:** HIGH
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 9: Config reload is non-atomic and can orphan running jobs
+### 6.3 MODERATE — Timezone rendering consistency
 
-**What goes wrong:**
-Operator edits `cronduit.toml`, saves. The file watcher (or SIGHUP, or API `/reload`) fires. Cronduit parses the new config. The new config disables job `weekly-backup` that is CURRENTLY executing. Cronduit has to decide:
-- Kill the running container? (data loss)
-- Let it finish, then mark it disabled? (orphaned: not in config, but in DB)
-- Refuse to reload because a target job is running? (operator frustrated)
+**Where:** Timeline handler + template.
 
-Compounding: the file watcher fires multiple events for a single save (some editors write-truncate-write, triggering several `Modify` events). If reload isn't debounced, Cronduit parses and applies the config 5 times in 500ms, one of which might catch a half-written file and fail to parse — and if the failure handling is "clear the job set and start over," jobs vanish mid-edit.
+**What goes wrong:** Three candidate timezones:
+1. **Server UTC** — consistent with `job_runs.start_time` storage format (RFC3339 TEXT, usually UTC).
+2. **Operator timezone from config** — cronduit has a `tz` config field used by croner for schedule evaluation (`src/scheduler/mod.rs` L50). This is the "natural" operator timezone.
+3. **Browser local** — rendered client-side via JS.
 
-**Why it happens:**
-- `notify` crate fires raw OS events; many editors do atomic writes via rename, or truncate-then-write, producing multiple events.
-- Reload logic is often written as "parse → diff → apply" without treating it as a transaction.
-- The "job running, config removed" case is an edge case developers forget to spec.
+Mixing these is visible: "my job fired at 3am UTC" vs "my job fired at 10pm PDT" for the same run. The dashboard already renders in operator tz via Rust-side formatting; the timeline must match.
 
-**How to avoid:**
-1. **Debounce file-watch events.** Use `notify-debouncer-mini` or a manual 500ms debounce. Apply reload only after the file has been stable for the debounce window.
-2. **Parse to a staging structure first.** If parsing fails, log the error, keep the OLD config. NEVER partially apply a new config.
-3. **Diff-based apply, not replace.** Compute a diff: `{added, updated, removed}`. Apply in order: updates (that don't change schedule) → additions → removals.
-4. **Define "removal of a running job" semantics explicitly:**
-   - Running job's `enabled` flag goes to `false`.
-   - `next_run_at` set to `NULL`.
-   - Currently running execution is allowed to complete (not killed).
-   - On completion, run is recorded normally. Job row is marked `removed_at = now()`.
-   - History is preserved (per spec's "preserve history for removed jobs").
-   - Document this in the "Config reload" section of README.
-5. **Atomic apply under a lock.** Use `tokio::sync::Mutex` around the job-set state. Reload takes the lock, applies the diff, releases. A scheduler tick that wants to spawn a new run also takes the lock briefly to read `next_run_at`. Never reload mid-spawn.
-6. **Fail reload loudly if parsing partial.** Expose `cronduit_config_reload_errors_total` metric AND surface the last reload error in the UI "Settings" page so operators see it without grepping logs.
-7. **SIGHUP AND file watch AND `POST /api/reload` must all use the same code path.** Three entry points, one reload function.
-8. **Test with an editor that does truncate-write** (vim with default swap, VSCode with atomic save off) to confirm debouncing actually works.
+**Prevention:**
+1. Use **the operator timezone from `self.tz`** throughout the timeline (matching the dashboard). Compute bar positions server-side in that tz.
+2. Label the X axis with the tz abbreviation (`"PDT"`) so operators know what they're looking at.
+3. Do NOT mix wall-clock labels from one tz with duration offsets computed in another.
 
-**Warning signs:**
-- File watcher without debounce.
-- Config reload implemented as "clear state, re-parse, re-apply."
-- Running jobs stopping mid-execution on reload.
-- UI "Settings" page has no reload status or last-error field.
+**Test case:**
+- **T-V11-TIME-04:** Set operator tz to `America/Los_Angeles`; seed a run at UTC 2026-04-14T10:00:00Z; assert the timeline label shows `03:00` (PDT) not `10:00`.
 
-**Phase to address:** Phase 2 (scheduler core) for reload semantics; Phase 5 (UI) to surface status.
-
-**Severity:** HIGH
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 10: Restart-during-execution semantics are undefined and leak orphaned containers
+### 6.4 MODERATE — Color-only status coding fails accessibility audit
 
-**What goes wrong:**
-Cronduit is executing job `long-backup` (a 3-hour job). Operator `docker restart cronduit`. What happens?
-- The Cronduit process receives SIGTERM. Running job container is still alive (it was spawned independently via Docker API).
-- Without a graceful shutdown handler, Cronduit exits. The running backup container keeps going, but no one is watching its logs, recording its exit code, or cleaning up.
-- Cronduit restarts. The DB still says `status=running` for the old execution. The scheduler sees "next run in 1 hour" and may spawn ANOTHER backup concurrent with the orphan.
-- The orphan container finishes. Nothing records its outcome. It either auto-removes (losing exit code per Pitfall 3) or sticks around forever as `ghost-backup-abc123`.
+**Where:** Timeline bar rendering in the template.
 
-**Why it happens:**
-Cronduit and the jobs it spawns are separate processes (different containers, even). The scheduler's lifecycle is NOT the jobs' lifecycle. Developers instinctively think "when I exit, my children exit" — not true with bollard.
+**What goes wrong:** Using only the `cd-status-*` CSS color tokens (success=green, failed=red, timeout=orange) to distinguish bars is colorblind-hostile. Roughly 8% of men and 0.5% of women have red-green colorblindness; green/red bars are indistinguishable.
 
-**How to avoid:**
-1. **Graceful shutdown with bounded wait.** On SIGTERM: stop scheduler ticks, wait up to `shutdown_timeout` (configurable, default e.g. 60s) for running jobs to finish, then either (a) kill remaining containers via `docker kill`, or (b) exit and leave them orphaned, recording their state as `status=abandoned` with a note. Policy should be configurable; default to "leave them running" (safer for data integrity) and reconcile on restart.
-2. **Label every spawned container.** At create time, set label `cronduit.run_id=<uuid>` and `cronduit.instance=<cronduit_instance_id>`. This is the reconciliation key.
-3. **Startup reconciliation.** Before the scheduler starts, query Docker for all containers with `label=cronduit.run_id`. For each:
-   - If container is `running` and matches a DB row with `status=running`, re-attach log streaming and wait.
-   - If container is `exited` and DB row is `running`, collect exit code and finalize the run.
-   - If container doesn't match any DB row, log warning and remove (after configurable grace period, to avoid nuking a valid concurrent run from a manually started Cronduit).
-   - If DB row says `running` but no container exists, mark `status=lost` with a note.
-4. **Persist a "cronduit run started" record BEFORE the container is created,** not after. If the create call succeeds and Cronduit crashes before persisting, reconciliation finds an orphan container that doesn't match any DB row → cleanup path.
-5. **Test restart-during-execution explicitly.** Integration test: start a 10s sleep job, kill Cronduit mid-run, restart, assert the run is either resumed or cleanly finalized.
-6. **Document the semantics** in README: "Cronduit will wait up to N seconds for running jobs on shutdown. Longer-running jobs will continue to run and be reconciled on next startup."
+**Prevention:**
+1. Encode status with **pattern + color**: diagonal stripes for `failed`, solid for `success`, checkerboard for `timeout`, pulsing outline for `running`, cross-hatch for `stopped`. Implement via inline SVG `<pattern>` elements or CSS `background-image: repeating-linear-gradient(...)`.
+2. Add ARIA labels to each bar: `aria-label="Backup job run #42: failed, lasted 3m 12s"`.
+3. Design system reference: check `design/DESIGN_SYSTEM.md` for any existing pattern tokens before inventing new ones.
 
-**Warning signs:**
-- No `cronduit.run_id` label on spawned containers.
-- No reconciliation step at startup.
-- DB rows stuck in `status=running` forever after a crash.
-- Orphan containers with job names visible in `docker ps`.
+**Test case:**
+- **T-V11-TIME-05:** Visual regression test that asserts distinct patterns for each status value (not just color). Screenshot-diff against a reference image.
+- **T-V11-TIME-06:** Automated accessibility audit (axe-core or pa11y) run against the timeline page in CI.
 
-**Phase to address:** Phase 3 (execution) for the label + shutdown handler; Phase 4 (persistence) for reconciliation logic.
-
-**Severity:** HIGH
+**Severity:** MODERATE.
 
 ---
 
-## High Pitfalls
+## Feature 7 — Sparkline + Success Rate
 
-### Pitfall 11: Log retention pruning is correct in isolation but breaks under load
+### 7.1 CRITICAL — Sample-size honesty
 
-**What goes wrong:**
-`DELETE FROM job_logs WHERE captured_at < now() - interval '90 days'` runs on a schedule. On SQLite with 10M log rows, this single `DELETE` holds the write lock for 30 seconds, blocking all other writes and causing scheduler ticks to fail with `SQLITE_BUSY`. On Postgres, it works but bloats the table (no `VACUUM`). Across both: the foreign key cascade from `job_logs → job_runs → jobs` may or may not delete run metadata the operator expected to keep.
+**Where:** Proposed `get_dashboard_job_sparks` in `queries.rs` and `dashboard.rs::to_view`.
 
-**Why it happens:**
-Retention pruning is easy to write ("just a DELETE") and hard to operationalize. A naive DELETE on a hot table interacts badly with the write-serialization from Pitfall 7.
+**What goes wrong:** A job with exactly 1 run ever, which failed, renders "success rate: 0%". A job with 1 successful run renders "100%". Neither number is meaningful. Operators see "50% success rate" on a 2-run job and over-interpret.
 
-**How to avoid:**
-1. **Batch deletes:** `DELETE FROM job_logs WHERE id IN (SELECT id FROM job_logs WHERE captured_at < ? LIMIT 1000)` in a loop with small sleeps between batches. Releases the lock between batches.
-2. **Prune logs separately from runs.** Retention of raw log blobs can be shorter (e.g., 30 days) than retention of run metadata (e.g., 365 days). Config exposes both: `log_retention` and `run_retention`.
-3. **Don't cascade delete runs when logs are deleted.** Logs have an FK to runs, not the other way around. Runs persist; logs are garbage.
-4. **Schedule pruning at low-activity time** (e.g., 04:30 local). Skippable if a scheduler tick is due within the next minute.
-5. **Periodic `VACUUM`/`PRAGMA optimize` on SQLite** after large prunes.
-6. **Metric for prune duration and rows affected.**
+**Prevention:**
+1. **Minimum sample threshold**: N < 5 renders "—" or "n/a" for the success rate.
+2. The threshold is a **constant** in code (`const MIN_SAMPLES_FOR_RATE: usize = 5;`) with a doc comment explaining the rationale.
+3. Sparkline can still render with <5 samples (it's an individual-run view, not a rate), but pad the visual so 1 cell doesn't span the full sparkline width.
+4. Tooltip on the badge shows the raw count: `"12 successes / 15 runs over last 20"` so operators can reason about signal strength.
 
-**Warning signs:**
-- Single unbounded `DELETE` in pruning code.
-- Prune runs on scheduler tick (not on a separate task).
-- DB file grows unbounded despite retention config.
+**Test cases:**
+- **T-V11-SPARK-01:** Job with 0 runs → sparkline renders empty, badge shows `"—"`.
+- **T-V11-SPARK-02:** Job with 3 runs → badge shows `"—"` (below threshold).
+- **T-V11-SPARK-03:** Job with 5 successful runs → badge shows `"100%"`.
+- **T-V11-SPARK-04:** Job with 20 runs (15 success, 5 failed) → badge shows `"75%"`.
 
-**Phase to address:** Phase 4 (persistence).
-
-**Severity:** HIGH
+**Severity:** CRITICAL.
 
 ---
 
-### Pitfall 12: Image pull failures have no retry, no caching guidance, and fail the whole run
+### 7.2 MODERATE — Rolling window boundary effects
 
-**What goes wrong:**
-Job specifies `image = "myapp:latest"`. On first run, image not present → Cronduit calls `image_create` via bollard. Docker Hub is flaky for 5 seconds. Pull fails. Run marked failed. Operator sees "failed" with no indication of whether it was their code or a transient network issue. Next tick, pull is retried from scratch, succeeds, run succeeds. Now they have a false-failure in history.
+**Where:** Same handler.
 
-Worse: `latest` tag means the pulled image silently changes; yesterday's successful run used `myapp@sha256:abc`, today's used `myapp@sha256:def`. Root-causing a regression becomes archaeology.
+**What goes wrong:** A job that always fails at the top of the hour and succeeds otherwise will show 0% right after the hourly failure, then slowly climb to 95%, then drop to 0% again. The user sees oscillating numbers that look scary but aren't signal.
 
-**Why it happens:**
-- "Pull on not-present" is easy; "pull with retry and structured error classification" is not.
-- `:latest` is a Docker anti-pattern but users use it everywhere. A scheduler that doesn't surface the resolved digest makes it worse.
+**Prevention:**
+1. Rolling window of **last N runs** (e.g., N=20) not "last N hours." Makes the signal independent of the job's cadence.
+2. Document the window size visibly in the UI (hover tooltip: "Last 20 runs").
+3. Consider an EWMA (exponentially weighted moving average) if N-based looks choppy; but start with the simpler window and see if operators complain.
 
-**How to avoid:**
-1. **Retry pulls with exponential backoff** (e.g., 3 attempts: 1s, 5s, 25s). Classify failures: network/timeout → retry; `manifest unknown` / `unauthorized` → no retry, fail fast.
-2. **Distinct failure category:** `failures_total{reason="image_pull_failed"}` — separate from script-level failures.
-3. **Resolve and record image digest** after pull. Store both the requested reference (`myapp:latest`) and the resolved digest (`sha256:...`) on the run row. Surface in UI.
-4. **Pull-ahead option:** `[defaults] prepull = true` pulls images on config load so first-run lag doesn't surprise the operator. Failures on prepull are warnings, not hard errors.
-5. **Document** that `:latest` is discouraged and Cronduit will surface the digest to mitigate.
-6. **Structured error in UI** that distinguishes "image pull failed" from "container ran and failed" — these have completely different operator responses.
+**Test case:**
+- **T-V11-SPARK-05:** Job with 20 runs in a pattern `success*19 + failed*1`; assert sparkline shows 19 green + 1 red; assert rate = 95%.
 
-**Warning signs:**
-- Single `image_create` call with no retry.
-- Image pull error and script exit code 1 look identical in the UI.
-- No `image_digest` column on `job_runs`.
-
-**Phase to address:** Phase 3 (execution).
-
-**Severity:** HIGH
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 13: ANSI color codes, binary output, and huge lines render as garbage (or XSS) in the web UI
+### 7.3 MINOR — SVG pixel snapping at small sizes
 
-**What goes wrong:**
-A job uses `curl -v` or any modern CLI with colorized output. Cronduit stores raw bytes including `\x1b[` escape sequences. The web UI renders them as literal text: `^[[31mfailed^[[0m` instead of red "failed." Or worse: the UI naively inserts log text into HTML, and a log line containing `<script>alert(1)</script>` executes in the operator's browser.
+**Where:** Template sparkline rendering.
 
-Additionally: a job dumps a 500 KB binary blob to stdout. The run detail page loads 500 KB of garbage into the DOM and the browser hangs.
+**What goes wrong:** An inline SVG sparkline rendered at 16px height with `<rect>` elements positioned by floating-point `x` values gets anti-aliased blur at non-integer pixel positions. Looks fuzzy at low DPI.
 
-**Why it happens:**
-- Logs are byte streams, not text. UI developers reach for "text = innerHTML" and get both rendering bugs and XSS.
-- ANSI escape handling requires a real parser; naive regex stripping loses formatting info entirely.
+**Prevention:**
+1. Use integer pixel positions (round x/width to the nearest pixel).
+2. Or render the sparkline as a row of fixed-width `<span>` elements with CSS classes, not inline SVG. ARCHITECTURE.md §3.5 already recommends this approach.
+3. Test the rendered output at 1x and 2x DPI.
 
-**How to avoid:**
-1. **Always HTML-escape log content.** Use Askama/Maud's default escaping (do NOT use `{{ raw }}` / `PreEscaped`). This prevents XSS regardless of what a job writes.
-2. **Parse ANSI escapes server-side** (crate: `ansi-to-html` or `anser-rs`) and emit safe `<span class="ansi-red">` with a fixed palette defined in Tailwind. Do NOT allow arbitrary CSS or background colors that could mimic UI chrome.
-3. **Replace non-printable/binary bytes** with `·` or `\x{NN}` hex notation. Detect binary chunks (high ratio of non-printable bytes) and collapse them: `[binary: 102400 bytes]` with an optional download link.
-4. **Line-length cap in UI:** long lines truncated to (e.g.) 2000 chars per line in the DOM, with "show more" to fetch the full line on demand. Backend serves full bytes via an explicit `/api/runs/:id/logs/raw` endpoint (clearly labeled "raw, may be dangerous to render").
-5. **Pagination for long runs.** Never load 100K log lines into the DOM at once. SSE streams the tail; "load older" fetches pages.
-6. **XSS test case** in CI: a job writes `<script>alert(1)</script>` to stdout, UI must render it as visible text, not execute it. Also test `<img src=x onerror=...>`, `javascript:` URLs.
+**Test case:**
+- **T-V11-SPARK-06:** Rendered sparkline HTML contains only integer coordinates (or fixed-width spans, no SVG).
 
-**Warning signs:**
-- Template uses `|safe` or `PreEscaped` on log content.
-- No ANSI parsing → escape sequences visible in UI.
-- Run detail page loads slowly for chatty jobs.
-- No XSS test in CI.
-
-**Phase to address:** Phase 5 (web UI). This is a table-stakes correctness issue for any log viewer.
-
-**Severity:** HIGH
+**Severity:** MINOR.
 
 ---
 
-### Pitfall 14: Single-binary cross-compile works on dev, breaks on arm64/musl because of sqlx + OpenSSL
+## Feature 8 — Duration Trend p50/p95
 
-**What goes wrong:**
-Dev loop is `cargo build` on x86_64 macOS/Linux with glibc + system OpenSSL. First multi-arch Docker build fails on linux/arm64 with `openssl-sys failed`, or on musl with `undefined reference to __gmon_start__`, or produces a binary that dynamically links glibc and segfaults on Alpine. sqlx-macros complicates this because it runs at build time and links differently from the final binary.
+### 8.1 CRITICAL — Percentile computation parity between SQLite and Postgres
 
-**Why it happens:**
-- `openssl-sys` is the single largest source of cross-compilation pain in the Rust ecosystem.
-- `sqlx-macros` links against `openssl-sys` at compile time (procedural macros are shared libs using the host's libc), while the final sqlx-using binary links against `openssl-sys` statically — you end up needing two OpenSSL builds.
-- bollard historically pulled in `hyper-tls` which pulls OpenSSL. `bollard` now supports `ssl_providerless` and rustls features.
-- multi-arch Docker builds amplify all of this.
+**Where:** ARCHITECTURE.md §3.6 recommends computing in Rust for parity. Proposed `src/web/stats.rs::percentile`.
 
-**How to avoid:**
-1. **Use rustls everywhere.** Enable `bollard` with `ssl_providerless` or `rustls` feature, configure sqlx with `runtime-tokio-rustls`, and make sure no transitive dep pulls `openssl-sys`. Run `cargo tree -i openssl-sys` to verify — it should return nothing.
-2. **Prefer `aws-lc-rs`** as a `rustls` crypto provider, or `ring` — both pure-Rust-ish and cross-compile cleanly.
-3. **Build in a container, not on the dev host.** `cross` or a purpose-built multi-stage Dockerfile (builder image = `rust:slim`, runtime image = `gcr.io/distroless/cc` or `alpine` depending on musl vs glibc choice).
-4. **Commit to ONE libc story.** Either:
-   - musl + fully static (smallest, Alpine-friendly, but DNS edge cases with musl's resolver); OR
-   - glibc + dynamically linked against a small base (debian:slim, distroless). Pick one; don't ship both without tests.
-5. **CI matrix:** build linux/amd64 AND linux/arm64 on every PR using `docker buildx`. Integration-test the arm64 image under QEMU at least on release.
-6. **`cargo deny`** to forbid `openssl-sys` transitively if you chose rustls. Prevents regression from a new dep.
-7. **Strip and UPX-avoid:** `strip` the binary; do NOT use UPX (breaks in containers and antivirus).
+**What goes wrong:** A "compute in Rust" implementation is trivial but easy to get subtly wrong:
 
-**Warning signs:**
-- `cargo tree -i openssl-sys` returns any results.
-- Docker build runs `apt-get install libssl-dev` in the runtime stage (it shouldn't need to).
-- No arm64 in CI matrix.
-- Binary fails to run on a vanilla Alpine/Debian container.
+1. **Index rounding**: `samples[len * 0.95]` vs `samples[ceil(len * 0.95)]` vs `samples[floor(len * 0.95)]` — different choices produce different values for small N. Document the chosen rounding and match NumPy's `percentile` convention (`method='linear'`) for familiarity.
+2. **Empty input**: `samples.is_empty()` → panic on index. Must return `None` / `"—"`.
+3. **Single-element input**: both p50 and p95 collapse to the same value. Correct but the UI needs to communicate it.
+4. **Unsorted input**: computing on an unsorted slice is wrong. The helper must sort (or assert sorted).
 
-**Phase to address:** Phase 1 (project setup) — the dep choices (rustls vs OpenSSL, musl vs glibc) must be made at `Cargo.toml` creation time. Phase N (release engineering) — multi-arch CI + image publishing.
+**Prevention:**
+1. Write the `percentile(samples: &mut [i64], q: f64) -> Option<i64>` helper in a new `src/web/stats.rs` module with exhaustive unit tests covering empty/one/two/odd/even/boundary cases.
+2. Document the rounding convention: "linear interpolation between adjacent samples, matching NumPy's default".
+3. Make the helper take `&mut [i64]` (it sorts in place) to force callers to commit to the allocation.
+4. NEVER use SQL-side percentile (even on Postgres) — the structural-parity constraint mandates Rust-side computation.
 
-**Severity:** HIGH
+**Test cases:**
+- **T-V11-DUR-01:** `percentile(&mut [], 0.5)` returns `None`.
+- **T-V11-DUR-02:** `percentile(&mut [100], 0.5)` returns `Some(100)`.
+- **T-V11-DUR-03:** `percentile(&mut [1,2,3,4,5,6,7,8,9,10], 0.5)` returns `Some(5)` or `Some(6)` depending on convention — lock the chosen value.
+- **T-V11-DUR-04:** `percentile(&mut [1,2,3,...,100], 0.95)` returns a documented, stable value.
+
+**Severity:** CRITICAL.
 
 ---
 
-### Pitfall 15: "Zero config" defaults work for the author but surprise adopters
+### 8.2 MODERATE — Minimum sample size for percentile meaningfulness
 
-**What goes wrong:**
-- Default DATABASE_URL points to `/data/cronduit.db` — fine in the example compose, broken if the user doesn't mount `/data`.
-- Default log retention is 90 days — fine for a light homelab, fills the disk on a chatty workload.
-- Default bind address is `0.0.0.0:8080` — fine for author who's behind NAT, catastrophic for a user with port-forwarding.
-- Default timezone is host timezone (not UTC) — "works on my machine."
-- Default config file path is `/etc/cronduit/config.toml` — fine in container, weird for bare-metal.
-- Default scheduler grace period is 0 — first SIGTERM kills everything.
-- Default SQLite pragmas are sqlx defaults — see Pitfall 7.
+**Where:** `job_detail.rs` handler.
 
-**Why it happens:**
-Every default encodes an assumption about the operator's environment. Authors test in one environment and ship those assumptions. OSS users have wildly different environments.
+**What goes wrong:** p95 on 3 runs is meaningless (effectively the max). Operators see a scary spike after one slow run.
 
-**How to avoid:**
-1. **`cronduit --check` subcommand.** Validates config, reports all effective settings (with source: default / env / config file), and warns on risky combos. Runs on first startup and can be invoked manually.
-2. **Startup summary log:**
-   ```
-   cronduit 0.1.0 starting
-     bind: 127.0.0.1:8080 (default)
-     database: sqlite:///data/cronduit.db
-     timezone: UTC (default)
-     config: /etc/cronduit/config.toml
-     log_retention: 90d
-     jobs: 12 loaded, 0 disabled, 0 errors
-   ```
-3. **Fail loudly on suspicious defaults** (see Pitfall 1 for `0.0.0.0` + no auth).
-4. **"Known good" sample configs** in `examples/` for the three canonical deployments: (a) single-machine homelab via compose; (b) multi-service homelab with reverse proxy; (c) bare-metal systemd.
-5. **No silent fallback.** If a user specifies `database_url = "postgres://..."` but the host isn't reachable, fail startup with a clear error, do not fall back to SQLite.
-6. **Panic-on-startup is OK; panic-mid-operation is not.** Config problems at startup should fail fast with human-readable errors. After startup, panics are bugs — use `?` and structured errors everywhere.
+**Prevention:**
+1. Same minimum-sample threshold as Feature 7.1 (`N >= 20`). Below that, render `"—"` with a tooltip `"Need at least 20 runs for percentile analysis"`.
+2. Consider a distinct threshold for p95 vs p50: p50 can be meaningful at N=10, p95 needs N=20+.
 
-**Warning signs:**
-- Config file reference doc has no "Defaults" column.
-- First-time user issues are "where does the DB go?" or "why isn't it listening?"
-- No `--check` or equivalent validation command.
+**Test case:**
+- **T-V11-DUR-05:** Job with 10 runs → p50 shown, p95 shown as `"—"` with tooltip.
 
-**Phase to address:** Phase 1 (CLI + config loading); Phase N (release prep) for sample configs.
-
-**Severity:** HIGH
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 16: Manual "Run Now" bypasses scheduling semantics and corrupts @random / overlap state
+### 8.3 MODERATE — Outlier contamination of p95
 
-**What goes wrong:**
-Operator clicks "Run Now" on a job that uses `@random` and has `min_gap`. The manual run executes at wall-clock time T, but T is not in the resolved schedule. Did it consume today's slot? Does the next scheduled run still happen at the resolved time? If the job has concurrency policy "skip if running," does Run Now queue or reject?
+**Where:** Same.
 
-Or: Operator clicks "Run Now" twice in quick succession. Cronduit spawns two parallel container instances of the same job — neither the UI nor the scheduler has any opinion on this, and the job isn't idempotent.
+**What goes wrong:** A backup job normally runs in 5 seconds but had one bad day at 30 minutes. That single run dominates the p95 for the visible window. The chart is dominated by one outlier.
 
-**Why it happens:**
-"Run Now" is tempting to implement as "call the execution function directly, bypassing the scheduler." But the scheduler is the thing that enforces invariants.
+**Prevention:**
+1. **Do not trim outliers.** The p95 is designed to expose them — that's the signal. Trimming hides the problem the metric exists to find.
+2. **Use a logarithmic Y axis** for the duration trend chart so both 5s and 1800s are visible.
+3. Add a separate "max in window" display so the outlier is called out explicitly.
 
-**How to avoid:**
-1. **Run Now goes through the same execution path as scheduled runs.** A `manual_trigger` event is submitted to the scheduler, which evaluates: is the job currently running? Is concurrency policy "skip"? If so, return 409 with a clear message ("job already running, triggered at X, ETA Y").
-2. **Explicit tag on runs:** `trigger = "scheduled" | "manual" | "reload"`. Surface in UI. Manual runs are visually distinguished so operators don't confuse them with scheduled ones.
-3. **Manual runs do NOT consume `@random` slots.** They're out-of-band by definition. The next scheduled random run still happens at its resolved time.
-4. **Button debounce + idempotency token.** The UI generates a UUID per click and submits it as an idempotency key. Repeat submissions within a window return the same run ID instead of spawning a new container.
-5. **Log "manual trigger" as an audit event** with wall-clock time and (in v2+) the user identity.
+**Test case:**
+- **T-V11-DUR-06:** Chart rendering with outlier present doesn't crash the SVG viewbox computation.
 
-**Warning signs:**
-- "Run Now" code path is a separate function from scheduled execution.
-- No `trigger` column on runs.
-- Double-clicking "Run Now" spawns two containers.
-
-**Phase to address:** Phase 5 (UI) + Phase 2 (scheduler interface that both paths share).
-
-**Severity:** MEDIUM
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 17: Prometheus metrics cardinality explodes with per-job labels
+## Feature 9 — Bulk Enable/Disable
 
-**What goes wrong:**
-Cronduit exposes `cronduit_runs_total{job="..."}`, `cronduit_run_duration_seconds{job="..."}`, `cronduit_failures_total{job="...", reason="..."}`. A homelab user has 50 jobs × 8 failure reasons = 400 timeseries just for failures — fine. An adopter with an auto-generated config of 5000 jobs × 8 reasons = 40k timeseries, plus histograms multiply further. Prometheus scrapes become slow; a shared Prometheus instance suffers.
+### 9.1 CRITICAL — Config reload unsets `enabled_override` by accident
 
-Worse: if `reason` is a free-form error string, cardinality is unbounded.
+**Where:** `src/scheduler/sync.rs::sync_config_to_db` L102–L216, `src/db/queries.rs::upsert_job` L57–L123 (hardcodes `enabled = 1` on conflict), `disable_missing_jobs` L129–L169.
 
-**Why it happens:**
-Metrics are easy to add and hard to remove. Labels feel free.
+**What goes wrong:** Feature 9's whole point is that `enabled_override` is **orthogonal** to config reload (ARCHITECTURE.md §3.7 Option B). But `upsert_job` currently runs `ON CONFLICT DO UPDATE … SET enabled = 1, …` on every config reload. If the new `enabled_override` column is added to the same UPDATE by accident, the override gets reset on every reload and bulk-disable is useless.
 
-**How to avoid:**
-1. **Cap `reason` to a closed enum:** `image_pull_failed`, `network_target_unavailable`, `timeout`, `exit_nonzero`, `abandoned`, `unknown`. Never pass raw error strings as label values.
-2. **Document recommended scrape interval** (15-60s) and warn that high cardinality is the operator's responsibility if they have 1000+ jobs.
-3. **Consider summary/histogram budgets.** `cronduit_run_duration_seconds` as a histogram has N_buckets × N_jobs series; if this is a problem, use a summary or global histogram without job label.
-4. **Don't emit per-run labels** (no `run_id` in a label). Per-run data belongs in logs/DB, not metrics.
-5. **Test with 1000 dummy jobs:** assert `/metrics` responds in <500ms and response size is reasonable.
+**Prevention:**
+1. **Absolute rule:** `upsert_job` must NOT touch `enabled_override` in its SET clause. The override is only written by the new `set_enabled_override_bulk` API handler.
+2. **Lock this with a code-search test**: grep the codebase for `enabled_override` and assert it only appears in specific allowed places (migration, bulk-toggle handler, query filters).
+3. `disable_missing_jobs` must **clear** the override when disabling (per ARCHITECTURE.md §3.7 step 1 "one-line addition") so a later re-add doesn't leave a stale override. But for jobs that remain in the config, the override must be preserved across reloads.
 
-**Warning signs:**
-- `reason` label accepts `e.to_string()` from an error.
-- `run_id` appears anywhere in a metric label.
-- `/metrics` response is many megabytes.
+**Test cases:**
+- **T-V11-BULK-01:** Set `enabled_override = 0` on a job; trigger `SchedulerCmd::Reload`; assert override is still `0` after reload.
+- **T-V11-BULK-02:** Delete a job from the config file; reload; assert the job's `enabled_override` is cleared (NULL) in addition to `enabled = 0`.
+- **T-V11-BULK-03:** Re-add the deleted job to the config; reload; assert it's `enabled = 1, enabled_override = NULL` (clean slate).
+- **T-V11-BULK-04:** Grep-based test: `enabled_override` appears only in the specific allowed modules/files.
 
-**Phase to address:** Phase 6 (operational / metrics).
-
-**Severity:** MEDIUM
+**Severity:** CRITICAL.
 
 ---
 
-## Medium Pitfalls
+### 9.2 CRITICAL — Heap + `enabled_override` filter must both live in the reload path
 
-### Pitfall 18: Environment variable interpolation is naive and leaks secrets into error messages
+**Where:** `src/scheduler/reload.rs::do_reload` and `src/db/queries.rs::get_enabled_jobs`.
 
-**What goes wrong:**
-Config uses `env = { API_KEY = "${PROD_API_KEY}" }`. Cronduit interpolates via shell-style expansion. At some point, a parse error or validation error logs the resolved config structure — including `API_KEY="sk-actual-secret"` — to stdout, which ends up in Docker logs, which ends up in the operator's log aggregator, which ends up shared with a colleague. Secret leaked.
+**What goes wrong:** `do_reload` rebuilds the in-memory heap from `get_enabled_jobs()`. If `get_enabled_jobs` doesn't include the `enabled_override` filter, a bulk-disabled job keeps firing from the heap until the process restarts — because the scheduler loop's view of the jobs is the heap, not the DB.
 
-**Why it happens:**
-- "Print the config we loaded" is helpful during debugging and becomes a landmine when it includes interpolated secrets.
-- Error messages that include "context" often stringify surrounding state.
+**Why:** v1.0's `get_enabled_jobs` filters on `WHERE enabled = 1` only. ARCHITECTURE.md §3.7 proposes changing it to `WHERE enabled = 1 AND (enabled_override IS NULL OR enabled_override = 1)`.
 
-**How to avoid:**
-1. **Secret-bearing fields are a distinct type** (`SecretString` or similar) whose `Debug` / `Display` impl prints `[redacted]`. Only the job-execution path may call `.expose_secret()`.
-2. **Audit all logging.** `#[derive(Debug)]` on a `JobConfig` struct must use the secret type, or customize `Debug` to skip `env`.
-3. **Structured errors never include the resolved env map** — they include job name and field name, nothing more.
-4. **Interpolation missing-var policy:** if `${FOO}` is unset, fail loudly at config-load time. Do not default to empty string (silent leak of an unset var into a command line).
-5. **Document:** "Cronduit does not log secret values. Do not include secrets in job `name` or `command` fields directly; use `env` and interpolate from the host environment."
+**Prevention:**
+1. Change `get_enabled_jobs` filter in the same PR that adds the column.
+2. `bulk_toggle` API handler MUST fire `SchedulerCmd::Reload` after updating the DB. Without this, the heap is stale.
+3. Integration test: bulk-disable a job that's about to fire; assert it does NOT fire within 10s.
 
-**Warning signs:**
-- `tracing::info!("loaded config: {:?}", config)` anywhere in the code.
-- `env` map prints in full on any error path.
-- Missing env vars silently become empty strings.
+**Test cases:**
+- **T-V11-BULK-05:** Seed a job with schedule `* * * * *`; bulk-disable via the API; `tokio::time::advance` 2 minutes; assert zero new runs for that job.
+- **T-V11-BULK-06:** Bulk-enable a disabled job; assert reload fires; assert next scheduled fire produces a run.
 
-**Phase to address:** Phase 2 (config model) and Phase 3 (execution path).
-
-**Severity:** MEDIUM
+**Severity:** CRITICAL.
 
 ---
 
-### Pitfall 19: Graceful shutdown timeout is a guess; operator has no control
+### 9.3 MODERATE — Bulk-disable does NOT stop already-running runs
 
-**What goes wrong:**
-`shutdown_timeout = "60s"` hardcoded. A backup job takes 3 hours. SIGTERM → 60s wait → kill. Corrupted backup.
+**Where:** ARCHITECTURE.md §5.4 documents this.
 
-Or the reverse: `shutdown_timeout = "1h"` hardcoded. Operator wants to bounce Cronduit for a quick config swap, has to wait an hour because there's a long job running they didn't notice.
+**What goes wrong:** Operator bulk-disables 5 jobs for maintenance; 2 of them are currently running. The operator expects "all these jobs stop now." Reality: bulk disable only affects **future** fires; the 2 running jobs complete naturally. If the operator wanted them stopped, they should use the Stop button from Feature 1.
 
-**Why it happens:**
-Shutdown timeout is a global default that must work for workloads you can't predict.
+**Prevention:**
+1. UI toast after bulk-disable: `"3 jobs disabled; 2 currently-running jobs will complete normally. Use the Stop button to terminate them immediately."`
+2. Surface the running-vs-disabled count in the toast so it's unambiguous.
+3. Do NOT extend bulk-disable to also issue Stop — separation of concerns. Stop is per-run, bulk-disable is per-job future-fires.
 
-**How to avoid:**
-1. **Configurable globally AND per-job.** `[defaults] shutdown_grace = "30s"`, `[[jobs]] shutdown_grace = "2h"` for known long runners.
-2. **Respect SIGTERM from Docker honestly.** Docker sends SIGTERM and waits `stop_grace_period` (default 10s) before SIGKILL. If Cronduit needs more, operator sets `stop_grace_period: 2h` in compose.
-3. **Log what shutdown is waiting for** every 5s during shutdown: `"shutdown: waiting for 2 running jobs (longest: backup-daily, 14m)"` — operator can see what's holding things up.
-4. **Second SIGTERM = immediate kill** (a la docker compose behavior). Operators know this pattern.
-5. **State machine for shutdown:** `Running → Draining (no new jobs) → Waiting (running jobs finishing) → Killing (timeout hit) → Stopped`. Each transition logged.
+**Test case:**
+- **T-V11-BULK-07:** Start a long-running job; bulk-disable it; assert the run completes with its natural status; assert the next scheduled fire does NOT happen.
 
-**Warning signs:**
-- Hardcoded shutdown timeout.
-- Silent shutdown with no progress logs.
-- No way to override per-job.
-
-**Phase to address:** Phase 2 (scheduler shutdown) and Phase 6 (operational).
-
-**Severity:** MEDIUM
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 20: TOML vs YAML decision pushed to users as "support all the things"
+### 9.4 MODERATE — Operator forgets jobs are disabled, discovers 3 months later
 
-**What goes wrong:**
-Spec says "pick one as primary, consider supporting multiple." Cronduit tries to support TOML AND YAML AND JSON. Three parsers, three test suites, three error message styles, three config schema docs. Users hit edge cases where the same semantic config is valid in one and invalid in another. Maintenance burden triples.
+**Where:** UI discoverability.
 
-**Why it happens:**
-"Why not support both?" sounds polite but is a maintenance trap.
+**What goes wrong:** Operator disables 5 jobs for maintenance, forgets, 3 months later realizes their backups haven't run. The v1 UI surface must make the "currently disabled for non-config reason" set highly visible.
 
-**How to avoid:**
-1. **Ship v1 with TOML only.** Document the decision: Rust-native parsing, strong typing, clean for hand-written files, matches `Cargo.toml` aesthetic.
-2. **If YAML is demanded by users post-v1,** add it as an explicit second format with its own parser but same internal representation. Do NOT try to auto-detect format from file extension silently; require `config_format = "toml"` or `"yaml"` explicitly, or gate on file extension with an error if mismatched.
-3. **No INI, no JSON.** JSON is hostile to hand-editing (no comments in standard JSON). INI is too limited for nested jobs.
-4. **Document the decision in `docs/decisions/001-config-format.md`** so future contributors don't re-litigate.
+**Prevention:**
+1. Settings page shows an explicit list: `"3 jobs forced-disabled: backup-postgres, backup-redis, backup-mongo"` with a prominent "Re-enable all" button.
+2. Dashboard card for a bulk-disabled job shows a distinct badge: `"DISABLED (override)"` not just `"DISABLED"` — operators need to tell the two disabled-states apart.
+3. Optional: `/metrics` exposes `cronduit_jobs_override_disabled{job}` gauge so Prometheus alerts can fire on "backup job disabled for >24h". Nice-to-have.
 
-**Warning signs:**
-- Multi-parser code in Phase 1.
-- Issue tracker full of "why doesn't my YAML work the same as TOML" questions.
+**Test cases:**
+- **T-V11-BULK-08:** Settings page rendering contains the overridden-jobs list when any job has `enabled_override = 0`.
+- **T-V11-BULK-09:** Dashboard card badge distinguishes "config-disabled" from "override-disabled".
 
-**Phase to address:** Phase 1 (config format decision) — this is a research-phase finding that should be LOCKED before Phase 2 starts.
-
-**Severity:** MEDIUM
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 21: Running Cronduit in Docker means the "host" commands from `type = "command"` don't mean what users think
+### 9.5 MODERATE — Bulk-disable race with config reload mid-selection
 
-**What goes wrong:**
-Spec supports `type = "command"` to run local shell commands. But Cronduit itself runs inside a container. "Local" means "inside the Cronduit container," which has its own filesystem, no host binaries, no host cron, no host mounts unless explicitly shared. An operator writes `command = "/usr/local/bin/backup.sh"` expecting it to run on the host; it fails with "not found" because `/usr/local/bin/backup.sh` is on the host, not in the Cronduit image.
+**Where:** The new `bulk_toggle` API handler and the config file-watcher.
 
-**Why it happens:**
-The mental model of "a cron daemon that runs commands" collides with the reality of containerization. Users who've used cron or ofelia expect host context.
+**What goes wrong:** Operator selects 5 jobs in the UI at T=0. Between T=0 and T=+3s (user clicks "Disable"), the file-watcher detects a config edit and triggers `SchedulerCmd::Reload`. The reload runs `disable_missing_jobs`, which for Feature 9 also clears `enabled_override` for any job removed from the config. If one of the 5 selected jobs was simultaneously removed from the config file, the bulk-disable runs AFTER the reload, the override fires on a job whose row is already `enabled=0`, and the override is set on a disappeared-from-config job — confusing state.
 
-**How to avoid:**
-1. **Document prominently** that `type = "command"` runs inside the Cronduit container, not the host. Headline in README.
-2. **Recommend Docker execution (`type = "docker"`) for anything that needs host resources.** Cronduit's strength is Docker execution; push users toward it for host-adjacent work.
-3. **`type = "host-command"` is NOT a feature.** Running arbitrary host commands from inside a container without SSH or a side-channel is a whole mess of pseudo-security ("mount the host filesystem and chroot?") that should be explicitly out of scope.
-4. **Ship a "baseline tools" image** as the Cronduit base: `curl`, `wget`, `sh`, `bash`, `jq`, `coreutils`. Users can run `curl -sf https://...` inline without spawning a container. Document what's present.
-5. **Allow users to extend the base image** via a Dockerfile: `FROM cronduit:latest\nRUN apt-get install -y ...`. Document this pattern.
-6. **If a user needs host commands, they should shell them out via a Docker container with the host rootfs mounted** — their call, their responsibility, documented example.
+**Prevention:**
+1. `bulk_toggle` operates by `job_id`. If a `job_id` in the request no longer exists (or is already in the "missing from config" state), skip it and include that in the response for the operator: `"Updated 4 of 5 jobs; job 'foo' was removed from the config."`
+2. Document the resolution in the API response so the UI can show it in the toast.
+3. Integration test that exercises this exact race deterministically.
 
-**Warning signs:**
-- README doesn't distinguish "local command" from "host command."
-- First adopter issues are "why can't my script find `rsync`?"
+**Test case:**
+- **T-V11-BULK-10:** Start a bulk toggle for 3 jobs; concurrently fire a config reload that removes one of them; assert the toggle affects the remaining 2 and reports the skipped one.
 
-**Phase to address:** Phase 3 (execution) + Phase N (release prep README).
-
-**Severity:** MEDIUM
+**Severity:** MODERATE.
 
 ---
 
-### Pitfall 22: Scheduler clock drift inside a container that wasn't time-synced
+## Feature 10 — Docker Healthcheck (NEW)
 
-**What goes wrong:**
-Cronduit runs inside a Docker container on a NAS that doesn't run NTP. The container inherits the host clock, which drifts by 10 minutes over a week. Scheduled jobs fire 10 minutes late. After a host reboot, the clock jumps. Jobs that were due during the skipped time either all fire at once (catch-up) or disappear (skipped).
+### 10.1 CRITICAL — Root-cause verification: Dockerfile has NO `HEALTHCHECK` today
 
-**Why it happens:**
-Containers inherit the host clock. Hosts without NTP drift. `tokio::time::sleep(next_run_at - now)` doesn't notice.
+**Where:** `/Users/Robert/Code/public/cronduit/Dockerfile` (verified — no `HEALTHCHECK` directive). `examples/docker-compose.yml` and `examples/docker-compose.secure.yml` (verified — no `healthcheck:` stanza).
 
-**How to avoid:**
-1. **Use wall-clock scheduling, not monotonic sleep.** On each tick, compute "the next due job at the current wall clock." Don't pre-compute sleeps against monotonic time.
-2. **Clock-jump detection.** If `now` moves backwards or forwards by more than 2 minutes between ticks, log a warning and re-evaluate all schedules.
-3. **Don't catch up missed runs by default.** If Cronduit wakes up and sees 14 missed runs for a job, firing all 14 is usually wrong. Default: fire once with `catch_up=false` and log the skip count. Configurable per-job: `catch_up = "all" | "one" | "none"` (default `one`).
-4. **Document** that Cronduit assumes a reasonably stable clock and users should run NTP. Recommend the host's timesyncd or similar.
-5. **Health endpoint includes clock info:** `{"now": "...", "drift_detected": false}`.
+**What goes wrong:** The reported `(unhealthy)` symptom **cannot** come from the shipped examples alone — the shipped images + compose files define no healthcheck at all. The operator's failing deployment is using an **operator-authored** healthcheck stanza (almost certainly `wget --spider` against `/health`). This changes the fix-path calculus:
 
-**Warning signs:**
-- Jobs firing 14 times in quick succession after a resume.
-- Jobs missing over long periods after host reboot.
-- No clock-jump handling in scheduler tick.
+1. **The shipped artifacts do not have the bug today.** They have no healthcheck at all, so the container reports `Up N hours` without a health suffix.
+2. **The operator's problem is in their own compose file.** Fixing the shipped artifacts doesn't fix their deployment — they must update their compose file to use whatever v1.1 ships.
+3. **Any v1.1 fix that adds a default HEALTHCHECK to the Dockerfile is a behavior change**: containers that used to report `Up N hours` will now report `Up N hours (healthy)` or `(unhealthy)`. Some operators may have tooling that keys off the current "no status suffix" shape.
 
-**Phase to address:** Phase 2 (scheduler core).
+**Why:** The original hypothesis in the scope question was "busybox wget chunked-encoding bug in the shipped compose". Grep confirms there is no wget healthcheck in the shipped compose. The bug is in operator-authored overrides that v1 never documented as a supported pattern.
 
-**Severity:** MEDIUM
+**Prevention:**
+1. **Reproduce the exact failing stanza from the operator's compose file before writing any code.** Ask the operator (or recover from the report if it has their compose) — do NOT guess the wget pattern.
+2. **Ship a `cronduit health` subcommand** (per ARCHITECTURE.md §3.8) so the canonical fix is *"use `test: ['CMD', '/cronduit', 'health']` instead of whatever you had"*. This works regardless of the root cause of the wget bug.
+3. **Add a default `HEALTHCHECK` to the Dockerfile** using `cronduit health` — conservative intervals documented below. This makes the default shipped image healthy without operator action.
+4. **Leave compose examples `healthcheck`-free OR add a documented example that uses `cronduit health`.** Either works; both reinforce the canonical pattern.
+5. **Verify the reported root cause** by running the operator's exact wget invocation against cronduit's `/health` in a reproducer; the chunked-encoding theory is plausible but unconfirmed.
 
----
+**Test cases:**
+- **T-V11-HEALTH-01:** Build the default Docker image; `docker run` it; `docker inspect` shows `Health.Status == healthy` within 30s.
+- **T-V11-HEALTH-02:** Reproduce the reported busybox `wget --spider https://localhost:8080/health` against the shipped image; capture the exact exit code and stderr for the record (either confirms chunked-encoding theory or surfaces a different root cause).
 
-### Pitfall 23: Embedded static assets (`rust-embed`) break hot reload and bloat binary
-
-**What goes wrong:**
-- `rust-embed` in production bakes assets into the binary. In dev, it reads from disk for hot reload. Bug: dev and prod render differently, and a release build with assets missing from the src tree silently ships an empty UI.
-- Tailwind CSS compiled at build time bloats the binary by 200-500 KB of unused classes if purge isn't configured.
-- Favicons, logos, banners add another few hundred KB.
-
-**Why it happens:**
-- `rust-embed` is great but has gotchas with release-vs-debug behavior.
-- Tailwind's default CSS is 3+ MB; the JIT/purge step is mandatory for reasonable bundle size.
-
-**How to avoid:**
-1. **rust-embed with `#[folder = "..."]` and `debug-embed` feature enabled** so dev and prod behavior match — both read from the embedded tree, not from disk. Trades hot reload for correctness.
-2. **Tailwind JIT/purge configured against Askama/Maud templates.** Verify the compiled CSS is <100 KB after purge.
-3. **Optimize images.** SVG for logos and favicons (small, scalable). Compress PNG banners.
-4. **Check binary size in CI.** Fail if binary grows by >5 MB between PRs without justification.
-5. **Serve assets with `Cache-Control: max-age=31536000, immutable`** and a hash in the filename (cronduit.abcdef.css) for cache busting across releases.
-
-**Warning signs:**
-- Binary size >50 MB.
-- Compiled CSS >500 KB.
-- Dev UI renders differently from release UI.
-
-**Phase to address:** Phase 5 (UI build pipeline).
-
-**Severity:** LOW-MEDIUM
+**Severity:** CRITICAL (scope clarification — the fix still ships but the rationale changes).
 
 ---
 
-## Technical Debt Patterns
+### 10.2 CRITICAL — `cronduit health` subcommand must NOT share state with the running server
 
-Shortcuts that seem reasonable but create long-term problems.
+**Where:** New `src/cli/health.rs` module.
 
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Use `auto_remove=true` instead of explicit remove state machine | Simpler execution code | Lost exit codes and truncated logs on a non-trivial fraction of runs (Pitfall 3) | Never — it breaks the product's core promise |
-| Single `DELETE` for log pruning instead of batched | One line of SQL | Scheduler stalls during prune on SQLite; user-visible failures | Only if log table has <10k rows and staying that way |
-| Skip DST regression tests | Ship faster | 100% chance of a public embarrassment every March and November | Never |
-| `bind = "0.0.0.0:8080"` default | "Works out of the box" | First-day adopter accidentally exposes root to internet | Never |
-| Hand-rolled `@random` slot allocation without feasibility check | Simpler math | Infinite loop or silent constraint violation on edge cases (Pitfall 6) | Never — feasibility is a one-time O(n) check |
-| Use `cron` crate instead of `croner` | Already in Cargo.toml | Subtle DST + weekday numbering bugs | Only if the test suite explicitly verifies DST and Sunday=0 |
-| Single sqlx connection pool for reads and writes | Less code | Write contention collapses throughput (Pitfall 7) | Never with SQLite; acceptable with Postgres |
-| Log line as "one DB row per newline" | Simple schema | Breaks on huge lines; 10× write overhead for chatty jobs | Only for very low-volume use cases with hard line-length cap |
-| `tracing::info!("config: {:?}", config)` | Great debugging | Secret leak into log aggregators (Pitfall 18) | Never for anything containing `env` |
-| Separate code paths for "Run Now" and scheduled runs | UI button is a one-liner | Divergent semantics, doubled bugs (Pitfall 16) | Never |
-| "Support TOML, YAML, and INI" in v1 | Flexibility | 3× maintenance, user confusion | Never in v1 |
-| Synchronous config reload (no debounce) | Fewer moving parts | Editor save events cause 5 reloads, partial files parsed (Pitfall 9) | Never |
+**What goes wrong:** A naive implementation imports `AppState`, reads the pool, and queries the DB directly. This is wrong for three reasons:
 
----
+1. **Two connections to the same SQLite file from two processes is allowed, but the healthcheck running `SELECT 1` while the main server is mid-write can trip `SQLITE_BUSY` and return false-negative unhealthy.**
+2. **The whole point of a healthcheck is to verify the running server is serving requests** — that's an HTTP-level check, not a DB check. A sub-process that queries the DB directly doesn't prove the server is alive.
+3. **Sharing state pulls in every dependency** (bollard, sqlx, etc.) so the healthcheck binary is as big as the main binary. Fine since it IS the main binary (`/cronduit health`), but reinforces that it should make an HTTP call, not a DB call.
 
-## Integration Gotchas
+**Prevention:**
+1. **Implementation:** `cronduit health` spawns a minimal HTTP client (`ureq` or hand-rolled `hyper::Client`), makes `GET http://$bind/health`, parses the JSON body, exits 0 if `status == "ok"`, exits 1 otherwise. That's it. ~60 LOC.
+2. **Do NOT use reqwest** — it pulls a huge dep tree. Use `ureq` (pure Rust, rustls-compatible, tiny) or a hand-rolled `hyper::Client` (already a transitive dep via axum).
+3. **Config discovery**: the subcommand needs to know the bind address. Options:
+   - `--config /etc/cronduit/config.toml` (same as `run` subcommand) and re-parse TOML → picks up operator customizations.
+   - `--bind http://127.0.0.1:8080` explicit flag → simpler, no TOML dependency.
+   - Default to `127.0.0.1:8080` if neither is provided → matches the documented v1 default.
+4. **Verify `cargo tree -i openssl-sys` stays empty** after adding the HTTP client dep (v1.0 security gate must hold).
 
-Common mistakes when connecting to external services.
+**Test cases:**
+- **T-V11-HEALTH-03:** Run `cronduit health` against a running server; assert exit 0.
+- **T-V11-HEALTH-04:** Run `cronduit health` when no server is running; assert exit 1 within 5 seconds (no indefinite retry).
+- **T-V11-HEALTH-05:** Run against a server whose `/health` returns `{"status": "degraded"}`; assert exit 1 (partial failure is failure for Docker healthcheck purposes).
+- **T-V11-HEALTH-06:** `cargo tree -i openssl-sys` empty post-addition.
 
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| Docker socket (bollard) | Using `auto_remove=true` and expecting `wait` to still give exit code | Create without auto_remove; wait; collect logs; explicit remove |
-| Docker socket (bollard) | `container:<name>` without pre-flight checking target is running | Inspect target first; record distinct failure reason |
-| Docker socket (bollard) | Pull image once, never retry transient failures | Exponential backoff, classify retryable vs. fatal errors |
-| Docker socket (bollard) | Not setting labels on spawned containers | Set `cronduit.run_id` label for reconciliation |
-| SQLite (sqlx) | Default connection pool for writes | Single-connection write pool + multi-connection read pool |
-| SQLite (sqlx) | No `busy_timeout` | `PRAGMA busy_timeout = 5000` on every connection |
-| SQLite (sqlx) | No WAL mode | `PRAGMA journal_mode = WAL` on every connection |
-| Postgres (sqlx) | Using JSONB/enum/array types that don't port to SQLite | Lowest-common-denominator schema OR per-dialect migrations |
-| Prometheus metrics | Free-form strings as label values | Closed enum of reason codes; no run_id in labels |
-| File watching (notify) | Raw events without debounce | Debounce 500ms; parse to staging; atomic apply |
-| TLS (rustls vs openssl) | Mixing both → cross-compile breakage | Commit to rustls; `cargo tree -i openssl-sys` = empty |
-| HTMX / SSE | Slow viewer blocks log stream | Broadcast channel to viewers; DB writer on separate task |
-| HTMX templates (Askama/Maud) | `|safe` on user content | Always escape; parse ANSI to sanitized spans |
+**Severity:** CRITICAL.
 
 ---
 
-## Performance Traps
+### 10.3 CRITICAL — `cronduit health` must fail fast, not retry indefinitely
 
-Patterns that work at small scale but fail as usage grows.
+**Where:** New `src/cli/health.rs`.
 
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Unbounded log channel | RSS grows with job output; OOM-kill | Bounded channel with drop policy + marker (Pitfall 4) | First job that emits >200 MB of stdout |
-| Per-line DB inserts | High CPU on SQLite; contention | Batch 500 lines or 250ms in a transaction | ~100 lines/sec sustained |
-| Single DELETE for retention | Scheduler ticks fail with SQLITE_BUSY | Batched delete with sleeps | ~1M log rows |
-| No WAL checkpoint strategy | `*.db-wal` file grows unbounded | Periodic `PRAGMA wal_checkpoint(TRUNCATE)` | Any long-lived reader |
-| Sync reload on every file event | 5× parse per save | Debounce 500ms | Any editor with atomic-save |
-| Histogram metric per job label | `/metrics` becomes multi-MB | Consider global histogram or cap jobs per instance | ~1000 jobs |
-| Loading all log lines into DOM | Browser freeze on run detail | Paginate; SSE tail only | Any run with >10k lines |
-| No connection pool for reads | Dashboard sluggish under load | Multi-connection read pool | First user who opens multiple tabs |
-| Polling Docker API every second | CPU pegged; daemon pressure | Event-driven via `events` API | Always — don't poll in v1 |
-| Serialized log writers per run | Per-run throughput cap | Single writer task, multiplexed | ~5 concurrent chatty jobs |
+**What goes wrong:** A naive HTTP client with default timeouts might hang for 30+ seconds waiting for a response. Docker's healthcheck has its own `timeout=5s` policy; if `cronduit health` takes 30s to fail, Docker marks the check as "unhealthy" simultaneously from the outer timeout AND from the inner subprocess failure. The Docker daemon logs look weird.
 
----
+**Prevention:**
+1. **Hard connect timeout**: 2 seconds.
+2. **Hard read timeout**: 2 seconds.
+3. **No retries inside `cronduit health`**: one attempt only. Docker's `retries=3` is the retry policy.
+4. **Exit fast** (<3 seconds total) whether success or failure.
 
-## Security Mistakes
+**Test cases:**
+- **T-V11-HEALTH-07:** Run `cronduit health` against an unreachable address (`--bind http://127.0.0.1:9`); assert exit 1 within 3 seconds.
+- **T-V11-HEALTH-08:** Run against a hanging server (returns data extremely slowly); assert exit 1 within 3 seconds.
 
-Domain-specific security issues beyond general web security.
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| Mounting docker.sock read-only and thinking it's safe | False sense of security; still exploitable | Document honestly: RW + no socket mitigations; treat as root-equivalent |
-| Default bind `0.0.0.0:8080` with no auth | Accidental internet exposure = host compromise | Default bind `127.0.0.1`; require opt-in for external bind |
-| Interpolating `${VAR}` into command strings | Shell injection if VAR contains shell metacharacters | Never build command strings; pass args as arrays; document `env` uses exec not shell |
-| Logging full resolved config | Secret leak into log aggregators | `SecretString` type; custom Debug that redacts `env` |
-| Running jobs as root inside their containers | Breakout via kernel vuln | Document `user:` field; encourage non-root job containers (doesn't mitigate socket; still defense-in-depth) |
-| Web UI accepts unauthenticated "Run Now" | Any network-adjacent actor can run arbitrary containers = host root | Default LAN-only bind; CSRF token on POST; document reverse proxy + auth |
-| CSRF on state-changing endpoints | XSS in a log line → forced Run Now from victim's browser | CSRF token on all POST/DELETE; SameSite=strict cookies |
-| Log content rendered as HTML | XSS via job stdout | Escape by default; parse ANSI server-side to sanitized spans |
-| Config file writable by non-root | Privilege escalation to full host root via container definition | Document `read_only: true` mount; `:ro` on compose |
-| `command = "/host/..."` illusion | Users think they're running host commands from the sandbox | Explicit documentation of container-scoped execution; no `host-command` feature |
-| Auth deferred without loud warnings | Users exposing v1 to the internet | Mandatory startup warning; bind default 127.0.0.1; README SECURITY at top |
-| Image digest not recorded | Supply chain drift invisible | Record resolved digest per run; surface in UI |
+**Severity:** CRITICAL.
 
 ---
 
-## UX Pitfalls
+### 10.4 MODERATE — Dockerfile HEALTHCHECK interval vs start_period
 
-Common user experience mistakes in this domain.
+**Where:** New `HEALTHCHECK` directive in `Dockerfile`.
 
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| `@random` shows as "random" in UI without resolved value | User can't plan around it, thinks it's random at run time | Show: "Today: 14:17 (resolves 00:00 daily)" with manual re-roll action |
-| Generic "failed" status for all failures | User can't distinguish script bug from network/Docker issue | Distinct categories: `exit_nonzero`, `image_pull`, `network_target`, `timeout`, `abandoned` |
-| Timezone shown only in local time on DST day | Operator can't debug what actually ran | Always show local + UTC together on run detail |
-| Run detail page loads all logs at once | Browser hangs on chatty jobs | Paginate; tail via SSE; "load older" button |
-| No indication a config reload failed | Silent config desync; operator believes their edit is live | Surface last reload status on Settings page; metric; log |
-| Job history has no search/filter | Debugging is scrolling through a huge table | Filter by status, date range, job; default to last 100 |
-| Manual "Run Now" is indistinguishable from scheduled runs in history | Audit trail is confusing | `trigger` column/badge: scheduled/manual/reload |
-| No "next run" countdown | User stares at the page wondering if scheduler is alive | Live-updating "next run in 4m 12s" with last-tick timestamp |
-| Truncated logs with no indication | User thinks the log is complete | Explicit `log_truncated=true` banner; link to raw download |
-| Error banners auto-dismiss | User misses errors in HTMX updates | Errors persist until dismissed; show error count in header |
-| No "healthy"/"degraded" top-level indicator | User doesn't know if scheduler itself is OK | Health badge in header; green/yellow/red; link to Status page |
-| Design system not applied to error states | Errors look unstyled, feel broken | Terminal-red treatment consistent with success/pending states |
+**What goes wrong:** Aggressive healthcheck settings produce false negatives during startup (migration) or on slow hardware. Conservative settings produce slow unhealthy-detection.
 
----
+**Prevention:** Conservative defaults derived from realistic cronduit startup times:
 
-## "Looks Done But Isn't" Checklist
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD ["/cronduit", "health"]
+```
 
-Things that appear complete but are missing critical pieces.
+Rationale:
+- `--interval=30s`: cronduit is a long-running scheduler, 30s health resolution is plenty.
+- `--timeout=5s`: 2.5× the internal 2s connect+read timeout, gives slack for Docker's process-spawn overhead.
+- `--start-period=60s`: covers the v1.1 migration backfill on mid-size DBs (§5.3). Document that operators with very large DBs (>1M runs) may need to override this.
+- `--retries=3`: matches Docker defaults; with interval=30s this is a 90s window before unhealthy.
 
-- [ ] **Docker execution:** Looks done — spawns containers successfully. Often missing: explicit remove state machine (Pitfall 3), `cronduit.run_id` labels (Pitfall 10), pre-flight for `container:<name>` (Pitfall 2), image pull retry (Pitfall 12), digest recording.
-- [ ] **Cron parsing:** Looks done — parses "0 2 * * *" correctly. Often missing: DST tests (Pitfall 5), timezone configuration, clock-jump handling (Pitfall 22), catch-up policy.
-- [ ] **`@random`:** Looks done — picks a random time. Often missing: persistence of resolution (Pitfall 6), feasibility check, deterministic re-roll cadence, UI surfacing, manual re-roll action.
-- [ ] **Log capture:** Looks done — logs appear in DB. Often missing: bounded channel (Pitfall 4), batch inserts, drop markers, truncation cap, ANSI parsing (Pitfall 13), XSS escaping.
-- [ ] **Config reload:** Looks done — SIGHUP reloads. Often missing: file-watch debounce (Pitfall 9), atomic apply, running-job semantics, surface-in-UI of last reload status, partial-parse rollback.
-- [ ] **SQLite persistence:** Looks done — queries work. Often missing: WAL mode, `busy_timeout`, separate read/write pools (Pitfall 7), batched retention pruning (Pitfall 11), WAL checkpointing.
-- [ ] **Graceful shutdown:** Looks done — SIGTERM stops the process. Often missing: wait for running jobs (Pitfall 10), label-based reconciliation on restart, progress logs during shutdown (Pitfall 19), configurable per-job grace.
-- [ ] **Metrics:** Looks done — `/metrics` returns Prometheus text. Often missing: closed-enum label values (Pitfall 17), cardinality budget, scrape-time test, clock info in health.
-- [ ] **Web UI:** Looks done — dashboard renders. Often missing: CSRF tokens, XSS escaping (Pitfall 13), log pagination, error persistence, timezone display, "no auth" banner.
-- [ ] **Security docs:** Looks done — README mentions Docker socket. Often missing: THREAT_MODEL.md, "not for internet exposure" banner, default-bind-to-localhost (Pitfall 1), docker-compose example with `expose` not `ports`.
-- [ ] **Multi-backend DB:** Looks done — SQLite and Postgres both work in dev. Often missing: CI matrix across both (Pitfall 8), per-dialect migrations, schema parity docs.
-- [ ] **Cross-compile:** Looks done — `cargo build` succeeds on dev machine. Often missing: arm64 CI (Pitfall 14), `cargo tree -i openssl-sys` check, musl vs glibc decision, multi-arch image publishing.
-- [ ] **Manual Run Now:** Looks done — button triggers run. Often missing: shared path with scheduler (Pitfall 16), idempotency token, distinct `trigger=manual` tag, concurrency policy enforcement.
-- [ ] **Tests:** Looks done — `cargo test` passes. Often missing: DST regression cases, restart-during-execution, @random feasibility edge cases, XSS in logs, 1000-job metrics scrape, Postgres matrix.
-- [ ] **README:** Looks done — installation and example. Often missing: security section at top, threat model, defaults table, troubleshooting for common Docker networking failures, "@random explained" section.
+**Test cases:**
+- **T-V11-HEALTH-09:** Build shipped image, run `docker compose up`, assert container reaches `healthy` within 90s.
+- **T-V11-HEALTH-10:** Build image with a synthetic 120s migration delay; assert operators get a clear error message (or the start_period is sufficient — pick and document).
+
+**Severity:** MODERATE.
 
 ---
 
-## Recovery Strategies
+### 10.5 MODERATE — Backward compat: operator-authored healthcheck overrides must still work
 
-When pitfalls occur despite prevention, how to recover.
+**Where:** Operator compose files with their own `healthcheck:` stanza.
 
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| docker.sock exposed to internet | CRITICAL | Rotate all host secrets; assume full host compromise; rebuild from known-good image; audit all running containers |
-| Orphaned containers after crash | LOW | Startup reconciliation with `cronduit.run_id` label finds and finalizes them |
-| DB rows stuck in `status=running` | LOW | Reconciliation marks as `lost` with note; operator retriggers if needed |
-| Lost exit code from auto_remove race | MEDIUM | Can't recover historical data; fix code to use explicit remove; document known-lost runs |
-| Corrupted SQLite after crash | MEDIUM | WAL mode makes corruption rare; `PRAGMA integrity_check`; restore from backup |
-| DB schema diverged between SQLite/Postgres | HIGH | Write migration to reconcile; extensive testing; document forced downtime for ops |
-| `@random` resolution drift across restarts | LOW | Reconciliation against persisted `schedule_resolutions`; log the discrepancy |
-| DST bug fired jobs at wrong time | MEDIUM | Rerun affected jobs manually; fix library; backfill via "Run Now" if idempotent |
-| Log retention accidentally deleted data | HIGH | Restore from backup; add unit test for retention boundary |
-| Secret leaked via log | CRITICAL | Rotate credential; audit log exporters; purge aggregator history if possible |
-| Config reload partially applied | MEDIUM | Startup revalidates from file; fix reload code to be atomic |
-| XSS in UI via job log | HIGH | Fix escaping; audit log history for exploit attempts; force session logout if auth exists |
-| `container:<name>` silently into stale ns | MEDIUM | Pre-flight check fixes going forward; past runs can't be re-verified |
+**What goes wrong:** Docker compose YAML semantics: a `healthcheck:` stanza in the service definition **replaces** the Dockerfile's `HEALTHCHECK` entirely. So operators who already have their own healthcheck (even a broken one) will NOT pick up the new default. Their deployment continues to be broken until they update their compose file.
+
+**Conversely:** operators who have NO healthcheck in their compose will pick up the new default automatically (via Dockerfile) — that's the win.
+
+**Prevention:**
+1. **Release notes MUST call out the new default explicitly** and show the recommended compose stanza for operators who want to override: `test: ["CMD", "/cronduit", "health"]`.
+2. **Troubleshooting section in README**: "If your container reports unhealthy with busybox wget, update your compose healthcheck to use `cronduit health`."
+3. **Do NOT silently break existing overrides** — the Dockerfile directive is additive. Operators who override continue to override.
+
+**Test case:**
+- **T-V11-HEALTH-11:** Start the shipped image with an operator compose override that uses wget (broken pattern); assert container starts but health is controlled by the broken check; assert release notes call this out as an operator action item.
+
+**Severity:** MODERATE.
 
 ---
 
-## Pitfall-to-Phase Mapping
+### 10.6 MINOR — Response Content-Length fix is a band-aid, not a fix
 
-How roadmap phases should address these pitfalls.
+**Where:** `src/web/handlers/health.rs` L12–L28 — returns `(StatusCode, Json(...))`.
 
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| 1. Docker socket / no-auth messaging | Phase 1 (binding defaults) + Phase N (README SECURITY) | Default bind is 127.0.0.1; README has SECURITY section above the fold; startup warns when bound externally |
-| 2. `container:<name>` silent failures | Phase 3 (Docker execution) | Pre-flight check exists; distinct failure reason in metrics; integration test with target-down scenario |
-| 3. `wait_container` / `auto_remove` race | Phase 3 (Docker execution) | State machine in code; no `auto_remove=true` for jobs; 1000-iteration flake test passes |
-| 4. Log streaming back-pressure | Phase 3 (execution) + Phase 5 (UI SSE) | Bounded channel; chunk-based storage; load test with 500 MB output; RSS stable |
-| 5. DST / timezone correctness | Phase 2 (scheduler core) | `croner` in deps; DST regression test suite; timezone required in config |
-| 6. `@random` correctness | Phase 2 (resolution + persistence) + Phase 5 (UI) | `schedule_resolutions` table; feasibility check; UI shows resolved value; deterministic re-roll tests |
-| 7. SQLite write contention | Phase 4 (persistence) | Separate read/write pools; WAL + busy_timeout pragmas; batch writes; load test passes |
-| 8. Schema parity SQLite/Postgres | Phase 4 (persistence) | Dual migration dirs; CI matrix; schema doc; both pass same integration suite |
-| 9. Config reload races | Phase 2 (scheduler) | Debounced file watch; atomic apply; partial-parse rollback test; reload status in UI |
-| 10. Restart-during-execution / orphans | Phase 3 (execution) + Phase 4 (persistence) | Labels + reconciliation; integration test for mid-run restart |
-| 11. Log retention pruning | Phase 4 (persistence) | Batched delete; separate log vs run retention; prune metrics |
-| 12. Image pull retry + digest | Phase 3 (execution) | Exponential backoff; classified errors; digest recorded per run |
-| 13. ANSI / XSS / huge lines in UI | Phase 5 (UI) | XSS test case in CI; ANSI parser; line cap; paginated display |
-| 14. Cross-compile / musl / OpenSSL | Phase 1 (deps) + Phase N (release CI) | rustls everywhere; `cargo tree -i openssl-sys` empty; arm64 CI builds |
-| 15. Default surprises | Phase 1 (CLI/config) + Phase N (docs) | `--check` command; startup summary log; sample configs |
-| 16. Run Now bypassing semantics | Phase 2 (scheduler interface) + Phase 5 (UI) | Shared code path; idempotency token; `trigger` column |
-| 17. Metrics cardinality | Phase 6 (operational) | Closed-enum reasons; 1000-job scrape test; no run_id labels |
-| 18. Secret leak in logs | Phase 2 (config model) + code review | `SecretString` type; no `{:?}` on config; missing-var fails fast |
-| 19. Shutdown timeout | Phase 2 (scheduler) + Phase 6 | Per-job configurable; progress logs; second-SIGTERM kill |
-| 20. Config format proliferation | Phase 1 (decision LOCKED) | TOML only in v1; documented decision |
-| 21. "Local command" ambiguity | Phase 3 (execution) + Phase N (docs) | README headline; baseline tools image; docker-compose example |
-| 22. Clock drift / jump | Phase 2 (scheduler core) | Wall-clock scheduling; jump detection; health endpoint |
-| 23. Asset embedding / binary bloat | Phase 5 (UI build) | Tailwind purge; `debug-embed`; CI size check |
+**What goes wrong:** One proposed fix (ARCHITECTURE.md §3.8 option 3) is to hand-build a Response with an explicit `Content-Length` header so chunked encoding is avoided. This is a **local fix for a specific client bug** and does not generalize — a different tool (netcat, curl with weird flags) could hit a different parse issue. The `cronduit health` subcommand is a superior fix because it owns the client side.
+
+**Prevention:**
+1. Do **not** muck with the `/health` handler's response shape. Leave it as the idiomatic axum `(StatusCode, Json(...))`.
+2. The canonical health check is `cronduit health`; all other patterns are operator responsibility.
+3. Document in `health.rs` that changing the response shape is not the fix path.
+
+**Test case:**
+- **T-V11-HEALTH-12:** `/health` endpoint response is unchanged from v1.0 (regression lock).
+
+**Severity:** MINOR.
+
+---
+
+## Cross-Feature Pitfalls
+
+### X.1 CRITICAL — Two migrations land in rc.1; one must precede the other
+
+**Where:** Feature 5 (`job_run_number`, 3 files) + Feature 9 (`enabled_override`, 1 file) both land in v1.1. Feature 5 is in rc.1 (bug-fix block); Feature 9 is in rc.3 (ergonomics).
+
+**What goes wrong:** If the Feature 9 migration file is authored with a timestamp that sorts **earlier** than the Feature 5 files, an operator upgrading from v1.0 to rc.3 directly gets the migrations in the wrong order: `enabled_override` is added first, but then the per-job-run-number migration tries to read `job_runs` rows in a way that assumed the v1.0 schema.
+
+**Prevention:**
+1. Migration filenames use `YYYYMMDD_HHMMSS_description` format. Feature 5 files should be `20260415_*` and Feature 9 file should be `20260420_*` or later. The rc build cadence naturally gives this ordering.
+2. **Assert migration monotonicity in CI**: the CI job that runs migrations against a fixture DB must process them in filename order and all must succeed. Any out-of-order issue surfaces as a test failure.
+3. Document the migration ordering requirement in `migrations/README.md` (create if it doesn't exist).
+
+**Test cases:**
+- **T-V11-MIG-01:** CI test: run full migration chain from empty DB; assert all migrations applied; verify monotonic filename ordering.
+- **T-V11-MIG-02:** Run migration chain from a v1.0.1 DB snapshot fixture; assert all v1.1 migrations apply cleanly.
+
+**Severity:** CRITICAL.
+
+---
+
+### X.2 CRITICAL — rc.1 ships stop-a-job WITHOUT the §2.1 log-writer ordering change
+
+**Where:** Build-order in ARCHITECTURE.md §4 places Stop-a-Job before Log-Backfill in rc.1, but they share the `LogLine` struct change.
+
+**What goes wrong:** If stop-a-job lands first and the engineer doesn't do the `LogLine.id` refactor proactively, the log-backfill feature (Feature 2) won't have the id field available and the dedupe path has to be bolted on later. That creates a second, redundant pass through the SSE handler.
+
+**Prevention:**
+1. Land the `LogLine.id` schema + writer-order change as its own micro-PR **before** either Feature 1 or Feature 3. It's mechanical, independent, and unblocks both downstream features.
+2. Sequence: (pre-rc.1) `LogLine.id` refactor → (rc.1.a) Stop-a-Job → (rc.1.b) Log backfill → (rc.1.c) Run numbers → (rc.1.d) Healthcheck.
+
+**Test case:**
+- **T-V11-SEQ-01:** Commit graph / PR dependency test: the `LogLine.id` PR merges before any PR touching SSE backfill.
+
+**Severity:** CRITICAL (process, not code).
+
+---
+
+### X.3 MODERATE — Testcontainers integration tests are expensive; keep them gated
+
+**Where:** `tests/` directory (integration), `just test` wiring, CI config.
+
+**What goes wrong:** Feature 1 (stop-a-job) integration tests spawn real alpine containers via bollard+testcontainers. Feature 5 (migration) integration tests seed realistic DBs. Running them on every local `cargo test` slows developer inner loop from ~5s to ~60s. Developers start skipping integration tests entirely.
+
+**Prevention:**
+1. Gate integration tests behind a feature flag `#[cfg(feature = "integration")]` (v1.0 already does this per STACK.md).
+2. `just test` runs unit tests only; `just test-integration` runs both.
+3. CI runs both in separate jobs so local iteration stays fast.
+
+**Test case:** N/A — process.
+
+**Severity:** MODERATE.
+
+---
+
+### X.4 MODERATE — `active_runs` map becomes `running_handles` map (rename risk)
+
+**Where:** `src/scheduler/mod.rs` L56, `src/web/mod.rs` L40, `src/cli/run.rs` L133.
+
+**What goes wrong:** ARCHITECTURE.md §3.1 introduces `running_handles: HashMap<i64, RunControl>` as a new field. But the existing `active_runs: HashMap<i64, broadcast::Sender<LogLine>>` serves a similar "map of in-flight runs" role. Tempting to merge the two into `RunControl { broadcast: broadcast::Sender<LogLine>, cancel: CancellationToken, stop_reason: Arc<AtomicU8>, container_id: Arc<RwLock<Option<String>>> }`. **Merging is fine**, but two separate maps kept in sync is a drift hazard.
+
+**Prevention:**
+1. **Merge** `active_runs` and `running_handles` into one `HashMap<i64, RunControl>` where `RunControl` contains both the broadcast sender (for SSE) and the cancel token + stop_reason (for Stop). Update `AppState` to expose `active_runs.read().get(&id).map(|rc| rc.broadcast.clone())`.
+2. This is the cleanest design; ARCHITECTURE.md's two-map suggestion can be simplified at implementation time.
+3. Test that adding/removing runs happens atomically (single map = single lock acquisition).
+
+**Test case:**
+- **T-V11-MAP-01:** Concurrent insert/remove/read on the active-runs map stress-test; assert no dropped entries.
+
+**Severity:** MODERATE.
+
+---
+
+### X.5 MINOR — Clippy lint drift from new `async fn` signatures
+
+**Where:** CI clippy gate (`cargo clippy -D warnings`).
+
+**What goes wrong:** New code in `src/scheduler/control.rs`, `src/web/handlers/timeline.rs`, `src/cli/health.rs`, `src/web/stats.rs` may introduce lints that the existing codebase hasn't seen (e.g., `clippy::module_name_repetitions`, `clippy::doc_markdown`). The `-D warnings` gate fails the build on any new lint.
+
+**Prevention:**
+1. Run `cargo clippy --all-targets --all-features -- -D warnings` locally before pushing any of the new modules.
+2. If a new lint fires, fix it (don't `#[allow]`).
+3. If a lint is genuinely wrong for the project, add to a `clippy.toml` or an `allow` at the module level with a comment explaining why.
+
+**Test case:** Covered by existing CI.
+
+**Severity:** MINOR.
+
+---
+
+## Phase-Specific Warnings (for the Roadmapper)
+
+| Phase | Likely Pitfall | Mitigation |
+|-------|---------------|------------|
+| rc.1 Spike (Stop) | 1.1, 1.2, 1.3 — cancellation-identity + race + FEATURES.md regression | Spike the `RunControl` + `stop_reason` design first; validate test T-V11-STOP-01..07 before promoting to rc.1 feature work. |
+| rc.1 LogLine.id refactor | X.2, 2.1 — writer ordering blocks everything | Land as its own micro-PR **before** either stop-a-job or log-backfill PRs. |
+| rc.1 Log backfill | 2.2, 4.1 — dedupe + gap-detection | Id-based dedupe is the single fix for multiple pitfalls; implement client-side once and reuse. |
+| rc.1 Per-job run number migration | 5.1, 5.2, 5.3 — three-step split + SQLite table-rewrite + long migration | Biggest risk in v1.1. Ship as its own multi-file PR with a 100k-row fixture test. |
+| rc.1 Healthcheck | 10.1 — verify operator's actual compose first | Reproduce operator's failing invocation against the shipped image before writing code. |
+| rc.2 Timeline | 6.1, 6.3 — N+1 + tz consistency | Single-query design reviewed; tz matches dashboard. |
+| rc.2 Duration trend | 8.1 — percentile rounding convention | Write `src/web/stats.rs::percentile` with exhaustive tests first, then plug into handler. |
+| rc.2 Sparkline | 7.1 — sample-size honesty | Lock `MIN_SAMPLES_FOR_RATE` constant; show "—" below threshold. |
+| rc.3 Bulk toggle | 9.1, 9.2 — override sync semantics | Code-search test for `enabled_override` usage; test `disable_missing_jobs` clears override. |
 
 ---
 
 ## Sources
 
-**Docker socket security & threat model (Pitfall 1):**
-- [OWASP Docker Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html)
-- [Docker Socket Security: A Critical Vulnerability Guide](https://medium.com/@instatunnel/docker-socket-security-a-critical-vulnerability-guide-76f4137a68c5)
-- [The Dangers of Docker.sock](https://raesene.github.io/blog/2016/03/06/The-Dangers-Of-Docker.sock/)
-- [Dockge Issue #849: Docker socket exposure enables complete host compromise](https://github.com/louislam/dockge/issues/849)
-
-**Unauthenticated homelab exposure (Pitfall 1):**
-- [How to Secure a Homelab Network: 7-Step Guide](https://readthemanual.co.uk/secure-your-homelab-2025/)
-- [Self-Hosted WAF for Homelab](https://dev.to/arina_cholee/self-hosted-web-application-firewall-for-my-homelab-58oa)
-
-**Docker `container:<name>` network mode races (Pitfall 2):**
-- [moby#50326: Containers with `restart: always` and shared network namespace may fail to start](https://github.com/moby/moby/issues/50326)
-- [docker/compose#6626: Restart/Reconnect containers connected via `network_mode: service`](https://github.com/docker/compose/issues/6626)
-- [docker/compose#10263: Restart behavior with `network_mode: service`](https://github.com/docker/compose/issues/10263)
-- [Docker Forum: network_mode container cannot start linked container after VPN restart](https://forums.docker.com/t/network-mode-container-vpn-cannot-start-linked-container-if-vpn-has-been-restart/144798)
-
-**bollard wait/auto-remove race (Pitfall 3):**
-- [docker-py#2655: Possible race condition in Remove/wait](https://github.com/docker/docker-py/issues/2655)
-- [moby#8441: docker 1.2: Wait, exit code, and deleting the container fails](https://github.com/moby/moby/issues/8441)
-- [runc#2185: Fix race checking for process exit and waiting for exec fifo](https://github.com/opencontainers/runc/pull/2185)
-- [bollard docs (latest)](https://docs.rs/bollard/latest/bollard/struct.Docker.html)
-
-**Log streaming back-pressure (Pitfall 4):**
-- [bollard GitHub](https://github.com/fussybeaver/bollard)
-- [tokio::sync::broadcast docs](https://docs.rs/tokio/latest/tokio/sync/broadcast/index.html) (general pattern)
-
-**Cron DST & Rust cron libraries (Pitfall 5):**
-- [croner-rust GitHub](https://github.com/Hexagon/croner-rust)
-- [Croner DST handling — 56k.guru](https://hexagon.56k.guru/posts/croner-for-rust/)
-- [Cloudflare blog: Using One Cron Parser Everywhere With Rust and Saffron](https://blog.cloudflare.com/using-one-cron-parser-everywhere-with-rust-and-saffron/)
-- [How Debian Cron Handles DST Transitions — Healthchecks.io](https://blog.healthchecks.io/2021/10/how-debian-cron-handles-dst-transitions/)
-- [node-cron#56: Cron jobs kicked off at wrong time for DST](https://github.com/kelektiv/node-cron/issues/56)
-- [Sentry#66763: Cron monitor timezones not using DST adjustment](https://github.com/getsentry/sentry/issues/66763)
-- [Red Hat: How cron jobs are affected by DST](https://access.redhat.com/solutions/477963)
-- [chrono-tz GitHub](https://github.com/chronotope/chrono-tz)
-
-**SQLite concurrency (Pitfalls 7, 11):**
-- [The Write Stuff: Concurrent Write Transactions in SQLite (oldmoe)](https://oldmoe.blog/2024/07/08/the-write-stuff-concurrent-write-transactions-in-sqlite/)
-- [PSA: Your SQLite Connection Pool Might Be Ruining Your Write Performance (Evan Schwartz)](https://emschwartz.me/psa-your-sqlite-connection-pool-might-be-ruining-your-write-performance/)
-- [SQLite concurrent writes and "database is locked" errors](https://tenthousandmeters.com/blog/sqlite-concurrent-writes-and-database-is-locked-errors/)
-- [Abusing SQLite to Handle Concurrency (SkyPilot)](https://blog.skypilot.co/abusing-sqlite-to-handle-concurrency/)
-- [Four different ways to handle SQLite concurrency (Gwendal Roué)](https://medium.com/@gwendal.roue/four-different-ways-to-handle-sqlite-concurrency-db3bcc74d00e)
-
-**sqlx + cross-compile + OpenSSL (Pitfalls 8, 14):**
-- [sqlx FAQ](https://github.com/launchbadge/sqlx/blob/main/FAQ.md)
-- [sqlx#670: Cross-compiling or statically linking sqlx fails because of OpenSSL](https://github.com/launchbadge/sqlx/issues/670)
-- [rust-openssl#1337: Static linking of OpenSSL with sqlx](https://github.com/sfackler/rust-openssl/issues/1337)
-- [rust-openssl#1627: Unable to cross compile for musl](https://github.com/sfackler/rust-openssl/issues/1627)
-- [Build statically linked Rust binary with musl](https://dev.to/abhishekpareek/build-statically-linked-rust-binary-with-musl-and-avoid-a-common-pitfall-ahc)
-- [rust-musl-builder](https://github.com/emk/rust-musl-builder)
-
-**File watcher / config reload (Pitfall 9):**
-- [notify crate](https://github.com/notify-rs/notify)
-- [cfg_watcher](https://lib.rs/crates/cfg_watcher)
-- [async-watcher](https://github.com/justinrubek/async-watcher)
-- [tokio sync primitives](https://docs.rs/tokio/latest/tokio/sync/)
-
-**Overlapping job execution (Pitfall 16):**
-- [Cronitor: How to prevent duplicate cron executions](https://cronitor.io/guides/how-to-prevent-duplicate-cron-executions)
-- [Prevent cronjobs from overlapping in Linux (ma.ttias.be)](https://ma.ttias.be/prevent-cronjobs-from-overlapping-in-linux/)
-
-**ofelia context (Cronduit's differentiator):**
-- [ofelia GitHub](https://github.com/mcuadros/ofelia)
-- [ofelia#126: label configuration not being picked up](https://github.com/mcuadros/ofelia/issues/126)
-
-**HTMX / SSE (Pitfall 13):**
-- [HTMX SSE Extension](https://htmx.org/extensions/sse/)
-- [Live website updates with Go, SSE, and htmx (Three Dots Labs)](https://threedots.tech/post/live-website-updates-go-sse-htmx/)
-
-**Docker image pull handling (Pitfall 12):**
-- [How to troubleshoot network timed out error when pulling images (LabEx)](https://labex.io/tutorials/docker-how-to-troubleshoot-network-timed-out-error-when-pulling-images-417523)
-- [Kubernetes ImagePullBackOff backoff semantics (Spacelift)](https://spacelift.io/blog/kubernetes-imagepullbackoff)
-
-**Internal references:**
-- `.planning/PROJECT.md` — Cronduit project context and locked decisions
-- `docs/SPEC.md` — v1 spec (authoritative for this milestone)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/mod.rs` (L56, L98–L250)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/cmd.rs` (enum shape)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/run.rs` (L65–L350)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/command.rs` (L58–L218 — process-group kill pattern)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/script.rs` (L89 — matching process-group kill)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/docker.rs` (L250–L409)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/docker_orphan.rs` (entire file — `mark_run_orphaned` guard at L120, L131)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/log_pipeline.rs` (entire file — `LogLine` lacks `id`)
+- `/Users/Robert/Code/public/cronduit/src/web/handlers/sse.rs` (entire file)
+- `/Users/Robert/Code/public/cronduit/src/web/handlers/run_detail.rs` (entire file — `fetch_logs` L97–L132)
+- `/Users/Robert/Code/public/cronduit/src/web/handlers/health.rs` (entire file — `(StatusCode, Json)` shape)
+- `/Users/Robert/Code/public/cronduit/src/db/queries.rs` (L286–L313 `insert_running_run`, L365 `insert_log_batch`, L783 `get_log_lines`)
+- `/Users/Robert/Code/public/cronduit/migrations/sqlite/20260410_000000_initial.up.sql` (schema baseline)
+- `/Users/Robert/Code/public/cronduit/Dockerfile` (no HEALTHCHECK directive)
+- `/Users/Robert/Code/public/cronduit/examples/docker-compose.yml` (no healthcheck stanza)
+- `/Users/Robert/Code/public/cronduit/examples/docker-compose.secure.yml` (no healthcheck stanza)
+- `/Users/Robert/Code/public/cronduit/.planning/research/ARCHITECTURE.md` (§3.1 — §5.6)
+- `/Users/Robert/Code/public/cronduit/.planning/research/FEATURES.md` (L92–L94 — flags the `kill_on_drop` regression proposal)
+- `/Users/Robert/Code/public/cronduit/.planning/milestones/v1.0-research/PITFALLS.md` (referenced as "v1.0-P#N" throughout)
+- Docker/moby ecosystem: moby#8441 (auto_remove race, already cited in v1.0 research), moby#50326 (container:<name> ns race, v1.0 P#2), SQLite docs on "Making Other Kinds Of Table Schema Changes" (12-step table-rewrite pattern), docker-py#2655 (wait vs auto_remove), Docker healthcheck docs (`--start-period`, `--retries`).
 
 ---
-*Pitfalls research for: Rust Docker-native cron scheduler with web UI (Cronduit v1)*
-*Researched: 2026-04-09*
+
+## Confidence
+
+| Area | Level | Basis |
+|------|-------|-------|
+| Stop-a-job pitfalls | HIGH | Verified against `mod.rs` main loop, `run.rs` run_job, `command.rs` + `docker.rs` cancel branches, `docker_orphan.rs` mark_run_orphaned. All line numbers checked. |
+| Log ordering + backfill | HIGH | Confirmed `LogLine` has no id field; confirmed broadcast-before-insert ordering in `log_writer_task` L334–L341; confirmed `run_detail.html` has no backfill today. |
+| TOCTOU on run detail | HIGH | Handler path in `run_detail.rs` L140–L144 returns 404 on `Ok(None)`; scheduler insert happens async via mpsc. |
+| Per-job run number migration | HIGH | Three-step split grounded in SQLite docs on NOT NULL addition; bundled sqlite version needs a CI assertion. |
+| Timeline pitfalls | HIGH | Existing indices + dashboard query shape both verified in `queries.rs` and the initial migration. |
+| Bulk enable/disable | HIGH | `sync_config_to_db`, `disable_missing_jobs`, `upsert_job` all read; override-clear logic derived from existing sync. |
+| Healthcheck scope correction | HIGH | Grep-verified: zero `HEALTHCHECK` in Dockerfile, zero `healthcheck:` in shipped compose files. |
+| FEATURES.md `kill_on_drop` regression flag | HIGH | Direct read of `FEATURES.md` L93 and `command.rs` L203 — the two disagree, and the current code is correct. |
+| Percentile rounding | MEDIUM-HIGH | Standard stats problem; convention choice is a decision not a risk. |
+

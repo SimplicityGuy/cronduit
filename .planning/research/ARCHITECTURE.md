@@ -1,711 +1,461 @@
-# Architecture Research
-
-**Domain:** Self-hosted Rust scheduler/orchestration daemon with embedded web UI and Docker job execution
-**Researched:** 2026-04-09
-**Confidence:** HIGH
-
-## Standard Architecture
-
-### System Overview
-
-```mermaid
-flowchart TB
-    subgraph Process["Single Tokio Process"]
-        direction TB
-        Config["Config Loader + Watcher<br/>(notify / SIGHUP)"]
-        Scheduler["Scheduler Core<br/>tokio::select! cron clock"]
-        Web["Web Server (axum)<br/>HTML (askama_web)<br/>SSE /events<br/>/health · /metrics"]
-        Registry["Job Registry<br/>Arc&lt;RwLock&lt;HashMap&lt;JobId, ResolvedJob&gt;&gt;&gt;"]
-        Dispatcher["Executor Dispatcher<br/>tokio::spawn(run_job(...))"]
-        Docker["Docker Backend<br/>(bollard)"]
-        Cmd["Command Backend<br/>(tokio::process)"]
-        Script["Script Backend<br/>(tempfile + proc)"]
-        Bus["Event Bus<br/>tokio::broadcast"]
-        SSE["Broadcast Channel<br/>for SSE / HTMX"]
-        Db["Persistence Layer<br/>sqlx Pool · SQLite | Postgres"]
-        Tables[("jobs · job_runs<br/>job_logs · job_events")]
-
-        Config -- "ConfigSnapshot" --> Scheduler
-        Scheduler -- "JobFire" --> Registry
-        Web --> Registry
-        Registry --> Dispatcher
-        Dispatcher --> Docker
-        Dispatcher --> Cmd
-        Dispatcher --> Script
-        Docker --> Bus
-        Cmd --> Bus
-        Script --> Bus
-        Bus --> SSE
-        Bus --> Db
-        Db --> Tables
-    end
-```
-
-### Component Responsibilities
-
-| Component | Responsibility | Typical Implementation |
-|-----------|----------------|------------------------|
-| **Config Loader + Watcher** | Parse TOML, interpolate `${ENV_VAR}`, validate, notify reloads via SIGHUP / `notify` crate / `POST /api/reload`. Produces an immutable `ConfigSnapshot`. | `serde` + `toml` + `notify` + `tokio::signal::unix::signal(SIGHUP)` |
-| **Sync Engine** | Diff `ConfigSnapshot` against DB `jobs` table: create/update/disable. Writes are idempotent on a `config_hash` column. Never deletes jobs (preserves history). | Plain SQL in a transaction |
-| **Job Registry** | In-memory authoritative map of enabled jobs with resolved schedules (including `@random` materialization). Shared between scheduler + web UI + executor. | `Arc<RwLock<HashMap<JobId, ResolvedJob>>>` |
-| **Scheduler Core** | Own the cron clock. Tick on the min of all `next_fire_at` values, fire jobs by sending `JobFire` to executor, advance per-job cursors, handle manual "Run Now". | Custom async loop driven by `tokio::time::sleep_until` + `tokio::select!` over a command channel |
-| **Executor Dispatcher** | For each fired job, `tokio::spawn` a run task that picks the right backend, writes `job_runs(status=running)`, captures stdout/stderr, writes terminal status, enforces timeout. | `tokio::spawn` + `tokio::select! { _ = timeout => kill, _ = backend => ok }` |
-| **Docker Backend** | Ensure image, create container, start, stream logs, wait for exit, auto-remove. Honors all network modes including `container:<name>`. | `bollard::Docker::connect_with_unix_defaults()` |
-| **Command/Script Backend** | Spawn local process (script written to tempfile with shebang), pipe stdout/stderr, enforce timeout. | `tokio::process::Command` |
-| **Persistence Layer** | Single `sqlx::Pool` (enum wrapper over `Sqlite`/`Postgres`). Owns migrations (`sqlx::migrate!`). Repository functions per table. | `sqlx` 0.8 with `runtime-tokio-rustls` |
-| **Event Bus** | Broadcast domain events (`JobRunStarted`, `LogLine`, `JobRunFinished`, `JobReloaded`) to any interested subscriber — web SSE, metrics counters, future webhook plugin. | `tokio::sync::broadcast::channel(capacity)` |
-| **Web Server** | Axum app with HTML routes (askama-rendered), SSE route, JSON API, `GET /health`, `GET /metrics` (Prometheus). Serves embedded static assets. | `axum` 0.7/0.8 + `tower-http` + `rust-embed` |
-| **Log Capture** | Per-run async task that consumes the backend's log stream and (a) inserts batches into `job_logs`, (b) publishes each line on the broadcast bus for live tail. | `futures::StreamExt` on `bollard` log stream / `BufReader::lines()` on child pipe |
-| **Randomizer** | Resolves `@random` fields at (re)sync time, enforces `random_min_gap`, persists resolved cron to DB. | Pure function + `rand::rng()` |
-
-## Recommended Project Structure
-
-```
-cronduit/
-├── Cargo.toml
-├── build.rs                     # Triggers tailwind CLI via cargo feature
-├── migrations/
-│   ├── 20260101000000_initial.up.sql
-│   └── 20260101000000_initial.down.sql
-├── templates/                   # askama HTML templates
-│   ├── base.html
-│   ├── dashboard.html
-│   ├── job_detail.html
-│   ├── run_detail.html
-│   └── partials/
-│       ├── job_row.html         # HTMX swap target
-│       └── run_row.html
-├── static/
-│   ├── tailwind.css             # Generated at build time
-│   └── htmx.min.js              # vendored
-├── src/
-│   ├── main.rs                  # Boot: config → db → registry → tasks → axum
-│   ├── config/
-│   │   ├── mod.rs               # ConfigSnapshot, ResolvedJob
-│   │   ├── parse.rs             # TOML + serde
-│   │   ├── interpolate.rs       # ${ENV_VAR}
-│   │   ├── validate.rs          # Schedule parse, network mode, conflicts
-│   │   └── watch.rs             # SIGHUP + notify + debounced reload channel
-│   ├── schedule/
-│   │   ├── mod.rs
-│   │   ├── cron.rs              # Wrapper over `cron` crate
-│   │   ├── random.rs            # @random resolution + min-gap
-│   │   └── clock.rs             # Next-fire iterator, manual run injection
-│   ├── scheduler/
-│   │   ├── mod.rs               # The select-loop
-│   │   └── registry.rs          # Arc<RwLock<...>> shared state
-│   ├── executor/
-│   │   ├── mod.rs               # Dispatcher, timeout, status lifecycle
-│   │   ├── docker.rs            # bollard backend
-│   │   ├── command.rs           # tokio::process backend
-│   │   ├── script.rs            # Tempfile + process
-│   │   └── logs.rs              # Log streaming pipeline → DB + broadcast
-│   ├── db/
-│   │   ├── mod.rs               # Pool enum, migrations
-│   │   ├── jobs.rs              # CRUD + sync diff
-│   │   ├── runs.rs              # job_runs CRUD
-│   │   ├── logs.rs              # job_logs batch insert + tail query
-│   │   └── retention.rs         # Prune task
-│   ├── events/
-│   │   ├── mod.rs
-│   │   └── bus.rs               # broadcast::Sender<AppEvent>
-│   ├── web/
-│   │   ├── mod.rs               # Router construction, shared AppState
-│   │   ├── state.rs             # AppState struct (Pool, Registry, Bus)
-│   │   ├── assets.rs            # rust-embed static handler
-│   │   ├── pages/               # HTML handlers
-│   │   │   ├── dashboard.rs
-│   │   │   ├── job.rs
-│   │   │   ├── run.rs
-│   │   │   └── settings.rs
-│   │   ├── api/                 # JSON + control endpoints
-│   │   │   ├── reload.rs
-│   │   │   ├── run_now.rs
-│   │   │   └── health.rs
-│   │   ├── sse.rs               # /events SSE endpoint
-│   │   └── templates.rs         # Askama structs + IntoResponse impls
-│   ├── metrics/
-│   │   ├── mod.rs               # Prometheus registry, counters, histograms
-│   │   └── handler.rs           # /metrics
-│   ├── telemetry.rs             # tracing + JSON subscriber
-│   └── shutdown.rs              # Graceful drain: stop scheduler, await runs, close pool
-└── tests/
-    ├── sync_behavior.rs
-    ├── random_scheduling.rs
-    ├── docker_network_modes.rs  # testcontainers / docker-in-docker
-    └── web_smoke.rs
-```
-
-### Structure Rationale
-
-- **Top-level domains** (`config/`, `schedule/`, `scheduler/`, `executor/`, `db/`, `events/`, `web/`, `metrics/`) — clean seams; each has one reason to change. Scheduler doesn't know about HTTP; web doesn't know about bollard.
-- **`executor/` contains all three backends** — they share a common `Backend` trait and log-capture pipeline, so they live together. Swapping one doesn't touch scheduling.
-- **`events/`** — pulled out as its own module so both web and metrics can subscribe without importing scheduler internals.
-- **`templates/` + `static/` at repo root, not under `src/`** — askama expects templates in `templates/` by default; `rust-embed` can glob `static/**`.
-- **`migrations/` at repo root** — `sqlx::migrate!` expects it there.
-
-## Architectural Patterns
-
-### Pattern 1: Shared `AppState` via `Arc<...>` handles
-
-**What:** Every component (web handlers, scheduler loop, executor tasks, metrics) receives a cheaply-cloned `AppState` containing `sqlx::Pool`, `Arc<Registry>`, `broadcast::Sender<AppEvent>`, and a `Sender<ControlMsg>` to the scheduler loop.
-**When:** Default for all tokio-based daemons embedding axum.
-**Trade-offs:** Simple, zero contention for read-only fields (Pool and broadcast are internally thread-safe), but forces discipline — never hold a write lock across an `.await` boundary.
-
-```rust
-#[derive(Clone)]
-pub struct AppState {
-    pub db: DbPool,
-    pub registry: Arc<RwLock<JobRegistry>>,
-    pub events: broadcast::Sender<AppEvent>,
-    pub control: mpsc::Sender<SchedulerCmd>,
-    pub started_at: chrono::DateTime<chrono::Utc>,
-}
-```
-
-### Pattern 2: `tokio::select!` scheduler loop (no external scheduler crate)
-
-**What:** Hand-rolled loop that owns the `next_fire_at` priority queue and selects between (a) the timer to the next fire, (b) control messages (reload, run_now, shutdown), (c) completion acknowledgements from running jobs.
-**When:** When you need fine-grained control over reload semantics, manual runs, and lifecycle events — which Cronduit does.
-**Trade-offs:** More code than `tokio-cron-scheduler`, but avoids its Nats/Postgres-only persistence story (no SQLite backend), its separate notification-store abstraction, and its opinions about job identity. For Cronduit's single-node model the hand-rolled loop is ~200 lines and gives full control.
-
-```rust
-loop {
-    let sleep = tokio::time::sleep_until(next_fire);
-    tokio::pin!(sleep);
-    tokio::select! {
-        _ = &mut sleep => { fire_due_jobs(&state).await; }
-        Some(cmd) = control_rx.recv() => match cmd {
-            SchedulerCmd::Reload(snapshot) => reload(&state, snapshot).await,
-            SchedulerCmd::RunNow(job_id)   => fire_specific(&state, job_id).await,
-            SchedulerCmd::Shutdown         => break,
-        },
-    }
-    next_fire = state.registry.read().unwrap().next_fire_at();
-}
-```
-
-Why not `tokio-cron-scheduler`? Verified via GitHub: it supports Postgres and Nats metadata stores but **not SQLite**, which is Cronduit's default. Hand-rolling is simpler.
-
-### Pattern 3: Per-run task with structured lifecycle
-
-**What:** Each fired job is one `tokio::spawn`ed task that owns its full lifecycle: insert `job_runs(status=running)` → run backend → stream logs → update terminal status. Timeout is enforced with `tokio::select!`.
-**When:** Always — isolates failures, lets scheduler keep ticking while jobs run arbitrarily long.
-**Trade-offs:** Spawned tasks must hold their own `AppState` clone; no back-pressure on concurrent runs in v1 (acceptable per spec).
-
-```rust
-async fn run_job(state: AppState, job: ResolvedJob) {
-    let run_id = db::runs::insert_running(&state.db, &job).await?;
-    state.events.send(AppEvent::RunStarted { run_id, job_id: job.id }).ok();
-
-    let backend_fut = dispatch_backend(&state, &job, run_id);
-    let result = tokio::select! {
-        r = backend_fut => r,
-        _ = tokio::time::sleep(job.timeout) => Err(ExecError::Timeout),
-    };
-
-    let status = RunStatus::from(&result);
-    db::runs::finalize(&state.db, run_id, status).await?;
-    state.events.send(AppEvent::RunFinished { run_id, status }).ok();
-}
-```
-
-### Pattern 4: Log pipeline with fan-out (DB + live tail)
-
-**What:** Log-capture task reads from backend stream, batches lines, writes to `job_logs`, AND publishes each `LogLine` event to the broadcast bus. Web SSE subscribers filter by `run_id`.
-**When:** Any time you need both persistence and live streaming from the same source.
-**Trade-offs:** Broadcast channel can drop on slow subscribers (by design — SSE client is disposable); DB write is the authoritative record.
-
-### Pattern 5: HTMX + SSE for live updates
-
-**Recommendation:** Use **HTMX polling** for the dashboard (`hx-get="/jobs/table" hx-trigger="every 3s" hx-swap="outerHTML"`) and **SSE** only for the run detail page's log viewer. Keeps SSE subscriber count low and dashboard behavior trivial.
-
-## Data Flow
-
-### Startup Boot Flow
-
-```mermaid
-flowchart TD
-    Start([main.rs]) --> Cli["parse CLI (clap)"]
-    Cli --> Trace["init tracing<br/>(JSON to stdout)"]
-    Trace --> Load["load config<br/>(TOML + env interpolation)"]
-    Load --> Pool["open DB pool"]
-    Pool --> Mig["run migrations"]
-    Mig --> Sync["sync_config_to_db(snapshot)<br/>· upsert jobs by name<br/>· mark removed jobs enabled=false<br/>· resolve @random → resolved_schedule<br/>· enforce random_min_gap"]
-    Sync --> Reg["build JobRegistry<br/>(jobs where enabled=true)"]
-    Reg --> Bus["build broadcast bus<br/>+ mpsc scheduler control channel"]
-    Bus --> State["build AppState"]
-    State --> Sched["spawn scheduler loop<br/>(tokio::spawn)"]
-    Sched --> Watch["spawn config watcher<br/>(notify + SIGHUP)"]
-    Watch --> Prune["spawn log retention pruner<br/>(daily)"]
-    Prune --> Router["build axum Router<br/>with AppState"]
-    Router --> Serve["axum::serve(...)<br/>.with_graceful_shutdown(shutdown_signal)"]
-    Serve --> Run([running])
-```
-
-### Config Reload Flow (SIGHUP / POST /api/reload)
-
-```mermaid
-flowchart TD
-    Trigger["SIGHUP · notify event ·<br/>POST /api/reload"] --> Watch["config::watch<br/>load + parse + interpolate"]
-    Watch --> Snap["ConfigSnapshot"]
-    Snap --> Cmd["SchedulerCmd::Reload"]
-    Cmd --> Loop["scheduler loop<br/>(receives on mpsc)"]
-    Loop --> Diff["diff old vs new registry"]
-    Loop --> Sync["sync_to_db<br/>(same fn as boot)"]
-    Diff --> Swap["registry.write() = new map"]
-    Sync --> Swap
-    Swap --> Recompute["recompute next_fire"]
-    Recompute --> Emit["events::JobsReloaded → SSE"]
-```
-
-**Idempotency:** `sync_to_db` is keyed on `(job.name, config_hash)`. Same config → no writes. Removed jobs → `enabled=false`, history preserved. New jobs → insert. Changed jobs → update and null out `resolved_schedule` if the schedule changed (forcing re-randomization on next resolve).
-
-**In-flight runs are not cancelled on reload.** They finish under their old config; the new config only affects *future* fires. This is explicit — document it.
-
-### Job Fire → Execute → Persist → Publish Flow
-
-```mermaid
-sequenceDiagram
-    participant S as Scheduler loop
-    participant E as Executor task<br/>(per-run)
-    participant B as Backend<br/>(docker/command/script)
-    participant L as Log pipeline
-    participant DB as sqlx Pool
-    participant Bus as Event Bus<br/>(broadcast)
-    participant W as Web (SSE)
-    participant M as Metrics
-
-    S->>S: tick reaches next_fire
-    S->>E: SchedulerCmd::Fire(job_id)<br/>tokio::spawn(run_job)
-    E->>DB: db::runs::insert_running()
-    DB-->>E: run_id
-    E->>Bus: events.send(RunStarted)
-    Bus-->>W: SSE /events → HTMX swap (dashboard)
-    E->>B: backend.execute(job)
-    activate B
-    B->>L: log stream chunks
-    L->>DB: db::logs::insert_batch()
-    L->>Bus: events.send(LogLine)
-    Bus-->>W: SSE → run detail tail
-    B-->>E: wait_exit + timeout guard
-    deactivate B
-    E->>DB: db::runs::finalize(status, exit_code, ...)
-    E->>M: runs_total{status}.inc()<br/>run_duration_seconds.observe()
-    E->>Bus: events.send(RunFinished)
-    Bus-->>W: SSE → status badge update
-```
-
-### Live Tail Flow (Run Detail)
-
-On initial page render, the server queries `db::logs::all_for(run_id)` and embeds the lines statically. SSE only streams *new* lines that arrive after the page loads.
-
-## Concurrency Model
-
-Everything lives inside one tokio multi-thread runtime.
-
-| Task | Spawned by | Lifetime | Shared state access |
-|------|------------|----------|---------------------|
-| Scheduler loop | `main` | Whole process | `registry.write()` on reload only; `db` read-only |
-| Config watcher | `main` | Whole process | Sends `SchedulerCmd::Reload` only |
-| Retention pruner | `main` | Whole process (ticker) | `db` write |
-| Per-run executor | Scheduler loop | Until job exits or timeout | `db` write, `events` send |
-| Per-run log pipeline | Per-run executor (child task) | Until stream ends | `db` write, `events` send |
-| Axum HTTP connection | `axum::serve` | Per connection | `db` read, `registry.read()`, `events.subscribe()` |
-| Per-SSE subscriber | Axum handler | Until client disconnects | `events` recv |
-
-**Contention avoidance rules:**
-1. `JobRegistry` uses `parking_lot::RwLock` (non-async). Writes only on reload (rare). Reads brief. **Never hold the lock across `.await`.** Clone the `ResolvedJob` and drop the guard first.
-2. Database access is via a single `sqlx::Pool` — internal thread-safe semaphore. Pool size: `max(4, cpu_count)` for SQLite-WAL, `16` for Postgres.
-3. The event bus is `tokio::sync::broadcast` with capacity ~1024. Lagged subscribers see `RecvError::Lagged(n)` — SSE handlers should skip-and-continue rather than disconnect.
-4. The scheduler-to-executor channel is an `mpsc` — scheduler never blocks on the executor.
-5. Graceful shutdown uses a `CancellationToken` (from `tokio-util`) passed to every long-lived task. On SIGINT/SIGTERM, cancel → scheduler stops firing → wait up to `shutdown_grace_period` for in-flight runs → close pool → exit.
-
-## `@random` Resolution Strategy
-
-### Where it lives
-`src/schedule/random.rs` — pure function `resolve_random(jobs: &[ConfigJob], min_gap: Duration) -> Vec<ResolvedJob>`.
-
-### When it runs
-1. **At boot** — after loading config, before writing to DB.
-2. **On reload** — only for jobs whose `schedule` contains `@random` AND (a) are newly added, or (b) had a schedule change in config. Existing randomized jobs whose `schedule` field in config is unchanged **keep their current `resolved_schedule`** (stability is a spec requirement).
-3. **On explicit re-randomize** — future `POST /api/jobs/:id/rerandomize`.
-
-### How persistence works
-`jobs` table stores two columns:
-- `schedule TEXT NOT NULL` — raw from config (`"@random"`, `"0 @random * * *"`, etc.)
-- `resolved_schedule TEXT NOT NULL` — fully concrete cron (`"37 14 * * *"`)
-
-The scheduler clock uses `resolved_schedule` exclusively. `@random` never reaches the clock.
-
-### Min-gap algorithm
-
-```
-Given jobs with any @random in their schedule, grouped by "same day" constraint:
-1. For each such job, enumerate candidate (minute, hour) tuples respecting
-   the non-random fields (e.g., "@random @random * * 1-5" means minute+hour
-   are random but day-of-week is fixed).
-2. Sort currently-resolved randomized jobs by fire time within a day.
-3. For a new job needing resolution:
-   a. Sample (minute, hour) uniformly from candidates.
-   b. Compute fire time on a reference day.
-   c. If distance to any already-resolved peer is < min_gap, re-sample.
-   d. Give up after N attempts → log warning, accept best candidate.
-4. Persist resolved_schedule.
-```
-
-**Invariant:** Min-gap constrains randomized jobs *among themselves only* — it doesn't interfere with user-written exact crons.
-
-**Edge case:** If 10 randomized jobs declare `random_min_gap = "3h"` (max 8 slots in 24h), resolution logs a warning and relaxes the gap for the overflow jobs. Don't fail to boot.
-
-## Database Schema
-
-The schema must work on both SQLite and Postgres with one logical migration. Use portable types: text timestamps (RFC3339), TEXT for enums, `INTEGER PRIMARY KEY`. Use per-backend migration files if needed.
-
-```mermaid
-erDiagram
-    jobs ||--o{ job_runs : "executes"
-    job_runs ||--o{ job_logs : "produces"
-    jobs ||--o{ job_events : "emits"
-    job_runs ||--o{ job_events : "emits"
-
-    jobs {
-        INTEGER id PK
-        TEXT name UK
-        TEXT schedule "raw, e.g. @random"
-        TEXT resolved_schedule "concrete cron"
-        TEXT job_type "docker | command | script"
-        TEXT config_json
-        TEXT config_hash "sha256, idempotent sync key"
-        INTEGER enabled "0 = removed from config"
-        INTEGER timeout_secs
-        TEXT created_at "RFC3339"
-        TEXT updated_at "RFC3339"
-    }
-    job_runs {
-        INTEGER id PK
-        INTEGER job_id FK
-        TEXT status "running | success | failed | timeout | error"
-        TEXT trigger "schedule | manual | startup"
-        TEXT start_time "RFC3339"
-        TEXT end_time "nullable"
-        INTEGER duration_ms "nullable"
-        INTEGER exit_code "nullable"
-        TEXT container_id "nullable, docker only"
-        TEXT error_message "nullable"
-    }
-    job_logs {
-        INTEGER id PK
-        INTEGER run_id FK
-        TEXT stream "stdout | stderr"
-        TEXT ts "line timestamp"
-        TEXT line
-    }
-    job_events {
-        INTEGER id PK
-        TEXT kind "run_started | run_finished | log_line | jobs_reloaded"
-        INTEGER run_id "nullable"
-        INTEGER job_id "nullable"
-        TEXT payload "JSON"
-        TEXT created_at "RFC3339"
-    }
-```
-
-```sql
--- 20260101000000_initial.up.sql
-
-CREATE TABLE IF NOT EXISTS jobs (
-    id                 INTEGER PRIMARY KEY,
-    name               TEXT NOT NULL UNIQUE,
-    schedule           TEXT NOT NULL,
-    resolved_schedule  TEXT NOT NULL,
-    job_type           TEXT NOT NULL,                    -- 'docker' | 'command' | 'script'
-    config_json        TEXT NOT NULL,
-    config_hash        TEXT NOT NULL,
-    enabled            INTEGER NOT NULL DEFAULT 1,
-    timeout_secs       INTEGER NOT NULL,
-    created_at         TEXT NOT NULL,
-    updated_at         TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_jobs_enabled ON jobs(enabled);
-
-CREATE TABLE IF NOT EXISTS job_runs (
-    id             INTEGER PRIMARY KEY,
-    job_id         INTEGER NOT NULL REFERENCES jobs(id),
-    status         TEXT NOT NULL,                        -- 'running' | 'success' | 'failed' | 'timeout' | 'error'
-    trigger        TEXT NOT NULL,                        -- 'schedule' | 'manual' | 'startup'
-    start_time     TEXT NOT NULL,
-    end_time       TEXT,
-    duration_ms    INTEGER,
-    exit_code      INTEGER,
-    container_id   TEXT,
-    error_message  TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_job_runs_job_id_start ON job_runs(job_id, start_time DESC);
-CREATE INDEX IF NOT EXISTS idx_job_runs_status ON job_runs(status) WHERE status = 'running';
-CREATE INDEX IF NOT EXISTS idx_job_runs_start_time ON job_runs(start_time);
-
-CREATE TABLE IF NOT EXISTS job_logs (
-    id         INTEGER PRIMARY KEY,
-    run_id     INTEGER NOT NULL REFERENCES job_runs(id),
-    stream     TEXT NOT NULL,                            -- 'stdout' | 'stderr'
-    ts         TEXT NOT NULL,
-    line       TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_job_logs_run_id_id ON job_logs(run_id, id);
-
--- Optional: events ring for replay-on-reconnect
-CREATE TABLE IF NOT EXISTS job_events (
-    id         INTEGER PRIMARY KEY,
-    kind       TEXT NOT NULL,
-    run_id     INTEGER,
-    job_id     INTEGER,
-    payload    TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_job_events_created_at ON job_events(created_at);
-```
-
-**Portability notes:**
-- For guaranteed BIGINT on Postgres, split migrations with the `sqlx` compile-time feature (`20260101_initial.sqlite.up.sql` vs `20260101_initial.postgres.up.sql`) loaded via two `sqlx::migrate!` invocations chosen by the `DbPool` enum variant.
-- Timestamps as RFC3339 `TEXT` avoids the SQLite-has-no-TIMESTAMP headache and sorts correctly.
-- `config_json` TEXT vs `JSONB` on PG: store as TEXT for portability; never query inside it.
-
-### Retention pruning
-
-A daily tokio `Interval` task:
-
-```sql
-DELETE FROM job_logs
- WHERE run_id IN (
-   SELECT id FROM job_runs
-    WHERE start_time < :cutoff
- );
-
-DELETE FROM job_runs
- WHERE start_time < :cutoff;
-```
-
-Default cutoff: `now - 90 days`. Wrap in a transaction. On SQLite, consider `VACUUM` after large prunes (configurable).
-
-## Log Capture from Docker Containers
-
-Using `bollard` 0.17+:
-
-```rust
-use bollard::container::LogsOptions;
-use futures_util::StreamExt;
-
-let opts = LogsOptions::<String> {
-    follow: true,
-    stdout: true,
-    stderr: true,
-    timestamps: true,
-    tail: "all".into(),
-    ..Default::default()
-};
-
-let mut stream = docker.logs(&container_name, Some(opts));
-
-while let Some(next) = stream.next().await {
-    match next {
-        Ok(LogOutput::StdOut { message }) => { /* emit stdout */ }
-        Ok(LogOutput::StdErr { message }) => { /* emit stderr */ }
-        Ok(_) => {}
-        Err(e) => { tracing::warn!(?e, "log stream error"); break; }
-    }
-}
-```
-
-**Flow:**
-1. After `docker.start_container`, spawn a **log pump task** holding an `AppState` clone and `run_id`.
-2. Separately, `docker.wait_container` on another task — it resolves with the exit code.
-3. `tokio::select!` between the wait future and the `timeout`. When wait resolves, the log stream also ends (bollard closes it on container exit).
-4. The log pump task batches lines and inserts into `job_logs` in chunks of ~32 for write amplification control.
-5. Each batch write also re-publishes individual lines on the broadcast bus (not batched — live tail wants low latency).
-6. After exit: stop the log pump, finalize `job_runs` row, emit `RunFinished`.
-
-**For `command`/`script` backends:** `tokio::process::Command` with `.stdout(Stdio::piped()).stderr(Stdio::piped())`, then wrap each pipe in `BufReader::new(pipe).lines()` and spawn two small pumps. Same `job_logs` insert path, same broadcast publish.
-
-## HTMX Live Updates — Final Wiring
-
-| Page element | Mechanism | Why |
-|--------------|-----------|-----|
-| Dashboard job table | HTMX polling `hx-trigger="every 3s"` on the `<table>` partial | Trivial, cache-friendly, no SSE bookkeeping for N idle tabs |
-| Next-fire countdowns | Pure JS `setInterval` client-side | Avoids hammering the server for clock display |
-| Job detail "last 20 runs" | HTMX polling `hx-trigger="every 5s"` on the `<tbody>` partial | Same as dashboard |
-| Run detail — status badge | HTMX `hx-trigger="every 2s"` while running | Self-terminating |
-| Run detail — log tail | **SSE** `<div hx-ext="sse" sse-connect="/events/runs/:id/logs">` | Only place where push semantics beat pull |
-| "Run Now" button | `hx-post="/api/jobs/:id/run"` with `hx-swap="none"` | Fire-and-forget; polling updates status |
-| Reload config button | `hx-post="/api/reload"` with `hx-swap="innerHTML"` into a toast | One-shot RPC |
-
-## Scaling Considerations
-
-| Scale | Architecture behavior |
-|-------|----------------------|
-| 1–50 jobs, 0–10 runs/min | Defaults are fine. SQLite WAL, 64-row log batches, 3s poll intervals. ~30 MB RAM. |
-| 50–500 jobs, 10–100 runs/min | Still fine on SQLite WAL. Increase broadcast capacity to 4096. Raise log-batch size to 128. Hourly retention. |
-| 500+ jobs, 100+ runs/min | Migrate to Postgres. SQLite writer contention on job_logs becomes the first bottleneck. |
-
-### Scaling Priorities
-
-1. **First bottleneck: SQLite writes under log storms.** Mitigations: batch inserts, throttle per-run log rate, truncate extremely long lines (16 KB cap, document it).
-2. **Second bottleneck: broadcast channel lag.** Per-topic channels (one `broadcast` per active run) lazily created.
-3. **Third bottleneck: registry RwLock contention during reload.** Build new map outside the lock, then a single atomic swap.
-
-## Anti-Patterns
-
-### Anti-Pattern 1: Using a framework scheduler (tokio-cron-scheduler) and persisting history separately
-**Why it's wrong:** Two sources of truth. The crate lacks SQLite persistence (verified 2026-04). **Do this instead:** Hand-roll the loop.
-
-### Anti-Pattern 2: Holding the registry lock across `.await`
-**Why it's wrong:** Blocks every other task trying to read the registry. **Do this instead:** Compute the new map outside the lock, take it only for the swap.
-
-### Anti-Pattern 3: Cancelling running jobs on config reload
-**Why it's wrong:** Users lose work silently. **Do this instead:** Reloads affect only future fires. In-flight runs finish under their old config. Document it.
-
-### Anti-Pattern 4: Streaming logs directly from the container stream into an SSE response
-**Why it's wrong:** Bollard log streams are single-consumer. **Do this instead:** Single log-pump task per run writes to DB + broadcasts.
-
-### Anti-Pattern 5: Deleting removed jobs from the DB on config removal
-**Why it's wrong:** Violates spec ("preserve history for removed jobs"). **Do this instead:** `UPDATE jobs SET enabled = 0`.
-
-### Anti-Pattern 6: Embedding Tailwind via CDN
-**Why it's wrong:** Defeats the single-binary story; breaks in air-gapped homelabs. **Do this instead:** Run Tailwind standalone CLI in `build.rs` to generate `static/tailwind.css`.
-
-### Anti-Pattern 7: Using `.unwrap()` on broadcast `.send()` errors
-**Why it's wrong:** `broadcast::Sender::send` returns `Err` when there are zero subscribers. **Do this instead:** `state.events.send(ev).ok();`
-
-## Integration Points
-
-### External Services
-
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| Docker daemon | `bollard` over Unix socket `/var/run/docker.sock` | Auto-detect via `Docker::connect_with_unix_defaults()`; handle `PermissionDenied` with a clear startup error; no TCP/TLS in v1 |
-| SQLite | `sqlx` with `sqlite://` URL, `WAL` mode, `busy_timeout=5000` | Set PRAGMAs on pool-connect hook |
-| Postgres | `sqlx` with `postgres://` URL | No extensions required; portable schema only |
-| Prometheus | Text exposition on `GET /metrics` | `prometheus` or `metrics` + `metrics-exporter-prometheus`; axum handler, not a separate listener |
-| Config file | `notify` crate + SIGHUP + `POST /api/reload` | Debounce filesystem events 500 ms (editors write-then-rename) |
-
-### Internal Boundaries
-
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| Config ↔ Scheduler | `mpsc::Sender<SchedulerCmd>` | Scheduler owns reload application; config module is dumb parser |
-| Scheduler ↔ Executor | `tokio::spawn(run_job(state, job))` | Scheduler "throws" — no shared queue, no back-pressure in v1 |
-| Executor ↔ Web | Via `AppState.db` + `AppState.events` only | Never call executor functions from web handlers directly |
-| Web "Run Now" ↔ Scheduler | `mpsc` `SchedulerCmd::RunNow(job_id)` | Manual run goes through the same executor path with `trigger='manual'` |
-| Scheduler ↔ Metrics | Via `AppState.events` bus; metrics module subscribes | Metrics has no direct scheduler dependency |
-
-## Suggested Build Order
-
-This is the critical output for the roadmap.
-
-1. **Phase A — Skeleton** (no scheduling yet)
-   - `Cargo.toml`, `main.rs`, tracing init, `clap` CLI, `tokio::main`
-   - `config/parse.rs` + TOML fixtures
-   - `db/mod.rs`: Pool enum, `sqlx::migrate!`, initial schema
-   - `sync_config_to_db` (config → jobs table), idempotency via `config_hash`
-   - **Exit criterion:** `cronduit --config test.toml` loads config, creates DB, inserts jobs, exits.
-
-2. **Phase B — Scheduler Core + Command Executor**
-   - `schedule/cron.rs` using `cron` crate (skip `@random` initially)
-   - `scheduler/mod.rs`: the `tokio::select!` loop, next_fire computation
-   - `executor/command.rs`: `tokio::process::Command`, stdout/stderr piping
-   - `executor/logs.rs`: line pump into `job_logs`
-   - `db/runs.rs`, `db/logs.rs` CRUD
-   - Graceful shutdown via `CancellationToken`
-   - **Exit criterion:** A command-type job on `*/1 * * * *` fires every minute, writes run + logs to SQLite. `Ctrl+C` waits for in-flight runs.
-
-3. **Phase C — Web UI Read-Only**
-   - `axum` router, `AppState`, `rust-embed` static assets
-   - Tailwind build pipeline (`build.rs` or `xtask`)
-   - `askama` templates for base, dashboard, job detail, run detail
-   - HTMX polling on dashboard and run detail
-   - `GET /health`, structured JSON logging
-   - **Exit criterion:** Operator opens `http://localhost:8080`, sees jobs, clicks into a run, sees logs.
-
-4. **Phase D — Docker Executor**
-   - `executor/docker.rs`: `bollard` client, create/start/wait/remove
-   - Image pull on demand, all network modes, volumes, env
-   - Log stream via `bollard` log pump into the same `executor/logs.rs` pipeline
-   - `container_name` per job, timeout handling
-   - Integration test with `testcontainers` covering `container:<name>` network mode
-   - **Exit criterion:** A docker-type job with `network="container:vpn"` runs, logs captured, container auto-removed.
-
-5. **Phase E — Reload, Random, Manual Run**
-   - `config/watch.rs`: SIGHUP + `notify` + debounce
-   - `POST /api/reload`
-   - Scheduler reload path: diff, disable removed, preserve history
-   - `schedule/random.rs`: `@random` resolution + `random_min_gap`
-   - `POST /api/jobs/:id/run` → manual trigger path
-   - **Exit criterion:** Edit config → SIGHUP → new jobs appear in UI, removed jobs go gray (history intact), randomized jobs have stable resolved schedules across reloads.
-
-6. **Phase F — Live Updates, Metrics, Retention**
-   - `events/bus.rs` broadcast channel, wire all emitters
-   - SSE endpoint for run log tail; HTMX `sse-swap` on run detail page
-   - `metrics/` module, `GET /metrics` Prometheus exposition
-   - `db/retention.rs` daily pruner
-   - **Exit criterion:** Viewing a running job's detail page shows lines streaming in real time. `/metrics` exposes four required counters. Old runs prune on schedule.
-
-7. **Phase G — Script Executor, Polish, Docs, CI**
-   - `executor/script.rs` (tempfile + shebang)
-   - Settings/status page
-   - Filter/search/sort on dashboard
-   - GitHub Actions: fmt, clippy, test, multi-arch build
-   - README with quickstart, example `docker-compose.yml`, design-system-compliant styling
-   - **Exit criterion:** Stranger can clone, `docker compose up`, and schedule a job in 5 minutes.
-
-**Build-order rationale:**
-- A→B gets a working CLI scheduler with persistence — the hardest core to debug — before any web UI distractions.
-- B→C means the web UI reads real data from day one (no mocks).
-- C→D: delaying Docker until the web UI exists means you can *watch* docker jobs work, which catches network-mode bugs faster than log-grepping.
-- D→E: reload and random need the full job lifecycle already working.
-- E→F: live updates are pure polish on top of a complete system; deferring lets you validate polling first.
-- F→G: script executor, filters, and CI are independent and can be parallelized within phase G.
-
-## Key Findings (TL;DR for the roadmap author)
-
-1. **Hand-roll the scheduler loop, don't adopt `tokio-cron-scheduler`** — it lacks a SQLite metadata store. ~200 lines and matches Cronduit's single-node model.
-2. **Single broadcast event bus is the backbone of live updates and metrics.** Every executor publishes `RunStarted` / `LogLine` / `RunFinished`. SSE handlers subscribe and filter. Metrics subscribes and counts. Future webhooks plug in the same way.
-3. **Use HTMX polling for everything except log tail.** SSE only for `/runs/:id/logs`.
-4. **`@random` is resolved once, persisted as `resolved_schedule`,** and only re-randomized when the config's `schedule` field changes or on explicit rerandomize. Min-gap only constrains randomized jobs among themselves.
-5. **Never delete jobs.** Reload path marks removed jobs `enabled=false` — history preserved.
-6. **Log pipeline fans out once:** single pump task per run writes to `job_logs` AND publishes on broadcast.
-7. **Schema works on both SQLite and Postgres** by sticking to `INTEGER PRIMARY KEY`, RFC3339 text timestamps, and avoiding JSONB.
-8. **Critical correction from training data:** `askama_axum` as a separate crate is deprecated in recent askama releases (v0.13+); implement `IntoResponse` directly on template structs. Flag in Phase C.
-9. **Build order: Skeleton → Scheduler+Command → Web UI → Docker → Reload+Random → Live updates+Metrics+Retention → Polish.**
-
-## Confidence Assessment
-
-| Area | Level | Reason |
-|------|-------|--------|
-| Component boundaries and AppState pattern | HIGH | Standard tokio+axum daemon shape |
-| `tokio-cron-scheduler` unsuitability | HIGH | Verified live: no SQLite store |
-| `bollard` log streaming API | HIGH | Verified crate structure; method shape stable across 0.15–0.17 |
-| `askama_axum` deprecation | HIGH | Verified on new repo; flag in roadmap |
-| SSE + broadcast pattern in axum | HIGH | Verified via axum docs |
-| Schema portability SQLite↔Postgres | MEDIUM-HIGH | Proven approach; may need per-backend migration files |
-| `@random` min-gap algorithm | MEDIUM | Spec-derived; behavior on overflow is a recommended design choice |
-| HTMX polling vs SSE split | HIGH | Well-established pattern |
-
-## Open Questions (flag for phase-specific research later)
-
-- **Tailwind build integration in Cargo** — `build.rs`, `cargo xtask`, or Makefile? Defer to Phase C research.
-- **`sqlx::migrate!` with a DbPool enum** — may require two macro invocations guarded by compile-time features or runtime dispatch; verify in Phase A.
-- **`notify` on Docker bind-mounts** — some kernels don't deliver inotify events through bind mounts reliably. Validate early in Phase E; SIGHUP is the fallback.
-- **Graceful handling of bollard reconnect** when `/var/run/docker.sock` disappears (docker daemon restart). v1 may just exit and let Docker restart cronduit, but worth documenting.
-
-## Sources
-
-- `bollard` docs and container module — https://docs.rs/bollard/
-- `axum` SSE module — https://docs.rs/axum/latest/axum/response/sse/index.html
-- `askama` status — https://github.com/askama-rs/askama (v0.15.6 as of March 2026; `askama_axum` deprecated)
-- `tokio-cron-scheduler` — https://github.com/mvniekerk/tokio-cron-scheduler (no SQLite store)
-- `sqlx` migrations and Pool — stable API
-- Project files: `.planning/PROJECT.md`, `docs/SPEC.md`
+# Cronduit v1.1 — Architecture Research
+
+**Dimension:** Integration Mapping (subsequent milestone, not greenfield)
+**Milestone:** v1.1 "Operator Quality of Life"
+**Researched:** 2026-04-14
+**Confidence:** HIGH — every file path, line number, and module shape verified by direct read of the v1.0.1 source tree.
+
+> This document adapts the standard `research-project/ARCHITECTURE.md` template. The default template is greenfield-oriented ("what architecture should we adopt?"); for v1.1 the architecture is already shipped and the valuable research question is "how do the v1.1 features slot into the existing modules, what new data flows are required, and what is the build order?" The sections below reflect that adapted focus.
+
+---
+
+## 1. Executive Summary
+
+v1.1 is a **polish-and-fix milestone on top of the shipped v1.0.1 architecture.** Every target feature slots into an existing module or adds a small sibling module. None of them require refactoring the scheduler loop, the pool split, or the template inheritance structure. The two architecturally interesting feature threads are:
+
+1. **Stop-a-running-job**, which forces us to track a per-run control handle that the `active_runs` map currently does not carry.
+2. **Per-job run numbers**, which forces a migration plus a narrow change in the write path.
+
+Everything else is additive.
+
+The **bulk enable/disable design question is resolvable**: option (b) — a new `jobs.enabled_override` column — is the least intrusive choice given how `sync::sync_config_to_db` currently calls `disable_missing_jobs`. The rationale is derived from reading the actual sync code, not aesthetic preference. Details in §3.7.
+
+The **riskiest feature is stop-a-job**, and it should be the Phase-A spike. Everything else is mechanical.
+
+---
+
+## 2. Existing Architecture Touchpoints (verified)
+
+The shipped modules I traced through for this research:
+
+| Area | File | What it owns today |
+|------|------|--------------------|
+| Scheduler loop | `src/scheduler/mod.rs` (595 lines; main loop at L64–L371) | `tokio::select!` over sleep/join_set/cmd_rx/cancel; owns `heap`, `jobs_vec`, `join_set: JoinSet<RunResult>` |
+| Command channel enum | `src/scheduler/cmd.rs` | `SchedulerCmd::{RunNow, Reload, Reroll}` + `ReloadResult` |
+| Per-run task lifecycle | `src/scheduler/run.rs::run_job` (L65–L292) | Insert `running` row → spawn log writer → dispatch to executor → finalize |
+| Local exec | `src/scheduler/command.rs::execute_child` (L58–L144) | `tokio::select!` over child.wait/timeout/cancel, kills via SIGKILL on process group |
+| Docker exec | `src/scheduler/docker.rs::execute_docker` (L76–L369) | Pre-flight → create → start → wait + log stream → `stop_container(t=10)` on timeout/cancel → `maybe_cleanup_container` |
+| Orphan reconciliation | `src/scheduler/docker_orphan.rs` | Filters `label=cronduit.run_id` at startup, stops + removes, marks rows `error`/`orphaned at restart` |
+| Config sync | `src/scheduler/sync.rs::sync_config_to_db` (L102–L216) | Reads `jobs` by name, upserts by hash, then `disable_missing_jobs` for names not in config |
+| Reload plumbing | `src/scheduler/reload.rs::{do_reload, do_reroll, spawn_file_watcher}` | Debounced file-watch + API + SIGHUP all funnel into `do_reload` |
+| DB schema | `migrations/{sqlite,postgres}/20260410_000000_initial.up.sql` | Three tables: `jobs`, `job_runs`, `job_logs`; no per-job counter anywhere |
+| Run inserts | `src/db/queries.rs::insert_running_run` (L286–L313) | `INSERT INTO job_runs (job_id, status='running', trigger, start_time) RETURNING id` |
+| Run finalize | `src/db/queries.rs::finalize_run` (L316–L360) | `UPDATE job_runs SET status/exit_code/end_time/duration_ms/error_message/container_id` |
+| Dashboard query | `src/db/queries.rs::get_dashboard_jobs` (L474–L597) | LEFT JOIN on a row-numbered subquery to attach latest run per job |
+| Dashboard handler | `src/web/handlers/dashboard.rs` | Fetches `DashboardJob[]`, computes next-fire via croner in Rust, renders `DashboardPage` or `JobTablePartial` on HTMX |
+| Job detail handler | `src/web/handlers/job_detail.rs` | Polling-friendly partial at `/partials/jobs/{id}/runs` with `hx-trigger="every 2s"` while `any_running` |
+| Run detail handler | `src/web/handlers/run_detail.rs` | **No log backfill when `is_running=true`** (L64–L82 of `templates/pages/run_detail.html` — just shows a placeholder and attaches the SSE stream) |
+| SSE handler | `src/web/handlers/sse.rs::sse_logs` | Subscribes to broadcast sender from `active_runs`; emits `log_line` + `run_complete` |
+| Active runs registry | `src/web/mod.rs::AppState.active_runs` | `Arc<RwLock<HashMap<i64, broadcast::Sender<LogLine>>>>` — **holds broadcast sender only, no control handle** |
+| API handlers | `src/web/handlers/api.rs` | `run_now`, `reload`, `reroll`, `list_jobs`, `list_job_runs` (all CSRF-gated form posts, return `HX-Trigger` for toasts) |
+| Router | `src/web/mod.rs::router` | 20+ routes; clean pattern for adding new partial/API endpoints |
+| Templates | `templates/{base.html, pages/*, partials/*}` | askama with `{% extends %}` inheritance; partials for `job_table`, `log_viewer`, `static_log_viewer`, `run_history`, `toast` |
+| Health handler | `src/web/handlers/health.rs::health` | Returns `(StatusCode::OK, Json(json!{...}))` via axum — chunked response shape is the likely cause of the reported docker healthcheck failure (bug added to v1.1 scope mid-research) |
+| **Missing today** | — | There is NO `overrides.toml`, no `jobs.enabled_override` column, no timeline view, no per-job run counter, no `stopped` status, no log-backfill for active runs, no `cronduit health` CLI subcommand. |
+
+One critical subtlety confirmed by reading `run.rs` L71 + `mod.rs` L56 + L388: the scheduler loop owns `join_set: JoinSet<RunResult>` and creates a new `child_cancel = self.cancel.child_token()` **inline at each spawn** (mod.rs L98, L122, L166, L215). **The `child_cancel` is dropped on the next loop iteration — the scheduler does NOT keep a per-run cancel handle anywhere.** This is the first architectural gap v1.1 has to close.
+
+---
+
+## 3. Feature-by-Feature Mapping
+
+### 3.1 Stop a Running Job (new `stopped` status)
+
+**Touches:**
+- `src/scheduler/cmd.rs` — add `SchedulerCmd::Stop { run_id: i64, response_tx: oneshot::Sender<StopResult> }`
+- `src/scheduler/mod.rs::SchedulerLoop` — **new field** `running_handles: HashMap<i64, RunControl>` where `RunControl` carries a `CancellationToken` (plus, for docker jobs, a `container_id` populated once create succeeds)
+- `src/scheduler/mod.rs` main loop — new match arm for `SchedulerCmd::Stop`; must also **remove** entries from `running_handles` when `join_set.join_next()` yields a `RunResult`
+- `src/scheduler/run.rs::run_job` — must register its `CancellationToken` (and later its `container_id`) into the new map. Simpler: pre-create the token in the scheduler loop and pass it to `run_job`; `run_job` is then responsible for writing its `container_id` into the map once it has one.
+- `src/scheduler/command.rs::execute_child` — already handles `cancel.cancelled()` → SIGKILL path; needs a new `RunStatus::Stopped` variant distinct from `Shutdown` so `run.rs::run_job` can finalize as `"stopped"` rather than `"cancelled"`. Pass a `StopReason` enum through the cancel path.
+- `src/scheduler/docker.rs::execute_docker` — same: its `cancel.cancelled()` branch (L338–L358) currently uses `stop_container(t=10)` and returns `RunStatus::Shutdown` with message `"cancelled due to shutdown"`. Must split into `RunStatus::Stopped` with a different message when triggered by operator-stop vs shutdown.
+- `src/scheduler/run.rs::run_job` L238–L244 — add `RunStatus::Stopped => "stopped"` arm
+- `src/web/handlers/api.rs` — new `pub async fn stop_run(job_id, run_id)` handler, CSRF-gated, sends `SchedulerCmd::Stop`. Mirrors the `run_now` handler shape.
+- `src/web/mod.rs::router` — new route `POST /api/runs/{run_id}/stop`
+- `templates/pages/run_detail.html` + `templates/partials/run_history.html` — a "Stop" button visible only when `status == "running"`
+- `src/scheduler/run.rs` failure classification (L298–L313) — `classify_failure_reason` should map `"stopped"` → a closed variant so `cronduit_run_failures_total` cardinality stays bounded. Either reuse `FailureReason::Abandoned` or add `FailureReason::Stopped`.
+- `migrations/{sqlite,postgres}` — **no schema change needed**. `status` is already `TEXT`. Just a new allowed value.
+
+**Distinguishing cancel-by-shutdown vs cancel-by-operator:**
+
+- **Option A (recommended):** a per-run token plus a per-run `Arc<AtomicU8>` `stop_reason`. The scheduler cancels via `token.cancel()` AND sets `stop_reason = Operator` first. The executor checks `stop_reason` after the `cancel.cancelled()` branch fires.
+- Option B: two tokens (global shutdown + per-run operator). Cleaner semantically but doubles the select-arms in every executor. Rejected.
+
+**New/modified:**
+- Modified: `cmd.rs`, `mod.rs`, `run.rs`, `command.rs`, `docker.rs`, `api.rs`, `web/mod.rs`, templates
+- New: a tiny `src/scheduler/control.rs` for the `RunControl` struct + `StopReason` enum + `StopResult`, to keep `mod.rs` from ballooning.
+
+**Why this is the riskiest feature:** it touches three executors (command, script, docker) + the scheduler loop + the DB finalize path + templates + a new race surface. See §5.1 for the specific race.
+
+### 3.2 Per-Job Sequential Run Number
+
+**Touches:**
+- `migrations/sqlite/20260411_000000_job_run_number.up.sql` (new) — `ALTER TABLE job_runs ADD COLUMN job_run_number INTEGER` (nullable, so the backfill UPDATE doesn't block other writers). Plus a paired migration for Postgres.
+- `migrations/sqlite/20260411_000001_job_run_number_backfill.up.sql` (new) — idempotent backfill using a window function: `UPDATE job_runs SET job_run_number = rn FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id) rn FROM job_runs) s WHERE job_runs.id = s.id AND job_runs.job_run_number IS NULL`. SQLite 3.33+ supports this.
+- `migrations/sqlite/20260411_000002_job_run_number_not_null.up.sql` (new) — add `NOT NULL` constraint once backfill completes.
+- `src/db/queries.rs::insert_running_run` — **the design decision.** Two options:
+
+  **Option A — subquery at insert time.** Single statement with `COALESCE((SELECT MAX … WHERE job_id = $1), 0) + 1`. On SQLite this is atomic within the single write connection — cronduit already uses a separate writer pool with WAL + busy_timeout, so only one writer runs at a time. On Postgres the subquery is NOT atomic; needs a unique constraint + retry loop OR serializable isolation OR a dedicated counter.
+
+  **Option B (recommended) — dedicated counter column on `jobs`.** `ALTER TABLE jobs ADD COLUMN next_run_number BIGINT NOT NULL DEFAULT 1`. `insert_running_run` becomes a two-statement transaction: `UPDATE jobs SET next_run_number = next_run_number + 1 WHERE id = $1 RETURNING next_run_number - 1 AS assigned; INSERT INTO job_runs (…, job_run_number) VALUES (…, $assigned)`. Works identically on both backends because `UPDATE … RETURNING` takes a row lock on the `jobs` row (Postgres) / is serialized by the single writer (SQLite).
+
+  **Recommendation: Option B.** Reasons derived from the existing write path:
+  1. Cronduit already uses `ON CONFLICT DO UPDATE … RETURNING id` in `upsert_job` (queries.rs L71–L123) — the team is comfortable with `RETURNING`-on-UPDATE across both backends.
+  2. Option B gives a consistent locking story on both backends without a unique-index retry loop.
+  3. Option A relies on a backend-specific reasoning ("SQLite has one writer") that will NOT survive the first time someone enables statement-level connection pooling for a hypothetical future multi-writer SQLite path.
+
+- `src/db/queries.rs::DbRun` + `DbRunDetail` — add `job_run_number: i64` field, propagate through both `SELECT` statements.
+- `src/web/handlers/run_detail.rs::RunDetailView` — surface `job_run_number`.
+- `templates/pages/run_detail.html` — replace `Run #{{ run.id }}` in the breadcrumb/title with `Run #{{ run.job_run_number }}` (keep global id visible as a hint). **Keep the `/jobs/{job_id}/runs/{run_id}` URL on the global id**; don't rekey by `job_run_number` or the orphan-reconciliation path and the SSE handler both break.
+- `templates/partials/run_history.html` — show `#{{ run.job_run_number }}` as the primary identifier.
+
+**Backfill safety:** the migration runs at startup before `scheduler::spawn` is called (confirmed by reading `src/cli/run.rs` — see §5.2). No race against new inserts.
+
+**New/modified:** two new migration files per backend; modifications to `queries.rs` insert path, view models, and two templates. No new modules.
+
+### 3.3 Log Backfill on Navigation
+
+**Current behavior** (confirmed by reading `templates/pages/run_detail.html` L64–L82): when `is_running` is true, the template renders an **empty** `#log-lines` div with `sse-connect` attached. No prior log lines are loaded. This is the described bug: lines persisted before the user opened the page are invisible until the run finishes.
+
+**Fix — follows the existing "static then live" pattern that already exists for `run_complete`:**
+
+- In `src/web/handlers/run_detail.rs::run_detail`, when `is_running == true`, fetch the existing log lines from the DB (using the same `fetch_logs` helper already at L97–L132) and pass them to the page template alongside the `is_running` flag.
+- `templates/pages/run_detail.html` L64–L82 — render the existing `logs` via the `{% include "partials/log_viewer.html" %}` form **inside** the `#log-lines` div (before the placeholder), then leave the SSE attach as-is.
+- **Dedupe:** the SSE stream will replay lines that were in the broadcast channel's ring buffer (capacity 256, per `run.rs` L101), and for a brand-new subscriber those are lines sent **after** the last slot index.
+
+**Edge case:** if the backfill read happens at log-id 500 and the SSE subscribe happens milliseconds later, and a burst of lines arrives in between, lines 501–N could briefly double-appear. The **correct fix** is to:
+
+1. Fetch the DB snapshot first to get `max(id)`.
+2. Subscribe to SSE.
+3. Discard any SSE line whose id is ≤ the last backfilled id.
+
+Because the broadcast `LogLine` struct (`log_pipeline.rs`) currently has only `stream`, `ts`, `line` — no id — we must add `id: Option<i64>` to `LogLine` and have the broadcast send only **after** the DB insert, with the assigned id populated.
+
+**Touches:**
+- `src/scheduler/log_pipeline.rs` — add `id: Option<i64>` to `LogLine`
+- `src/db/queries.rs::insert_log_batch` — `RETURNING id` so each emitted `LogLine` gets its assigned id back
+- `src/scheduler/run.rs::log_writer_task` — reorder: insert first, then fan-out with populated ids
+- `src/web/handlers/run_detail.rs::run_detail` — pass `logs` and `max_backfill_id` when `is_running`
+- `templates/pages/run_detail.html` — render backfill inside `#log-lines`; a small JS line that records the max id and drops SSE events with lower ids
+- `src/web/handlers/sse.rs` — emit the id as a data-attribute on the rendered div
+
+**Also fixes** the "transient error getting logs" race and the "lines out of order after job completes" bug. With ids, the static swap is deterministic.
+
+### 3.4 Run Timeline (Gantt) View
+
+**Location decision: new `/timeline` page, NOT on the dashboard.**
+
+Justification: the dashboard already does non-trivial work per request (`get_dashboard_jobs` with a subquery, croner next-fire computation, HTMX polling via `hx-trigger="every 2s"`). Adding a gantt render on top would make the dashboard the hot path for three unrelated query shapes. A dedicated page keeps the dashboard query tight and lets the timeline have its own cache semantics.
+
+**Touches:**
+- `src/web/handlers/timeline.rs` (new file) — handler producing `TimelinePage` + `TimelinePartial` for HTMX window-toggle (24h / 7d)
+- `src/web/handlers/mod.rs` — `pub mod timeline;`
+- `src/web/mod.rs::router` — `.route("/timeline", get(handlers::timeline::timeline))` + `.route("/partials/timeline", get(handlers::timeline::timeline_partial))`
+- `templates/pages/timeline.html` (new) — extends `base.html`, renders rows as horizontal bars using plain CSS grid with `grid-template-columns` driven by data attributes. No JS library, no canvas.
+- `src/db/queries.rs::get_timeline_runs(since: DateTime, until: DateTime) -> Vec<TimelineRun>` (new) — single query fetching `(job_id, job_name, status, start_time, end_time_or_now)` for runs whose `end_time >= $since OR status = 'running'`.
+- `templates/base.html` — new nav link "Timeline"
+- Polling cadence: `hx-trigger="every 5s"` on the timeline partial only while the window contains running rows.
+
+### 3.5 Sparkline + Success-Rate Badge on Dashboard Cards
+
+**Recommendation:** a separate query `get_dashboard_job_sparks(job_ids: &[i64]) -> HashMap<i64, SparkData>` called once with all ids from `get_dashboard_jobs`. One extra round-trip, but the query is trivially parallelizable and avoids dialect subtleties from adding a CTE to the already-complex `get_dashboard_jobs`.
+
+**Touches:**
+- `src/db/queries.rs` — new `get_dashboard_job_sparks` function
+- `src/web/handlers/dashboard.rs::to_view` — populate `success_rate: String` and `sparkline: Vec<&'static str>` (20 entries)
+- `templates/partials/job_table.html` — render a fixed 20-cell inline SVG or `<span>` per status. Recommend pure HTML spans with CSS classes keyed to `cd-status-*` variables for consistency with the design system.
+- Refresh: dashboard polling is already in place. No new polling.
+
+### 3.6 Duration Trend p50/p95 on Job Detail
+
+**The dialect split:** SQLite has no built-in `percentile_cont`; Postgres has it since 9.4. Three options:
+
+- **Option A (recommended) — compute in Rust.** Fetch the last N `duration_ms` values (already indexed on `(job_id, start_time DESC)`), sort in-memory, pick indices `[0.5 * len]` and `[0.95 * len]`. For N=100 this is microseconds. Same code path works on both backends.
+- Option B: Postgres-native + custom SQLite — more code, more tests, no payoff.
+
+**Rationale for A:** cronduit's structural-parity constraint exists precisely to avoid dialect-specific code outside migration files.
+
+**Touches:**
+- `src/db/queries.rs::get_recent_durations(job_id, limit) -> Vec<i64>` (new, trivial one-column select; reuses existing index)
+- `src/web/handlers/job_detail.rs` — call `get_recent_durations(job_id, 100)`, compute p50/p95 in a small helper
+- Add `p50_display`, `p95_display` to `JobDetailView`
+- `templates/pages/job_detail.html` — new stat card
+- Optional: a `src/web/stats.rs` helper module holding `percentile(samples: &mut [i64], q: f64) -> i64` with its own tests. Recommended for testability.
+
+### 3.7 Bulk Enable/Disable — the Open Design Question (RESOLVED)
+
+**Reading** `src/scheduler/sync.rs::sync_config_to_db` L102–L216 and `src/db/queries.rs::disable_missing_jobs` L129–L169 confirms the semantics:
+
+- **On every reload**, `sync_config_to_db` computes `active_names = [every job in the config file]` and calls `disable_missing_jobs(pool, &active_names)`, which sets `enabled=0` on every row whose name is NOT in that list.
+- **On every upsert** (`queries::upsert_job` L57), the `ON CONFLICT DO UPDATE` clause **hardcodes `enabled = 1`**. So any job present in the config file gets re-enabled on every sync.
+
+**Option (a) — edit `cronduit.toml` in place.** Rejected.
+- Violates the v1 constraint "Config file mounted read-only".
+- Would require the web process to own write access to an operator-managed file, expanding the blast radius against the documented threat model.
+- Would create a config-write → file-watch → reload → sync loop that races the writer against itself.
+
+**Option (b) — a DB-only flag.** The cleanest instantiation is **a new column `enabled_override` (nullable tri-state: NULL / 0 / 1) on `jobs`**, NOT repurposing `enabled`.
+
+- Semantics:
+  - `enabled_override IS NULL` → behavior follows the config file (current semantics preserved)
+  - `enabled_override = 0` → forced disabled regardless of config
+  - `enabled_override = 1` → forced enabled (not strictly required for v1.1; can be left for a future milestone)
+- `get_enabled_jobs` becomes `WHERE enabled = 1 AND (enabled_override IS NULL OR enabled_override = 1)`.
+- `disable_missing_jobs` continues to set `enabled = 0` on rows whose names left the config — no change.
+- `upsert_job` continues to set `enabled = 1` — no change, because the new override column is untouched by config sync.
+- **Does NOT break reload semantics**: a reload still correctly re-enables a job whose name reappears in the config file, and a reload still disables a job whose name vanishes. The override is orthogonal.
+- **One new rule**: when the operator deletes a job from the config and the row then gets `enabled = 0`, we should also **clear** the `enabled_override` so a later re-add-from-config does the expected thing. One-line addition to `disable_missing_jobs`.
+
+**Option (c) — separate `overrides.toml`.** Rejected.
+- Creates a second source of truth that every reader (dashboard, scheduler, api) must consult.
+- The write path for the bulk-disable UI would still need to modify this file, and the file watcher would trigger a reload loop.
+- Bigger surface area than option (b), with no upside.
+
+**Recommendation: Option (b).** Specifically:
+1. New migration adds `enabled_override INTEGER` (SQLite) / `BIGINT` (Postgres), nullable, default NULL.
+2. `get_enabled_jobs` and `get_dashboard_jobs` filter on the composite predicate above.
+3. `disable_missing_jobs` clears the override when disabling.
+4. New DB functions `set_enabled_override_bulk(job_ids: &[i64], override: Option<bool>)` and corresponding API handler `POST /api/jobs/bulk-toggle` (CSRF-gated, form post with multi-select `job_ids[]` + `action=enable|disable`).
+5. **After the bulk update, the API handler must fire `SchedulerCmd::Reload`** so the scheduler rebuilds its heap and newly-disabled jobs stop firing. This requires **no scheduler change** — `do_reload` already fetches enabled jobs via `get_enabled_jobs`, so changing the filter is enough.
+6. Dashboard partial gets checkboxes + a sticky action bar; template touches only.
+7. Settings page should show the current overrides for operator visibility ("3 jobs forced-disabled: foo, bar, baz").
+
+**Touches:**
+- Migrations (both backends)
+- `src/db/queries.rs`: `get_enabled_jobs`, `get_dashboard_jobs`, `disable_missing_jobs` (clear override on path), new `set_enabled_override_bulk`
+- `src/web/handlers/api.rs`: new `bulk_toggle` handler
+- `src/web/mod.rs::router`
+- `templates/pages/dashboard.html` + `templates/partials/job_table.html`: checkboxes, action bar, CSRF token
+- `templates/pages/settings.html`: optional override list display
+
+**New/modified:** zero new modules; additions to queries, one new API handler, template changes, two migration files.
+
+### 3.8 Docker Healthcheck "unhealthy" Bug (added mid-research)
+
+**Symptom:** `docker ps` reports the cronduit container as `Up 2 hours (unhealthy)` while `curl http://localhost:8080/health` inside the container returns a correct 200 JSON response.
+
+**Root cause hypothesis** (to be confirmed at fix time): busybox `wget --spider` in the alpine:3 base image misparses HTTP responses that axum sends with `Transfer-Encoding: chunked`. Axum's `Json` responder emits the body chunked when the content length isn't pre-computed; busybox `wget --spider` has historical issues with chunked responses that surface as `exit 1` even on 200 OK status.
+
+**Fix-path recommendation** (phase-plan time picks the specific path):
+
+1. **(Preferred) Ship a `cronduit health` CLI subcommand** — a new top-level clap subcommand that performs a local `GET http://$bind/health`, parses the JSON, and exits 0 on `status=ok`, 1 otherwise. Healthcheck becomes `CMD ["/cronduit", "health"]`. Self-hosted, zero external tool dependency, image stays small.
+2. **Embed `HEALTHCHECK` in the Dockerfile** so the shipped image has a known-good default independent of the compose file the operator writes. Recommended regardless of which test expression wins.
+3. **Change the axum health handler to force a known Content-Length** — return `Response::builder().header(CONTENT_LENGTH, body.len()).body(...)` instead of `Json(...)`. Fragile; doesn't help operators who use a different healthcheck tool in the future.
+
+Option 1 + 2 together is the most cronduit-flavored solution. It closes an entire category of "operator's healthcheck tool behaves weirdly" bugs by making the healthcheck live inside the binary.
+
+**Touches:**
+- `src/cli/mod.rs` + `src/cli/health.rs` (new) — clap `HealthCmd` with `--bind` / `--config` args; calls the running server's `/health` over HTTP via `reqwest` or a minimal hand-rolled hyper client
+- `Dockerfile` — add `HEALTHCHECK CMD ["/cronduit", "health"]`
+- `examples/docker-compose.yml` — replace the wget healthcheck stanza with the CMD form that invokes `cronduit health`
+- `examples/docker-compose.secure.yml` — same
+- `README.md` — healthcheck troubleshooting section (if any)
+
+**New/modified:** one new CLI subcommand module, Dockerfile addition, two compose-file updates.
+
+**Phase placement:** rc.1 bug-fix block (SCHED/OPS category). Small and independent of the scheduler/log/run-number work.
+
+---
+
+## 4. Suggested Build Order
+
+**Recommended: three rcs, in this order.**
+
+### rc.1 — Bug-Fix Block (Phase A)
+
+Spike-and-land the riskiest feature first.
+
+1. **Stop-a-running-job** (§3.1) — riskiest, touches three executors. Spike it alone to de-risk the `RunControl` abstraction. Lands first because (a) every later feature can assume the `stopped` status exists, (b) if it's late, we can still cut a usable rc.1 with log-backfill only.
+2. **Per-job run number** (§3.2) — lands next because the timeline view (§3.4), the run-history partial, and the sparkline (§3.5) all want to display `#N` instead of `#123456`. Landing this before observability polish means we only change the templates once.
+3. **Log backfill + out-of-order fix + transient-error fix** (§3.3) — lands last in rc.1. Requires the `LogLine.id` shape change but touches only the SSE + run_detail path, so it can ship independently of the rest.
+4. **Docker healthcheck fix** (§3.8) — independent, small, can land in parallel. Gate: rc.1 should ship with the healthcheck fixed so external adopters trying rc.1 don't immediately hit the `(unhealthy)` problem.
+
+### rc.2 — Observability Polish (Phase B)
+
+All three features share no code; any internal order works. Suggest:
+
+5. **Duration trend p50/p95** (§3.6) — smallest, most mechanical. Warm-up.
+6. **Sparkline + success-rate** (§3.5) — new query, template work.
+7. **Timeline view** (§3.4) — new page, new query, new template. Largest in this block.
+
+### rc.3 — Ergonomics (Phase C)
+
+8. **Bulk enable/disable** (§3.7) — new migration, new handler, biggest template changes on the dashboard. Lands last because the selection UI is the most visible regression risk and we want a clean dashboard for rc.1 / rc.2 screenshots.
+
+### Strict dependencies
+
+- §3.2 (run numbers) must land before §3.4 (timeline) and §3.5 (sparkline) — otherwise you render `#{global_id}` in the new views and rewrite them later.
+- §3.3 (log backfill) is independent of everything but benefits from landing early because every rc matters for operator experience.
+- §3.1 (stop) is independent but is the highest-risk spike — land it first so late-breaking regressions have maximum fix time.
+- §3.7 (bulk toggle) is independent and should land last because it changes the most visible surface.
+- §3.8 (healthcheck) is fully independent; fit it wherever convenient in rc.1.
+
+### Spike recommendation
+
+Before cutting rc.1, do a short spike on §3.1 specifically validating:
+
+- `RunControl` + `StopReason::Operator` round-trip on all three executors
+- The race in §5.1 is covered by a test
+- `mark_run_orphaned` / orphan-reconciliation still works when a run is `stopped` mid-execution and the process is killed
+
+---
+
+## 5. Integration Gotchas (→ Test Cases)
+
+### 5.1 Stop-a-Job Races with Natural Completion
+
+**The race:** `SchedulerCmd::Stop { run_id: 42 }` arrives in the scheduler loop at time T. At T+1μs, `join_set.join_next()` yields `RunResult { run_id: 42, status: "success" }` because the job finished naturally. The `Stop` handler then tries to cancel a token whose task is already gone, and — worse — the DB row is already `success`, so overwriting it to `stopped` would be a lie.
+
+**Correct ordering:**
+
+1. `Stop` handler first checks `running_handles.get(&run_id)`.
+2. If present, it cancels the token AND **does NOT touch the DB.** The executor's cancel branch is the only place that writes `status = "stopped"`.
+3. If absent, it either returns `StopResult::AlreadyFinished { final_status }` by reading `job_runs` by id, or returns `StopResult::Unknown` if not in `running_handles` and not in `job_runs`.
+4. `run.rs::run_job`, when finalizing, must `finalize_run` first (takes the writer lock briefly), then `running_handles.write().await.remove(&run_id)`.
+
+**Invariant:** the executor finalizes as `stopped` if and only if it observed `cancel.cancelled()` with `stop_reason = Operator`; otherwise the natural-completion status wins.
+
+**Test cases:**
+
+- Stop during a running job → DB row ends `stopped`, container removed.
+- Stop arrives within 1ms of natural exit → DB row ends in the natural exit status (no `stopped` overwrite). Use `tokio::time::pause` to make the race deterministic.
+- Stop for an unknown `run_id` → 404 from API handler, no DB touch.
+- Stop for a completed `run_id` → handler responds `AlreadyFinished` toast, no DB touch.
+
+### 5.2 Per-Job-Run-Number Backfill Races Startup
+
+**The concern:** "backfill races the scheduler writing new rows." Reading `src/cli/run.rs` and `src/db/mod.rs::migrate` confirms the current ordering:
+
+1. `DbPool::connect()` → `pool.migrate()` runs migrations (before scheduler spawn)
+2. `docker_orphan::reconcile_orphans()` runs (before scheduler spawn)
+3. `sync_config_to_db()` runs
+4. `scheduler::spawn()` starts the loop — only now can new `insert_running_run` calls happen
+
+So the backfill migration runs **strictly before** any new `job_runs` row is inserted by the running scheduler. **No race.** The only remaining concerns:
+
+- The backfill migration must be idempotent (rerun safe) because migrations may be applied partially on crash.
+- The `NOT NULL` constraint must be added in a SEPARATE migration after the backfill migration so a partial backfill doesn't leave an unsatisfiable constraint. Standard two-step-migration practice.
+- On **very large** `job_runs` tables the backfill UPDATE could take seconds. Acceptable for a v1.1 upgrade.
+
+**Test cases:**
+
+- Start with an empty DB → run Insert → `job_run_number` is 1.
+- Start with a populated DB (no column) → migrate → every row has a `job_run_number` matching `ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id)`.
+- Start with a partially backfilled DB (simulating a crashed prior migration) → migrate → all nulls get filled.
+- Backfill migration is rerun on an already-complete DB → no-op (idempotent).
+
+### 5.3 SSE Backfill Dedupe
+
+Covered in §3.3. Summary:
+
+- **Mechanism:** assign `id` in `insert_log_batch`, propagate into `LogLine`, emit via SSE, JS-side drop events with `id <= max_backfill_id`.
+- **Test cases:**
+  - Navigate to a running job after 100 lines are persisted → see 100 lines, then live lines as they arrive, no duplicates at the transition.
+  - Navigate during a log burst (100 lines persisted, 50 more in the broadcast ring) → see 100 from DB + 50 from SSE, none duplicated.
+  - Navigate to a job with 10k lines → pagination still works for the static view (existing `has_older` / `next_offset` shape unchanged).
+
+### 5.4 Bulk Disable + Running Jobs
+
+**Concern:** operator bulk-disables 5 jobs, 2 of them are currently running. The `SchedulerCmd::Reload` that follows the bulk toggle will rebuild the heap WITHOUT those jobs — but the in-flight runs hold cloned `DbJob` values (see `do_reload` L60 comment) and will complete naturally. **This is the correct behavior**: bulk disable stops *future* fires, not running jobs. The operator who wants to stop a running job uses the Stop button from §3.1. Document this in the UI (toast: "3 jobs disabled; 2 currently-running jobs will complete").
+
+### 5.5 `stopped` Status and Orphan Reconciliation
+
+**Concern:** a `stopped` run leaves a container that's in the process of being force-killed. If cronduit crashes between `container_kill` and `finalize_run`, the orphan reconciler at next startup will find the container with `cronduit.run_id=42`, stop it (already stopped), remove it, and mark run 42 as `error`/`orphaned at restart`. That's wrong — the run was explicitly stopped, not orphaned.
+
+**Fix:** change `mark_run_orphaned` to `UPDATE … WHERE id = $1 AND status = 'running'`. Strict improvement on today's behavior, orthogonal to v1.1's Stop feature. Test with: pre-seed a row `status = 'stopped'`, run reconciliation against a matching container, assert row remains `stopped`.
+
+### 5.6 Healthcheck Fix Does Not Break Existing Deployments
+
+**Concern:** operators may have custom healthcheck stanzas in their own compose files that use the old wget pattern. Fix must be backward-compatible.
+
+**Resolution:**
+
+- The Dockerfile `HEALTHCHECK` directive is a new default; operators who override it in their compose file keep their override (compose overrides win over Dockerfile).
+- The `cronduit health` subcommand is additive — adding it to the CLI does not change any existing behavior.
+- Docs should call out the new default + the recommended compose-file pattern so operators opt in.
+
+---
+
+## 6. Proposed New Modules / Files
+
+| Path | Purpose | Scope |
+|------|---------|-------|
+| `src/scheduler/control.rs` | `RunControl`, `StopReason`, `StopResult` types + the `HashMap<run_id, RunControl>` extension | ~60 LOC |
+| `src/web/handlers/timeline.rs` | Timeline handler + view model | ~120 LOC |
+| `src/web/stats.rs` | `percentile()` helper with tests | ~40 LOC |
+| `src/cli/health.rs` | `cronduit health` subcommand | ~60 LOC |
+| `templates/pages/timeline.html` | Timeline page | ~80 LOC |
+| `migrations/{sqlite,postgres}/20260415_000000_job_run_number.up.sql` | Add column | — |
+| `migrations/{sqlite,postgres}/20260415_000001_job_run_number_backfill.up.sql` | Backfill | — |
+| `migrations/{sqlite,postgres}/20260415_000002_job_run_number_not_null.up.sql` | Add NOT NULL | — |
+| `migrations/{sqlite,postgres}/20260415_000010_enabled_override.up.sql` | Bulk disable column | — |
+
+**No new modules beyond those.** Everything else is additions inside existing files.
+
+---
+
+## 7. What NOT to Change During v1.1
+
+Explicit non-goals to keep the milestone tight and avoid the "refactor-while-we're-here" anti-pattern:
+
+1. **Do not refactor the scheduler loop.** Add the `Stop` match arm; don't split the loop into functions.
+2. **Do not change the writer/reader pool split.** Every query in §3 uses the existing `PoolRef::{Sqlite,Postgres}` pattern.
+3. **Do not add a new templating library.** All new partials are askama templates extending `base.html`.
+4. **Do not introduce a metrics registry change.** The `metrics` facade is already wired; new metrics (e.g. `cronduit_runs_stopped_total`) use the existing bounded-cardinality label scheme in `run.rs::classify_failure_reason`.
+5. **Do not introduce a JS framework for the timeline or sparkline.** Plain inline HTML/CSS only. HTMX is already vendored.
+6. **Do not change the config file schema.** All new state lives in the DB. (Per §3.7 resolution.)
+7. **Do not rework `mark_run_orphaned`** beyond the targeted `status = 'running'` WHERE clause (§5.5).
+
+---
+
+## 8. Confidence Assessment
+
+| Area | Level | Basis |
+|------|-------|-------|
+| File/module paths | HIGH | Every path verified by direct Read; line numbers included where nontrivial |
+| Bulk-disable recommendation | HIGH | Derived from reading `sync.rs` + `queries.rs::disable_missing_jobs` + `queries.rs::upsert_job` end-to-end |
+| Stop-a-job design | HIGH | Derived from reading the scheduler loop + all three executors; race analysis grounded in the existing `tokio::select!` structure |
+| Per-job run number option B | HIGH | Derived from the existing `UPDATE … RETURNING` pattern already in `upsert_job` |
+| Log backfill dedupe via id | MEDIUM-HIGH | Requires touching `log_pipeline::LogLine` and the log writer task — both are small and well-isolated, but the dedupe-via-id pattern isn't in the code today |
+| p50/p95 in Rust | HIGH | Cronduit's structural-parity constraint explicitly rejects dialect-specific SQL outside migrations |
+| Timeline as new page | MEDIUM | Design judgment; a reasonable alternative is a collapsible dashboard section |
+| Build order | HIGH | Dependency graph derived from the templating/schema touches, not aesthetic |
+| Orphan/stopped interaction | HIGH | Behavior confirmed by reading `docker_orphan.rs::mark_run_orphaned` |
+| Healthcheck fix (§3.8) | MEDIUM | Root-cause hypothesis needs confirmation by reproducing the chunked-encoding busybox wget failure, but the `cronduit health` subcommand fix path is sound regardless of the exact root cause |
+
+---
+
+## 9. Notes for the Roadmap Consumer
+
+- **Every v1.1 feature has a specific file/module path.** No hand-wavy "somewhere in the scheduler".
+- **The bulk-disable open question is resolved:** Option (b), new `enabled_override` column, with justification derived from reading the sync code. Phase plan does not need to relitigate.
+- **Build order is justified by strict dependencies**: run numbers before timeline/sparkline (template reuse), stop before everything (risk-front-load), log backfill independent.
+- **Three release candidates map to the three thematic blocks**: rc.1 = bug-fix block (stop + run numbers + log backfill + healthcheck), rc.2 = observability (trend + sparkline + timeline), rc.3 = ergonomics (bulk toggle).
+- **The one architectural pattern v1.1 introduces** that isn't in v1.0 is the `running_handles` map carrying `RunControl`. Keep it minimal and colocated in `src/scheduler/control.rs`.
+
+---
+
+## 10. Source Files Read
+
+- `/Users/Robert/Code/public/cronduit/.planning/PROJECT.md`
+- `src/scheduler/mod.rs`
+- `src/scheduler/cmd.rs`
+- `src/scheduler/run.rs`
+- `src/scheduler/reload.rs`
+- `src/scheduler/sync.rs`
+- `src/scheduler/command.rs`
+- `src/scheduler/docker.rs`
+- `src/scheduler/docker_orphan.rs`
+- `src/db/queries.rs` (structural scan + L40–L215, L286–L800)
+- `src/web/mod.rs`
+- `src/web/handlers/api.rs`
+- `src/web/handlers/dashboard.rs`
+- `src/web/handlers/job_detail.rs`
+- `src/web/handlers/run_detail.rs`
+- `src/web/handlers/sse.rs`
+- `src/web/handlers/health.rs`
+- `templates/pages/run_detail.html`
+- `migrations/sqlite/20260410_000000_initial.up.sql`
+- `migrations/postgres/20260410_000000_initial.up.sql`
+- `Dockerfile`
+- `examples/cronduit.toml`
+- `examples/docker-compose.yml`
