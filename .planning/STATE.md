@@ -4,8 +4,8 @@ milestone: v1.1
 milestone_name: — Operator Quality of Life
 status: executing
 stopped_at: Phase 10 UI-SPEC approved
-last_updated: "2026-04-15T19:48:01.777Z"
-last_activity: 2026-04-15 -- Phase 10 planning complete
+last_updated: "2026-04-15T19:51:10.379Z"
+last_activity: 2026-04-15 -- Phase 10 execution started
 progress:
   total_phases: 5
   completed_phases: 0
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** v1.1 "Operator Quality of Life" — bug fixes + observability polish + bulk ergonomics, shipped iteratively via `v1.1.0-rc.N` cuts. v1.0.1 is the stable baseline.
+**Current focus:** Phase 10 — stop-a-running-job-hygiene-preamble
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: Not started — Phase 10 is next (`/gsd-plan-phase 10`)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-04-15 -- Phase 10 planning complete
+Phase: 10 (stop-a-running-job-hygiene-preamble) — EXECUTING
+Plan: 1 of 10
+Status: Executing Phase 10
+Last activity: 2026-04-15 -- Phase 10 execution started
 
 Progress: [░░░░░░░░░░] 0% (0 of 5 v1.1 phases complete)
 
