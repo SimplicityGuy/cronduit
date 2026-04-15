@@ -75,7 +75,7 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 
 ### 🚧 v1.1 Operator Quality of Life (Phases 10–14)
 
-- [ ] **Phase 10: Stop-a-Running-Job + Hygiene Preamble** — SCHED-09..14 + FOUND-12..13. Highest-risk spike; new `stopped` status wired through all three executors. Ships as part of rc.1.
+- [x] **Phase 10: Stop-a-Running-Job + Hygiene Preamble** — SCHED-09..14 + FOUND-12..13. Highest-risk spike; new `stopped` status wired through all three executors. Ships as part of rc.1. (completed 2026-04-15)
 - [ ] **Phase 11: Per-Job Run Numbers + Log UX Fixes** — DB-09..13 + UI-16..20. Three-step migration + log pipeline inversion. Ships as part of rc.1.
 - [ ] **Phase 12: Docker Healthcheck + rc.1 Cut** — OPS-06..08. New `cronduit health` CLI + Dockerfile HEALTHCHECK. Ships AS `v1.1.0-rc.1`.
 - [ ] **Phase 13: Observability Polish (rc.2)** — OBS-01..05. Timeline page + sparkline/success-rate + duration p50/p95. Ships AS `v1.1.0-rc.2`.
@@ -257,7 +257,7 @@ Full REQ-ID → phase traceability lives in [`REQUIREMENTS.md`](REQUIREMENTS.md#
 
 | Phase                                                      | Plans Complete | Status      | rc target        | Completed |
 | ---------------------------------------------------------- | -------------- | ----------- | ---------------- | --------- |
-| 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/10           | 9/10 | In Progress|  |
+| 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/10           | 10/10 | Complete   | 2026-04-15 |
 | 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | Not started | `v1.1.0-rc.1`    | —         |
 | 12. Docker Healthcheck + rc.1 Cut                          | 0/?            | Not started | `v1.1.0-rc.1` ◀  | —         |
 | 13. Observability Polish (rc.2)                            | 0/?            | Not started | `v1.1.0-rc.2` ◀  | —         |
