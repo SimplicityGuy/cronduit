@@ -105,7 +105,17 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
   5. Orphan reconciliation at restart does NOT overwrite rows already finalized to `stopped` — test lock in place (T-V11-STOP-12..14).
 
 **Risk notes**: Highest-risk phase in v1.1. Start with a short **Stop spike**: validate `RunControl` + `StopReason::Operator` round-trip on all three executors before committing the full implementation. Race T-V11-STOP-04 must be covered by a 1000-iteration `tokio::time::pause` test before the feature ships.
-**Plans**: TBD
+**Plans**: 10 plans
+- [ ] `10-01-PLAN.md` — Cargo.toml version bump 1.0.1 → 1.1.0 (FOUND-13)
+- [ ] `10-02-PLAN.md` — rand 0.8 → 0.9 migration across 4 source files (FOUND-12)
+- [ ] `10-03-PLAN.md` — Stop spike: `src/scheduler/control.rs` + `RunStatus::Stopped` + executor cancel-branch wiring on command/script/docker (SCHED-10, SCHED-12)
+- [ ] `10-04-PLAN.md` — `active_runs` → `HashMap<i64, RunEntry>` merge across 5 files (SCHED-10)
+- [ ] `10-05-PLAN.md` — `SchedulerCmd::Stop` variant + scheduler loop arm + 1000-iteration race test T-V11-STOP-04 (SCHED-10, SCHED-11)
+- [ ] `10-06-PLAN.md` — `docker_orphan.rs` regression lock tests T-V11-STOP-12..14 (SCHED-13)
+- [ ] `10-07-PLAN.md` — `stop_run` web handler + route + CSRF/503/race tests (SCHED-14)
+- [ ] `10-08-PLAN.md` — `--cd-status-stopped` design tokens + `.cd-badge--stopped` + `.cd-btn-stop` CSS (SCHED-09, SCHED-14)
+- [ ] `10-09-PLAN.md` — Templates: `run_detail.html` header Stop button + `run_history.html` per-row Stop column (SCHED-09, SCHED-14) — includes human-verify checkpoint
+- [ ] `10-10-PLAN.md` — Three-executor integration tests + process-group regression lock + metrics stopped label + THREAT_MODEL.md note + full phase verification (SCHED-09, SCHED-12, SCHED-13)
 **UI hint**: yes
 
 ---
@@ -247,7 +257,7 @@ Full REQ-ID → phase traceability lives in [`REQUIREMENTS.md`](REQUIREMENTS.md#
 
 | Phase                                                      | Plans Complete | Status      | rc target        | Completed |
 | ---------------------------------------------------------- | -------------- | ----------- | ---------------- | --------- |
-| 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/?            | Not started | `v1.1.0-rc.1`    | —         |
+| 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/10           | Planned     | `v1.1.0-rc.1`    | —         |
 | 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | Not started | `v1.1.0-rc.1`    | —         |
 | 12. Docker Healthcheck + rc.1 Cut                          | 0/?            | Not started | `v1.1.0-rc.1` ◀  | —         |
 | 13. Observability Polish (rc.2)                            | 0/?            | Not started | `v1.1.0-rc.2` ◀  | —         |
