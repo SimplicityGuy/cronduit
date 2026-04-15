@@ -4,7 +4,7 @@
 
 **Shipped:** v1.0.0 (2026-04-14), patched to v1.0.1 (2026-04-14) — single-binary Rust cron scheduler with terminal-green HTMX web UI, full Docker-API job execution including `--network container:<name>`, `@random` schedule resolver, hot config reload, Prometheus metrics, SSE log tail, multi-arch (amd64+arm64) GHCR release, and a documented threat model. 86/86 v1 requirements complete; audit verdict `passed`. v1.0.1 follow-up (PR #22) closed four post-ship gaps: GHCR OCI manifest annotations, `cmd`-on-non-docker validator, `delete = false` honored at cleanup, Debian 13 (trixie) builder, MIT license metadata. See [`MILESTONES.md`](MILESTONES.md) for the full v1.0 summary.
 
-**Next milestone:** Not yet scoped — run `/gsd-new-milestone` to begin v1.1 planning.
+**Next milestone:** v1.1 — Operator Quality of Life (in progress; scoping started 2026-04-14).
 
 ## What This Is
 
@@ -13,6 +13,31 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 ## Core Value
 
 **One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.** If everything else is cut, the scheduler must (1) execute jobs on time with full Docker networking support (especially `--network container:<name>` for VPN setups) and (2) let the operator see pass/fail, logs, and timing from a browser.
+
+## Current Milestone: v1.1 — Operator Quality of Life
+
+**Goal:** Make v1.0's feature surface genuinely pleasant to live with day-to-day, shipped iteratively via `v1.1.0-rc.N` releases as each chunk lands.
+
+**Theme:** Longer-lived, bug-fix-and-polish milestone. No net-new capability surface area — every item either fixes a v1.0 behavior the operator has already hit in practice or makes existing information easier to see and act on. Feature additions (webhooks, queuing) are explicitly deferred to v1.2.
+
+**Target features:**
+
+*Bug fixes (from v1.0.1 post-ship operator experience)*
+- Stop a running job — new `stopped` status, single hard kill, works for command/script/docker
+- Log refresh: lines rendering out of order after job completes
+- Log refresh: transient "error getting logs" that resolves on manual refresh
+- Log backfill on navigation — returning to a running job page should show prior lines from DB then attach to live SSE
+- Per-job run numbers — schema column + idempotent backfill migration on startup
+
+*Observability polish (highest-leverage subset)*
+- Run timeline view (gantt-style, last 24h / 7d, color-coded by status)
+- Per-job success-rate badge / sparkline on dashboard cards
+- Per-job duration trend (p50/p95) on the job detail page
+
+*Ergonomics*
+- Bulk enable/disable from dashboard with checkbox multi-select (design question — where does disabled state live given the read-only config file — resolved at phase-plan time)
+
+**Release strategy:** Iterative `v1.1.0-rc.1`, `v1.1.0-rc.2`, ... cut at chunky checkpoints (after bug-fix block, after observability block, after ergonomics). `:latest` GHCR tag stays at `v1.0.1` until final `v1.1.0`. Each rc gets `:v1.1.0-rc.N` plus a rolling `:rc` tag. Tag format uses semver pre-release notation (dot before `rc.N`).
 
 ## Requirements
 
@@ -84,7 +109,44 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 
 <!-- Current scope. Building toward these. Hypotheses until shipped. -->
 
-(None — v1.1 not yet scoped. Run `/gsd-new-milestone` to begin.)
+**v1.1 — Operator Quality of Life** (see `REQUIREMENTS.md` for the full testable list with REQ-IDs once generated)
+
+*Scheduler / execution*
+- [ ] Operator can stop a running job from the UI; run terminates with a new `stopped` status (distinct from `cancelled`/`failed`/`timeout`) — force kill, single hard stop
+- [ ] Run records have a per-job sequential number (`job_run_number`) alongside the existing global ID, backfilled on startup for existing rows via an idempotent migration
+
+*Log tail / UX*
+- [ ] Navigating back to a running job's page shows prior log lines from DB, then attaches to the live SSE stream without a gap
+- [ ] Log lines remain in chronological order across the live→static transition when a run completes
+- [ ] Transient "error getting logs" race on page load is eliminated (no manual refresh required)
+
+*Observability polish*
+- [ ] Dashboard has a run timeline view (gantt-style, last 24h / 7d, color-coded by status)
+- [ ] Each dashboard job card shows a success-rate badge and a short sparkline (rolling window)
+- [ ] Job detail page shows duration trend (p50/p95) over the last N runs
+
+*Ergonomics*
+- [ ] Operator can multi-select jobs from the dashboard and bulk enable/disable them (design: where "disabled" state lives given read-only config file — resolved at phase-plan time)
+
+### Future Requirements
+
+<!-- Scoped but not in the current milestone. Target versions are intent, not contracts — they may shift when that milestone is actually kicked off. -->
+
+**v1.2 — Feature expansion (tentative)**
+- Webhooks on job state transitions (failure/success, per-job URL config, secret-aware)
+- Job concurrency limits and queuing (deep scheduler-core change; affects the `tokio::select!` loop + persistence + fairness)
+- Failure clustering / "what changed" context on run detail (first-failure timestamp, config-last-modified, image-pulled-at)
+- Per-job exit-code histogram on job detail page
+- Cross-run log search across retention window
+- Job tagging / grouping (`tags = ["backup", "weekly"]` in job config; dashboard filter chips)
+
+**v1.3 — Operational ergonomics deepening (tentative)**
+- Snooze a job for a duration (`until tomorrow 8am`, `for 2 hours`) without editing the config; auto-re-enable
+- Run history filters (status, date range, exit code) and sortable columns
+
+**v1.4 — UX polish (tentative)**
+- Job duplicate-as-snippet (UI emits a TOML block to paste into the config)
+- Fuzzy job search (`back` → `backup-postgres`)
 
 ### Out of Scope
 
@@ -94,8 +156,8 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 - **Multi-node / distributed scheduling** — single-node only. Distribution is a different product.
 - **User management / RBAC** — single-operator tool; no user accounts in v1 or v2.
 - **Workflow DAGs / job dependencies** — no "run B after A succeeds". Jobs are independent.
-- **Email / webhook notifications** — post-v1 add-on; can layer on top of the metrics/log outputs.
-- **Job queuing / concurrency limits** — post-v1. Each job runs on its own schedule without a shared queue.
+- **Email notifications** — post-v1 add-on; can layer on top of the metrics/log outputs. Webhook notifications have been promoted to Future Requirements (v1.2); email notifications remain out of scope entirely (operators can wire a webhook → email bridge if they want it).
+- **Ad-hoc one-shot runs not defined in the config** — config remains the single source of truth for what runs. Adding a UI form that accepts arbitrary commands/images would create a blast-radius surface that pairs poorly with v1's unauthenticated posture.
 - **Importer for existing ofelia configs** — users rewrite their schedules in Cronduit's TOML by hand. Not worth the translation surface area.
 - **SPA / React frontend** — server-rendered HTML only. Keeps the single-binary story and matches the terminal aesthetic.
 
@@ -191,4 +253,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-14 — v1.0.0 milestone shipped. 9 phases / 49 plans / 86 v1 requirements complete. All Active requirements moved to Validated; all Key Decisions flipped from Pending to Settled. Next milestone to be scoped via `/gsd-new-milestone`.*
+*Last updated: 2026-04-14 — v1.1 "Operator Quality of Life" milestone kicked off. Shape A locked (polish-then-expand) with iterative `v1.1.0-rc.N` cadence. Bug fixes + observability polish + bulk ergonomics in scope; webhooks, queuing, and other feature expansions moved from Out of Scope to Future Requirements (v1.2). v1.0 validated requirements retained as-is.*
