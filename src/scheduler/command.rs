@@ -24,6 +24,8 @@ pub enum RunStatus {
     Shutdown,
     /// Could not start or other error.
     Error,
+    /// Killed by operator via UI Stop button (SCHED-09, Phase 10).
+    Stopped,
 }
 
 /// Result of executing a command or script.

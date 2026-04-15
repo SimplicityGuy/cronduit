@@ -240,6 +240,7 @@ pub async fn run_job(
         RunStatus::Failed => "failed",
         RunStatus::Timeout => "timeout",
         RunStatus::Shutdown => "cancelled",
+        RunStatus::Stopped => "stopped",
         RunStatus::Error => "error",
     };
 
@@ -267,7 +268,9 @@ pub async fn run_job(
     metrics::counter!("cronduit_runs_total", "job" => job.name.clone(), "status" => status_str.to_string()).increment(1);
     metrics::histogram!("cronduit_run_duration_seconds", "job" => job.name.clone())
         .record(duration_secs);
-    if status_str != "success" {
+    // D-10 / Pitfall 1: operator-stopped runs must NOT count as failures.
+    // The "stopped" status is canonical per finalize_run's mapping above.
+    if status_str != "success" && status_str != "stopped" {
         let reason = classify_failure_reason(status_str, exec_result.error_message.as_deref());
         metrics::counter!("cronduit_run_failures_total", "job" => job.name.clone(), "reason" => reason.as_label().to_string()).increment(1);
     }
