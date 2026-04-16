@@ -1,18 +1,18 @@
 {% for job in jobs %}
-<tr class="hover:bg-[var(--cd-bg-hover)] border-b border-[var(--cd-border-subtle)]">
+<tr class="hover:bg-(--cd-bg-hover) border-b border-(--cd-border-subtle)">
   <td class="py-2 px-4">
-    <a href="/jobs/{{ job.id }}" class="text-[var(--cd-text-accent)] hover:underline font-bold">{{ job.name }}</a>
+    <a href="/jobs/{{ job.id }}" class="text-(--cd-text-accent) hover:underline font-bold">{{ job.name }}</a>
   </td>
-  <td class="py-2 px-4 text-[var(--cd-text-secondary)]" style="font-size:var(--cd-text-base)">
+  <td class="py-2 px-4 text-(--cd-text-secondary)" style="font-size:var(--cd-text-base)">
     {{ job.resolved_schedule }}{% if job.has_random_schedule %} <span class="cd-badge cd-badge--random">@random</span>{% endif %}
   </td>
-  <td class="py-2 px-4 text-[var(--cd-text-secondary)]" style="font-size:var(--cd-text-base)">{{ job.next_fire }}</td>
+  <td class="py-2 px-4 text-(--cd-text-secondary)" style="font-size:var(--cd-text-base)">{{ job.next_fire }}</td>
   <td class="py-2 px-4">
     {% if !job.last_status.is_empty() %}
     <span class="cd-badge cd-badge--{{ job.last_status }}">{{ job.last_status_label }}</span>
     {% endif %}
   </td>
-  <td class="py-2 px-4 text-[var(--cd-text-secondary)]" style="font-size:var(--cd-text-base)">{{ job.last_run_relative }}</td>
+  <td class="py-2 px-4 text-(--cd-text-secondary)" style="font-size:var(--cd-text-base)">{{ job.last_run_relative }}</td>
   <td class="py-2 px-4">
     <form hx-post="/api/jobs/{{ job.id }}/run" hx-swap="none">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
