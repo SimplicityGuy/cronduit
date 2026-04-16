@@ -1,6 +1,6 @@
 [package]
 name = "cronduit"
-version = "1.0.1"
+version = "1.1.0"
 edition = "2024"
 rust-version = "1.94.1"
 description = "Self-hosted Docker-native cron scheduler with a web UI"
@@ -102,7 +102,7 @@ axum-extra = { version = "0.12", features = ["cookie", "query"] }
 # ANSI to HTML (D-06)
 ansi-to-html = "0.2"
 
-# Random bytes for CSRF tokens (D-11)
+# Random bytes for CSRF tokens and @random cron slot picker (D-13/D-11)
 rand = "0.10"
 
 # Hex encoding for CSRF tokens
@@ -119,12 +119,25 @@ async-stream = "0.3"
 mime_guess = "2"
 notify = "8.2"
 
+[features]
+# Opt-in feature gate for test suites that require real backing services
+# (currently: Postgres regression tests in tests/docker_orphan_guard.rs under
+# `#[cfg(feature = "integration")]`). Declared here so that `cfg` checks do
+# not trip the `unexpected_cfgs` lint under `clippy -D warnings`. Enable with
+# `cargo test --features integration` on hosts where a Docker daemon is
+# available for testcontainers-backed Postgres tests.
+integration = []
+
 [dev-dependencies]
 testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
 assert_cmd = "2"
 predicates = "3"
 tower = { version = "0.5", features = ["util"] }
+# Phase 10 plan 10-05: T-V11-STOP-04 uses tokio::time::pause + advance for
+# deterministic race tests. The `test-util` feature is NOT included in tokio's
+# `full` feature set, so enable it here for dev builds only.
+tokio = { version = "1.51", features = ["full", "test-util"] }
 
 [profile.release]
 lto = "thin"

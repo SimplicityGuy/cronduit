@@ -14,7 +14,8 @@ use std::time::Duration;
 use bollard::Docker;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{
-    CreateContainerOptions, RemoveContainerOptions, StopContainerOptions,
+    CreateContainerOptions, KillContainerOptionsBuilder, RemoveContainerOptions,
+    StopContainerOptions,
 };
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -73,6 +74,7 @@ pub struct DockerExecResult {
 ///
 /// DOCKER-06: `auto_remove = false` prevents the moby#8441 race where Docker
 /// removes the container before we can inspect its exit code.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_docker(
     docker: &Docker,
     config_json: &str,
@@ -81,6 +83,7 @@ pub async fn execute_docker(
     timeout: Duration,
     cancel: CancellationToken,
     sender: LogSender,
+    control: &crate::scheduler::control::RunControl,
 ) -> DockerExecResult {
     // Parse the docker-specific config from JSON.
     let config: DockerJobConfig = match serde_json::from_str(config_json) {
@@ -336,24 +339,69 @@ pub async fn execute_docker(
         }
 
         _ = cancel.cancelled() => {
-            // Shutdown cancellation: stop with 10s grace (D-06).
-            sender.send(make_log_line("system", "[shutdown signal received, stopping container]".to_string()));
-            let _ = docker.stop_container(
-                &container_id,
-                Some(StopContainerOptions {
-                    t: Some(10),
-                    ..Default::default()
-                }),
-            ).await;
+            // Distinguish cancel cause (SCHED-10). The SeqCst ordering in
+            // `RunControl::stop` guarantees this load observes the operator
+            // reason if the cancel came via the UI Stop button.
+            let reason = control.reason();
+            let log_msg = match reason {
+                crate::scheduler::control::StopReason::Operator =>
+                    "[stop signal from operator, killing container]",
+                crate::scheduler::control::StopReason::Shutdown =>
+                    "[shutdown signal received, stopping container]",
+            };
+            sender.send(make_log_line("system", log_msg.to_string()));
+
+            // Operator: immediate KILL (no 10s grace — "stop means stop").
+            // Shutdown: preserve v1.0 stop_container(t=10) semantics (D-06).
+            match reason {
+                crate::scheduler::control::StopReason::Operator => {
+                    let kill_result = docker.kill_container(
+                        &container_id,
+                        Some(KillContainerOptionsBuilder::default().signal("KILL").build()),
+                    ).await;
+                    // Pitfall 3: bollard may return 304/404 if the container
+                    // already exited naturally in the tiny race window between
+                    // the operator clicking Stop and us firing kill_container.
+                    // Log at debug + continue — finalize still produces Stopped
+                    // (the operator's intent was honored).
+                    if let Err(e) = &kill_result {
+                        tracing::debug!(
+                            target: "cronduit.docker.stop_raced_natural_exit",
+                            container_id = %container_id,
+                            error = %e,
+                            "docker.kill_container error during operator stop (possible race with natural exit)"
+                        );
+                    }
+                }
+                crate::scheduler::control::StopReason::Shutdown => {
+                    let _ = docker.stop_container(
+                        &container_id,
+                        Some(StopContainerOptions {
+                            t: Some(10),
+                            ..Default::default()
+                        }),
+                    ).await;
+                }
+            }
 
             // D-05: Drain logs to EOF.
             let _ = log_handle.await;
             sender.close();
 
+            let (status, msg) = match reason {
+                crate::scheduler::control::StopReason::Operator => (
+                    RunStatus::Stopped,
+                    "stopped by operator".to_string(),
+                ),
+                crate::scheduler::control::StopReason::Shutdown => (
+                    RunStatus::Shutdown,
+                    "cancelled due to shutdown".to_string(),
+                ),
+            };
             ExecResult {
                 exit_code: None,
-                status: RunStatus::Shutdown,
-                error_message: Some("cancelled due to shutdown".to_string()),
+                status,
+                error_message: Some(msg),
             }
         }
     };

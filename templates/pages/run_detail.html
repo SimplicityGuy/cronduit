@@ -15,6 +15,15 @@
 <!-- Page title -->
 <div class="flex items-center justify-between mb-6">
   <h1 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em">Run #{{ run.id }}</h1>
+  {% if is_running %}
+  <form hx-post="/api/runs/{{ run.id }}/stop"
+        hx-swap="none"
+        hx-disabled-elt="this"
+        style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="cd-btn-stop" aria-label="Stop run #{{ run.id }}">Stop</button>
+  </form>
+  {% endif %}
 </div>
 
 <!-- Metadata card -->

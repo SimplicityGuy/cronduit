@@ -1,21 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.1
-milestone_name: Operator Quality of Life
-status: roadmap-created
-previous_milestone:
-  version: v1.0
-  name: Docker-Native Cron Scheduler
-  shipped_at: "2026-04-14"
-  tags: [v1.0.0, v1.0.1]
-last_updated: "2026-04-14"
-last_activity: 2026-04-14
+milestone_name: — Operator Quality of Life
+status: executing
+stopped_at: Phase 10 UI-SPEC approved
+last_updated: "2026-04-15T22:54:47.077Z"
+last_activity: 2026-04-15
 progress:
   total_phases: 5
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 10
+  completed_plans: 10
+  percent: 100
 ---
 
 # Project State
@@ -25,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** v1.1 "Operator Quality of Life" — bug fixes + observability polish + bulk ergonomics, shipped iteratively via `v1.1.0-rc.N` cuts. v1.0.1 is the stable baseline.
+**Current focus:** Phase 10 — stop-a-running-job-hygiene-preamble
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: Not started — Phase 10 is next (`/gsd-plan-phase 10`)
-Plan: —
-Status: Roadmap created — ready for phase planning
-Last activity: 2026-04-14 — v1.1 roadmap created (5 phases, 10–14, mapped to 3 rcs)
+Phase: 10 (stop-a-running-job-hygiene-preamble) — EXECUTING
+Plan: 1 of 10
+Status: Executing Phase 10
+Last activity: 2026-04-15
 
 Progress: [░░░░░░░░░░] 0% (0 of 5 v1.1 phases complete)
 
@@ -119,8 +115,8 @@ _(None during v1.1 so far. v1.0 quick task `260414-gbf` is archived in `.plannin
 
 ## Session Continuity
 
-Last session: 2026-04-14 — `/gsd-new-milestone` kickoff + requirements definition + roadmap creation. Locked Shape A + rc cadence, wrote PROJECT.md + REQUIREMENTS.md + research/{STACK,FEATURES,ARCHITECTURE,PITFALLS,SUMMARY}.md, then created ROADMAP.md with 5 phases (10–14) mapped to 3 rcs. All 31 v1.1 requirements assigned to exactly one phase.
-Stopped at: Roadmap created; ready to run `/gsd-plan-phase 10` to begin Phase 10 execution.
+Last session: 2026-04-15T18:42:18.988Z
+Stopped at: Phase 10 UI-SPEC approved
 Resume command: `/gsd-plan-phase 10` — decomposes Stop-a-Running-Job + hygiene preamble into executable plans. Recommended to do the Stop spike (validate `RunControl` + `StopReason::Operator` round-trip on all three executors) as the first plan in Phase 10.
 
 Last activity: 2026-04-14 — v1.1 roadmap created (5 phases, 3 rcs)

@@ -11,7 +11,7 @@ use std::time::Duration;
 use cronduit::config::{Config, JobConfig, ServerConfig};
 use cronduit::db::DbPool;
 use cronduit::db::queries::{self, DbJob, PoolRef};
-use cronduit::scheduler::log_pipeline::LogLine;
+use cronduit::scheduler::RunEntry;
 use cronduit::scheduler::run::run_job;
 use cronduit::scheduler::sync::sync_config_to_db;
 use secrecy::SecretString;
@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-fn test_active_runs() -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>> {
+fn test_active_runs() -> Arc<RwLock<HashMap<i64, RunEntry>>> {
     Arc::new(RwLock::new(HashMap::new()))
 }
 

@@ -101,7 +101,7 @@ Any client on the same network as a non-loopback-bound Cronduit instance can:
 
 - **v1 ships unauthenticated by design:** This is a documented, intentional trade-off for simplicity in single-operator homelab environments.
 - **Default loopback bind:** Only `127.0.0.1` is accessible by default. The startup warning on non-loopback bind is loud and structured.
-- **CSRF double-submit cookie:** State-changing endpoints (Run Now, future config actions) are protected by CSRF tokens, preventing cross-site request forgery from malicious pages.
+- **CSRF double-submit cookie:** State-changing endpoints (Run Now, Stop, future config actions) are protected by CSRF tokens, preventing cross-site request forgery from malicious pages.
 - **SSE endpoints are read-only:** `/events/runs/:id/logs` streams log lines but cannot modify state.
 - **`/metrics` is read-only:** Standard Prometheus convention; exposes only counters, gauges, and histograms.
 - **No sensitive data in metrics:** Metric labels use job names and closed-enum reasons only. No secrets, log content, or environment variables are exposed.
@@ -109,6 +109,8 @@ Any client on the same network as a non-loopback-bound Cronduit instance can:
 ### Residual Risk
 
 Anyone on the network can view job status and trigger manual runs when Cronduit is bound to a non-loopback address. Operators must use network controls (firewall, VLAN) or a reverse proxy with authentication.
+
+**Stop button (v1.1+ blast radius):** The Stop button added in v1.1 lets anyone with Web UI access terminate any running job via `POST /api/runs/{id}/stop`. This widens the blast radius of an unauthenticated UI compromise — previously an attacker could trigger or view runs, now they can also interrupt them mid-execution. The mitigation posture is unchanged from the rest of the v1 Web UI: keep Cronduit on loopback or front it with a reverse proxy that enforces authentication. Web UI authentication (including differentiated Stop authorization) is deferred to v2 (AUTH-01 / AUTH-02).
 
 ### Recommendations
 

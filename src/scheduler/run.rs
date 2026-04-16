@@ -68,7 +68,7 @@ pub async fn run_job(
     job: DbJob,
     trigger: String,
     cancel: CancellationToken,
-    active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
+    active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
 ) -> RunResult {
     let start = tokio::time::Instant::now();
 
@@ -99,10 +99,26 @@ pub async fn run_job(
 
     // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
-    active_runs
-        .write()
-        .await
-        .insert(run_id, broadcast_tx.clone());
+
+    // 1c. Construct per-run control (SCHED-10, D-09). Default reason is
+    // Shutdown, so any bare `cancel.cancel()` (existing shutdown drain path
+    // in `mod.rs`) continues to be classified correctly. Plan 10-04 (this
+    // plan) merges the control plane into the active_runs RunEntry so the
+    // scheduler Stop arm (plan 10-05) can look it up by run_id.
+    let run_control = crate::scheduler::control::RunControl::new(cancel.clone());
+
+    // 1d. Insert the merged RunEntry (D-01). Atomic single-statement write
+    // (10-RESEARCH.md §Architecture §1 Invariant 2): the .write().await guard
+    // is held only across the .insert() call — never across any subsequent
+    // await — so concurrent .read().await in sse.rs cannot deadlock.
+    active_runs.write().await.insert(
+        run_id,
+        crate::scheduler::RunEntry {
+            broadcast_tx: broadcast_tx.clone(),
+            control: run_control.clone(),
+            job_name: job.name.clone(),
+        },
+    );
 
     // 2. Create log channel.
     let (sender, receiver) = log_pipeline::channel(DEFAULT_CHANNEL_CAPACITY);
@@ -142,7 +158,10 @@ pub async fn run_job(
                     script: None,
                 });
             match config.command {
-                Some(cmd) => command::execute_command(&cmd, timeout, cancel, sender.clone()).await,
+                Some(cmd) => {
+                    command::execute_command(&cmd, timeout, cancel, sender.clone(), &run_control)
+                        .await
+                }
                 None => {
                     sender.close();
                     command::ExecResult {
@@ -170,6 +189,7 @@ pub async fn run_job(
                         timeout,
                         cancel,
                         sender.clone(),
+                        &run_control,
                     )
                     .await
                 }
@@ -195,6 +215,7 @@ pub async fn run_job(
                     timeout,
                     cancel,
                     sender.clone(),
+                    &run_control,
                 )
                 .await;
                 container_id_for_finalize = docker_result.image_digest.clone();
@@ -240,6 +261,7 @@ pub async fn run_job(
         RunStatus::Failed => "failed",
         RunStatus::Timeout => "timeout",
         RunStatus::Shutdown => "cancelled",
+        RunStatus::Stopped => "stopped",
         RunStatus::Error => "error",
     };
 
@@ -267,7 +289,9 @@ pub async fn run_job(
     metrics::counter!("cronduit_runs_total", "job" => job.name.clone(), "status" => status_str.to_string()).increment(1);
     metrics::histogram!("cronduit_run_duration_seconds", "job" => job.name.clone())
         .record(duration_secs);
-    if status_str != "success" {
+    // D-10 / Pitfall 1: operator-stopped runs must NOT count as failures.
+    // The "stopped" status is canonical per finalize_run's mapping above.
+    if status_str != "success" && status_str != "stopped" {
         let reason = classify_failure_reason(status_str, exec_result.error_message.as_deref());
         metrics::counter!("cronduit_run_failures_total", "job" => job.name.clone(), "reason" => reason.as_label().to_string()).increment(1);
     }
@@ -361,7 +385,7 @@ mod tests {
         pool
     }
 
-    fn test_active_runs() -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>> {
+    fn test_active_runs() -> Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>> {
         Arc::new(RwLock::new(HashMap::new()))
     }
 

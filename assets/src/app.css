@@ -37,6 +37,8 @@
   --cd-status-running-bg: rgba(96, 165, 250, 0.12);
   --cd-status-disabled-bg: rgba(251, 191, 36, 0.12);
   --cd-status-error-bg: rgba(248, 113, 113, 0.12);
+  --cd-status-stopped: #94a3b8;
+  --cd-status-stopped-bg: rgba(148, 163, 184, 0.12);
 
   /* Surfaces */
   --cd-bg-primary: #050508;
@@ -92,6 +94,8 @@
   --cd-status-running-bg: rgba(37, 99, 235, 0.08);
   --cd-status-disabled-bg: rgba(217, 119, 6, 0.08);
   --cd-status-error-bg: rgba(220, 38, 38, 0.08);
+  --cd-status-stopped: #64748b;
+  --cd-status-stopped-bg: rgba(100, 116, 139, 0.08);
 
   --cd-bg-primary: #f8f8f6;
   --cd-bg-surface: #ffffff;
@@ -123,6 +127,8 @@
     --cd-status-running-bg: rgba(37, 99, 235, 0.08);
     --cd-status-disabled-bg: rgba(217, 119, 6, 0.08);
     --cd-status-error-bg: rgba(220, 38, 38, 0.08);
+    --cd-status-stopped: #64748b;
+    --cd-status-stopped-bg: rgba(100, 116, 139, 0.08);
     --cd-bg-primary: #f8f8f6;
     --cd-bg-surface: #ffffff;
     --cd-bg-surface-raised: #f0f0ed;
@@ -180,6 +186,7 @@
   .cd-badge--shutdown { color: var(--cd-text-secondary); background: var(--cd-bg-surface-raised); }
   .cd-badge--random { color: var(--cd-green); background: var(--cd-green-dim); }
   .cd-badge--disabled { color: var(--cd-status-disabled); background: var(--cd-status-disabled-bg); }
+  .cd-badge--stopped { color: var(--cd-status-stopped); background: var(--cd-status-stopped-bg); }
 
   .cd-btn-primary {
     background: var(--cd-green);
@@ -216,5 +223,46 @@
     outline: none;
     box-shadow: 0 0 0 2px var(--cd-green-dim);
     border-color: var(--cd-border-focus);
+  }
+
+  .cd-btn-stop {
+    background: transparent;
+    color: var(--cd-text-primary);
+    font-size: var(--cd-text-base);
+    font-weight: 400;
+    padding: var(--cd-space-2) var(--cd-space-4);
+    border-radius: 8px;
+    border: 1px solid var(--cd-border);
+    cursor: pointer;
+    font-family: inherit;
+    min-height: 44px;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .cd-btn-stop:hover {
+    background: var(--cd-status-stopped-bg);
+    border-color: var(--cd-status-stopped);
+    color: var(--cd-status-stopped);
+  }
+  .cd-btn-stop:active {
+    background: var(--cd-status-stopped-bg);
+    border-color: var(--cd-status-stopped);
+    color: var(--cd-status-stopped);
+    transform: translateY(1px);
+  }
+  .cd-btn-stop:focus-visible {
+    outline: none;
+    border-color: var(--cd-border-focus);
+    box-shadow: 0 0 0 2px var(--cd-green-dim);
+  }
+  .cd-btn-stop[disabled],
+  .cd-btn-stop[aria-busy="true"] {
+    cursor: not-allowed;
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .cd-btn-stop--compact {
+    min-height: 0;
+    padding: var(--cd-space-1) var(--cd-space-2);
+    font-size: var(--cd-text-sm);
   }
 }

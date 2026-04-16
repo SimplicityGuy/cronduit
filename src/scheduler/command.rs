@@ -24,6 +24,8 @@ pub enum RunStatus {
     Shutdown,
     /// Could not start or other error.
     Error,
+    /// Killed by operator via UI Stop button (SCHED-09, Phase 10).
+    Stopped,
 }
 
 /// Result of executing a command or script.
@@ -55,11 +57,17 @@ async fn read_lines_to_channel<R: AsyncRead + Unpin>(
 /// Shared implementation used by both `execute_command` and `execute_script`.
 /// Takes ownership of a spawned child, captures stdout/stderr to the log
 /// channel, and handles timeout/cancellation via process group kill.
+///
+/// The cancel-arm distinguishes operator Stop from shutdown by reading
+/// `control.reason()` AFTER `cancel.cancelled()` yields. `RunControl::stop`
+/// orders the SeqCst store before the cancel fire, so the load below always
+/// observes the correct reason. See `control.rs` module docs.
 pub(crate) async fn execute_child(
     mut child: tokio::process::Child,
     timeout: Duration,
     cancel: CancellationToken,
     sender: LogSender,
+    control: &crate::scheduler::control::RunControl,
 ) -> ExecResult {
     // Take stdout/stderr handles for line-by-line capture
     let stdout = child.stdout.take();
@@ -125,17 +133,34 @@ pub(crate) async fn execute_child(
             }
         }
         _ = cancel.cancelled() => {
-            // Graceful shutdown — kill process group
+            // D-17 PRESERVATION: kill the child process group FIRST via pgid kill.
+            // This is the `.process_group(0)` + `libc::kill(-pid, SIGKILL)` pattern
+            // locked by SCHED-12 (see `kill_process_group` below). The tokio
+            // drop-kill convenience was deliberately NOT adopted because it would
+            // orphan shell-pipeline grandchildren (PITFALLS §1.3, Correction #1).
             kill_process_group(&child);
             let _ = child.wait().await;
             let _ = stdout_task.await;
             let _ = stderr_task.await;
             sender.close();
 
+            // Distinguish the cancel cause — operator vs shutdown. The SeqCst
+            // ordering in `RunControl::stop` guarantees this load observes the
+            // operator reason if the cancel came via the UI Stop button.
+            let (status, msg) = match control.reason() {
+                crate::scheduler::control::StopReason::Operator => (
+                    RunStatus::Stopped,
+                    "stopped by operator".to_string(),
+                ),
+                crate::scheduler::control::StopReason::Shutdown => (
+                    RunStatus::Shutdown,
+                    "cancelled due to shutdown".to_string(),
+                ),
+            };
             ExecResult {
                 exit_code: None,
-                status: RunStatus::Shutdown,
-                error_message: Some("cancelled due to shutdown".to_string()),
+                status,
+                error_message: Some(msg),
             }
         }
     };
@@ -170,11 +195,15 @@ fn kill_process_group(child: &tokio::process::Child) {
 ///
 /// The command is NOT passed to a shell — it is split into argv tokens
 /// and executed directly via `tokio::process::Command`.
+///
+/// `control` carries the cancel token's stop reason so the cancel arm in
+/// `execute_child` can distinguish operator-Stop from shutdown (SCHED-10).
 pub async fn execute_command(
     command_str: &str,
     timeout: Duration,
     cancel: CancellationToken,
     sender: LogSender,
+    control: &crate::scheduler::control::RunControl,
 ) -> ExecResult {
     let argv = match shell_words::split(command_str) {
         Ok(args) if args.is_empty() => {
@@ -214,19 +243,22 @@ pub async fn execute_command(
         }
     };
 
-    execute_child(child, timeout, cancel, sender).await
+    execute_child(child, timeout, cancel, sender, control).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scheduler::control::{RunControl, StopReason};
     use crate::scheduler::log_pipeline;
 
     #[tokio::test]
     async fn execute_echo_captures_stdout() {
         let (tx, rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
-        let result = execute_command("echo hello", Duration::from_secs(5), cancel, tx).await;
+        let control = RunControl::new(cancel.clone());
+        let result =
+            execute_command("echo hello", Duration::from_secs(5), cancel, tx, &control).await;
         assert_eq!(result.status, RunStatus::Success);
         assert_eq!(result.exit_code, Some(0));
         let batch = rx.drain_batch(256);
@@ -239,8 +271,15 @@ mod tests {
     async fn execute_stderr_capture() {
         let (tx, rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
-        let result =
-            execute_command("sh -c 'echo err >&2'", Duration::from_secs(5), cancel, tx).await;
+        let control = RunControl::new(cancel.clone());
+        let result = execute_command(
+            "sh -c 'echo err >&2'",
+            Duration::from_secs(5),
+            cancel,
+            tx,
+            &control,
+        )
+        .await;
         assert_eq!(result.status, RunStatus::Success);
         let batch = rx.drain_batch(256);
         let stderr_lines: Vec<_> = batch.iter().filter(|l| l.stream == "stderr").collect();
@@ -252,7 +291,15 @@ mod tests {
     async fn execute_nonzero_exit() {
         let (tx, _rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
-        let result = execute_command("sh -c 'exit 42'", Duration::from_secs(5), cancel, tx).await;
+        let control = RunControl::new(cancel.clone());
+        let result = execute_command(
+            "sh -c 'exit 42'",
+            Duration::from_secs(5),
+            cancel,
+            tx,
+            &control,
+        )
+        .await;
         assert_eq!(result.status, RunStatus::Failed);
         assert_eq!(result.exit_code, Some(42));
     }
@@ -261,11 +308,13 @@ mod tests {
     async fn execute_timeout() {
         let (tx, rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
         let result = execute_command(
             "sh -c 'echo before-timeout; sleep 30'",
             Duration::from_millis(200),
             cancel,
             tx,
+            &control,
         )
         .await;
         assert_eq!(result.status, RunStatus::Timeout);
@@ -282,9 +331,70 @@ mod tests {
     async fn execute_shutdown_cancellation() {
         let (tx, _rx) = log_pipeline::channel(256);
         let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
         cancel.cancel(); // cancel immediately
-        let result = execute_command("sleep 30", Duration::from_secs(30), cancel, tx).await;
+        let result =
+            execute_command("sleep 30", Duration::from_secs(30), cancel, tx, &control).await;
         assert_eq!(result.status, RunStatus::Shutdown);
+    }
+
+    /// T-V11-STOP-09 (command variant): RunControl::stop(Operator) must
+    /// produce RunStatus::Stopped with an "operator" error_message.
+    #[tokio::test]
+    async fn stop_operator_yields_stopped() {
+        let (tx, _rx) = log_pipeline::channel(256);
+        let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
+        let control_for_stop = control.clone();
+
+        let handle = tokio::spawn(async move {
+            execute_command("sleep 30", Duration::from_secs(600), cancel, tx, &control).await
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        control_for_stop.stop(StopReason::Operator);
+
+        let result = handle.await.unwrap();
+        assert_eq!(result.status, RunStatus::Stopped);
+        assert!(
+            result
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("operator"),
+            "expected 'operator' in error_message, got: {:?}",
+            result.error_message
+        );
+    }
+
+    /// Regression lock: cancelling the underlying token directly (NOT via
+    /// RunControl::stop) must still classify as Shutdown. This protects the
+    /// existing graceful shutdown semantics.
+    #[tokio::test]
+    async fn shutdown_cancel_yields_shutdown() {
+        let (tx, _rx) = log_pipeline::channel(256);
+        let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
+        let cancel_for_shutdown = cancel.clone();
+
+        let handle = tokio::spawn(async move {
+            execute_command("sleep 30", Duration::from_secs(600), cancel, tx, &control).await
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cancel_for_shutdown.cancel();
+
+        let result = handle.await.unwrap();
+        assert_eq!(result.status, RunStatus::Shutdown);
+        assert!(
+            result
+                .error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("shutdown"),
+            "expected 'shutdown' in error_message, got: {:?}",
+            result.error_message
+        );
     }
 
     #[test]

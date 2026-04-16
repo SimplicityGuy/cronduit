@@ -125,6 +125,35 @@ pub fn setup_metrics() -> PrometheusHandle {
             metrics::counter!("cronduit_run_failures_total").increment(0);
             metrics::gauge!("cronduit_docker_reachable").set(0.0);
 
+            // Phase 10 / T-V11-STOP-16 / PITFALLS §1.6: pre-declare each
+            // terminal status label value for `cronduit_runs_total` so the
+            // /metrics text output includes a row for every possible status
+            // from boot — even before the first run of that status fires.
+            // Without this, Prometheus alerts that reference the "stopped"
+            // label value silently go missing on fresh deployments until an
+            // operator stops their first run, which can delay detection of
+            // broken alert routing.
+            //
+            // These register label-only series (no job dimension) that coexist
+            // with the job-scoped samples emitted in run.rs — metrics-exporter-
+            // prometheus renders each distinct label set as its own line, so
+            // `cronduit_runs_total{status="stopped"}` and
+            // `cronduit_runs_total{job="foo",status="stopped"}` are separate
+            // samples. Alerting rules that only care about the status label
+            // can use `sum by (status) (cronduit_runs_total)` or match on the
+            // label-only series directly.
+            for status in [
+                "success",
+                "failed",
+                "timeout",
+                "cancelled",
+                "error",
+                "stopped",
+            ] {
+                metrics::counter!("cronduit_runs_total", "status" => status.to_string())
+                    .increment(0);
+            }
+
             handle
         })
         .clone()

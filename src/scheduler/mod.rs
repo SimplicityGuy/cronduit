@@ -6,6 +6,7 @@
 
 pub mod cmd;
 pub mod command;
+pub mod control;
 pub mod docker;
 // Phase 5: @random cron field resolver (RAND-01 through RAND-05).
 pub mod docker_daemon;
@@ -24,7 +25,6 @@ pub mod sync;
 
 use crate::db::DbPool;
 use crate::db::queries::DbJob;
-use crate::scheduler::log_pipeline::LogLine;
 use bollard::Docker;
 use chrono::Utc;
 use chrono_tz::Tz;
@@ -42,6 +42,28 @@ pub struct RunResult {
     pub status: String,
 }
 
+/// Per-run authoritative record: log broadcast + control plane + job name for toast.
+///
+/// D-01: merged map from active_runs + running_handles separation. The scheduler
+/// loop, the executor's run_job, and the SSE handler all look up the same
+/// RunEntry via active_runs. broadcast_tx and control are both Clone (Sender is
+/// Clone; CancellationToken is Clone via Arc; Arc<AtomicU8> is Clone) so cloning
+/// the entry into/out of the map is cheap.
+///
+/// Invariant (10-RESEARCH.md §Architecture §1 Invariant 1): the broadcast_tx
+/// refcount arithmetic — executor inserts ONE clone at run.rs:102, executor
+/// drops ITS clone at run.rs:277 after .remove(&run_id) at run.rs:276, leaving
+/// zero references and triggering RecvError::Closed on SSE subscribers. This
+/// must be preserved exactly.
+#[derive(Clone)]
+pub struct RunEntry {
+    pub broadcast_tx: tokio::sync::broadcast::Sender<log_pipeline::LogLine>,
+    pub control: crate::scheduler::control::RunControl,
+    /// Job name stashed at run-start (Pitfall 4 recommendation: accept the
+    /// staleness-on-rename semantic — "the name the run was started with").
+    pub job_name: String,
+}
+
 /// The main scheduler loop. Owns the fire queue, job set, and shutdown token.
 pub struct SchedulerLoop {
     pub pool: DbPool,
@@ -52,8 +74,9 @@ pub struct SchedulerLoop {
     pub shutdown_grace: Duration,
     pub cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
     pub config_path: PathBuf,
-    /// Broadcast channels for active runs (shared with AppState for SSE, UI-14).
-    pub active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
+    /// Per-run authoritative records (shared with AppState for SSE, UI-14, and
+    /// for plan 10-05 SchedulerCmd::Stop lookup). D-01: merged map.
+    pub active_runs: Arc<RwLock<HashMap<i64, RunEntry>>>,
 }
 
 impl SchedulerLoop {
@@ -233,6 +256,30 @@ impl SchedulerLoop {
                                         }
                                         let _ = tx.send(rr_result);
                                     }
+                                    cmd::SchedulerCmd::Stop { run_id: rid, response_tx: tx } => {
+                                        // Plan 10-05: process Stop immediately even
+                                        // during reload coalescing so the operator's
+                                        // stop intent is not delayed behind an
+                                        // in-flight reload. Same lookup-clone-fire
+                                        // pattern as the top-level Stop arm.
+                                        let maybe_control = {
+                                            let active = self.active_runs.read().await;
+                                            active.get(&rid).map(|entry| entry.control.clone())
+                                        };
+                                        let stop_result = match maybe_control {
+                                            Some(control) => {
+                                                control.stop(crate::scheduler::control::StopReason::Operator);
+                                                tracing::info!(
+                                                    target: "cronduit.scheduler",
+                                                    run_id = rid,
+                                                    "stop requested via command channel (coalesced with reload drain)"
+                                                );
+                                                cmd::StopResult::Stopped
+                                            }
+                                            None => cmd::StopResult::AlreadyFinalized,
+                                        };
+                                        let _ = tx.send(stop_result);
+                                    }
                                 }
                             }
                             if !coalesced_senders.is_empty() {
@@ -271,6 +318,45 @@ impl SchedulerLoop {
                                 heap = h;
                                 jobs_vec = self.jobs.values().cloned().collect();
                             }
+                            let _ = response_tx.send(result);
+                        }
+                        Some(cmd::SchedulerCmd::Stop { run_id, response_tx }) => {
+                            // Plan 10-05 / D-01 / Option C: the merged active_runs
+                            // map IS the race token. If the executor called
+                            // `active_runs.write().await.remove(&run_id)` at
+                            // run.rs:~290 before this arm fires, the lookup
+                            // returns None and the race-case branch replies
+                            // AlreadyFinalized. No DB read, no extra coordination.
+                            //
+                            // Lock scope invariant (Pitfall 2): acquire the read
+                            // lock, clone the control out, release the lock, then
+                            // call control.stop(). The stop() itself is cheap
+                            // (atomic store + CancellationToken.cancel()) but we
+                            // release the lock first to keep "no locks held
+                            // across state changes" uniform with the other arms.
+                            let maybe_control = {
+                                let active = self.active_runs.read().await;
+                                active.get(&run_id).map(|entry| entry.control.clone())
+                            };
+                            let result = match maybe_control {
+                                Some(control) => {
+                                    control.stop(crate::scheduler::control::StopReason::Operator);
+                                    tracing::info!(
+                                        target: "cronduit.scheduler",
+                                        run_id,
+                                        "stop requested via command channel"
+                                    );
+                                    cmd::StopResult::Stopped
+                                }
+                                None => {
+                                    tracing::debug!(
+                                        target: "cronduit.scheduler",
+                                        run_id,
+                                        "Stop arrived after run finalized (race case)"
+                                    );
+                                    cmd::StopResult::AlreadyFinalized
+                                }
+                            };
                             let _ = response_tx.send(result);
                         }
                         None => {
@@ -385,7 +471,7 @@ pub fn spawn(
     shutdown_grace: Duration,
     cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
     config_path: PathBuf,
-    active_runs: Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<LogLine>>>>,
+    active_runs: Arc<RwLock<HashMap<i64, RunEntry>>>,
 ) -> JoinHandle<()> {
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
@@ -414,8 +500,7 @@ mod tests {
         pool
     }
 
-    fn test_active_runs()
-    -> Arc<RwLock<HashMap<i64, tokio::sync::broadcast::Sender<log_pipeline::LogLine>>>> {
+    fn test_active_runs() -> Arc<RwLock<HashMap<i64, RunEntry>>> {
         Arc::new(RwLock::new(HashMap::new()))
     }
 
@@ -590,5 +675,89 @@ mod tests {
         assert_eq!(grace_elapsed_ms, 0);
 
         pool.close().await;
+    }
+
+    /// Plan 10-05: SchedulerCmd::Stop arm sanity test.
+    ///
+    /// Exercises the exact map-lookup + clone + stop pattern the Stop arm uses
+    /// in the scheduler loop (without spinning up the full select! loop). This
+    /// is a faster-feedback companion to `tests/stop_race.rs` which runs the
+    /// full 1000-iteration deterministic race.
+    ///
+    /// Proves:
+    /// 1. When the run_id is present in active_runs, the pattern fires
+    ///    `control.stop(StopReason::Operator)` and yields `StopResult::Stopped`.
+    /// 2. The `RunEntry`'s `control.reason()` becomes `StopReason::Operator`.
+    /// 3. The underlying cancel token is cancelled (observable from another
+    ///    clone of the control).
+    /// 4. When the run_id is absent (race case), the pattern yields
+    ///    `StopResult::AlreadyFinalized` and does NOT touch the DB.
+    #[tokio::test]
+    async fn stop_arm_sets_operator_reason() {
+        use crate::scheduler::cmd::StopResult;
+        use crate::scheduler::control::{RunControl, StopReason};
+
+        let active_runs = test_active_runs();
+        let run_id: i64 = 42;
+
+        let (broadcast_tx, _rx) = tokio::sync::broadcast::channel(16);
+        let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
+
+        active_runs.write().await.insert(
+            run_id,
+            RunEntry {
+                broadcast_tx,
+                control: control.clone(),
+                job_name: "stop-arm-test".to_string(),
+            },
+        );
+
+        // Replicates the exact pattern used inside the Stop match arm in
+        // SchedulerLoop::run(): acquire read lock, clone control, release
+        // lock, fire stop.
+        let maybe_control = {
+            let active = active_runs.read().await;
+            active.get(&run_id).map(|entry| entry.control.clone())
+        };
+        let result = match maybe_control {
+            Some(c) => {
+                c.stop(StopReason::Operator);
+                StopResult::Stopped
+            }
+            None => StopResult::AlreadyFinalized,
+        };
+
+        assert_eq!(result, StopResult::Stopped, "present id yields Stopped");
+        assert_eq!(
+            control.reason(),
+            StopReason::Operator,
+            "operator reason propagated to RunEntry control clone"
+        );
+        assert!(
+            control.cancel.is_cancelled(),
+            "cancel token fired via RunEntry control clone"
+        );
+
+        // Race case: drop the RunEntry out of the map and verify the same
+        // lookup pattern replies AlreadyFinalized without any DB touch.
+        active_runs.write().await.remove(&run_id);
+
+        let maybe_control_after = {
+            let active = active_runs.read().await;
+            active.get(&run_id).map(|entry| entry.control.clone())
+        };
+        let race_result = match maybe_control_after {
+            Some(c) => {
+                c.stop(StopReason::Operator);
+                StopResult::Stopped
+            }
+            None => StopResult::AlreadyFinalized,
+        };
+        assert_eq!(
+            race_result,
+            StopResult::AlreadyFinalized,
+            "absent id yields AlreadyFinalized (race case)"
+        );
     }
 }
