@@ -168,7 +168,7 @@ pub async fn do_reroll(
 
     // Resolve a fresh @random schedule (RAND-03c: explicit re-randomize)
     let new_resolved = {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         crate::scheduler::random::resolve_schedule(&job.schedule, None, &mut rng)
     };
 

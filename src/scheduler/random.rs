@@ -7,7 +7,7 @@
 //! T-05-01: Validates field count before resolution; rejects malformed input.
 //! T-05-02: Caps retry attempts and relaxes infeasible gaps to guarantee termination.
 
-use rand::Rng;
+use rand::RngExt;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -42,7 +42,11 @@ pub fn is_random_schedule(schedule: &str) -> bool {
 /// - Non-`@random` fields pass through unchanged.
 /// - Validates the result with `croner::Cron::from_str()` and retries if invalid.
 /// - T-05-01: Rejects schedules that don't have exactly 5 fields.
-pub fn resolve_schedule(raw: &str, existing_resolved: Option<&str>, rng: &mut impl Rng) -> String {
+pub fn resolve_schedule(
+    raw: &str,
+    existing_resolved: Option<&str>,
+    rng: &mut impl RngExt,
+) -> String {
     // If we have an existing resolved schedule, preserve it (stability across reloads).
     if let Some(existing) = existing_resolved {
         return existing.to_string();
@@ -87,14 +91,14 @@ pub fn resolve_schedule(raw: &str, existing_resolved: Option<&str>, rng: &mut im
 }
 
 /// Replace @random fields with random values from the appropriate range.
-fn resolve_fields(fields: &[&str], rng: &mut impl Rng) -> String {
+fn resolve_fields(fields: &[&str], rng: &mut impl RngExt) -> String {
     fields
         .iter()
         .enumerate()
         .map(|(i, &field)| {
             if field == "@random" {
                 let (min, max) = FIELD_RANGES[i];
-                rng.gen_range(min..=max).to_string()
+                rng.random_range(min..=max).to_string()
             } else {
                 field.to_string()
             }
@@ -154,7 +158,7 @@ fn random_field_count(schedule: &str) -> usize {
 pub fn resolve_random_schedules_batch(
     jobs: &[(String, String, Option<String>)],
     min_gap: Duration,
-    rng: &mut impl Rng,
+    rng: &mut impl RngExt,
 ) -> Vec<(String, String)> {
     let mut results: Vec<(String, String)> = Vec::with_capacity(jobs.len());
     let mut allocated_slots: Vec<u32> = Vec::new();

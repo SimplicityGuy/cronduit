@@ -1,6 +1,7 @@
 use super::JobConfig;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fmt::Write;
 
 /// Compute a stable SHA-256 hex digest of a job's config (D-15).
 ///
@@ -48,7 +49,12 @@ pub fn compute_config_hash(job: &JobConfig) -> String {
     let bytes = serde_json::to_vec(&map).expect("serde_json BTreeMap never fails");
     let mut h = Sha256::new();
     h.update(&bytes);
-    format!("{:x}", h.finalize())
+    let digest = h.finalize();
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
 }
 
 #[cfg(test)]

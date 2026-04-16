@@ -128,7 +128,7 @@ pub async fn sync_config_to_db(
         existing_cache.insert(job.name.clone(), existing);
     }
     let resolved_map: std::collections::HashMap<String, String> = {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         random::resolve_random_schedules_batch(&batch_input, random_min_gap, &mut rng)
             .into_iter()
             .collect()

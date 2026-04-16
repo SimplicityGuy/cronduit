@@ -9,8 +9,8 @@
 </div>
 {% endif %}
 {% for log in logs %}
-<div class="{% if log.is_stderr %}border-l-4 border-[var(--cd-status-error)] bg-[var(--cd-status-error-bg)]{% endif %} py-[2px] px-[var(--cd-space-2)]" style="font-size:var(--cd-text-base);line-height:1.6">
-  <span class="text-[var(--cd-text-secondary)] select-none" style="font-size:var(--cd-text-xs)">{{ log.stream }}</span>
+<div class="{% if log.is_stderr %}border-l-4 border-(--cd-status-error) bg-(--cd-status-error-bg){% endif %} py-[2px] px-(--cd-space-2)" style="font-size:var(--cd-text-base);line-height:1.6">
+  <span class="text-(--cd-text-secondary) select-none" style="font-size:var(--cd-text-xs)">{{ log.stream }}</span>
   {{ log.html|safe }}
 </div>
 {% endfor %}

@@ -7,7 +7,7 @@ use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum_extra::extract::CookieJar;
-use rand::RngCore;
+use rand::Rng;
 
 /// Cookie name for the CSRF token.
 pub const CSRF_COOKIE_NAME: &str = "cronduit_csrf";
@@ -18,7 +18,7 @@ pub const CSRF_FIELD_NAME: &str = "csrf_token";
 /// Generate a random 32-byte CSRF token as a 64-char hex string.
 pub fn generate_csrf_token() -> String {
     let mut token = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut token);
+    rand::rng().fill_bytes(&mut token);
     hex::encode(token)
 }
 
