@@ -143,7 +143,12 @@ pub fn setup_metrics() -> PrometheusHandle {
             // can use `sum by (status) (cronduit_runs_total)` or match on the
             // label-only series directly.
             for status in [
-                "success", "failed", "timeout", "cancelled", "error", "stopped",
+                "success",
+                "failed",
+                "timeout",
+                "cancelled",
+                "error",
+                "stopped",
             ] {
                 metrics::counter!("cronduit_runs_total", "status" => status.to_string())
                     .increment(0);

@@ -33,15 +33,18 @@ use cronduit::scheduler::run::run_job;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-/// Unique sentinel path per test invocation. Uses nanosecond timestamp +
-/// thread id so parallel test runs cannot collide.
+/// Unique sentinel path per test invocation. Uses nanosecond timestamp + pid
+/// so parallel test runs cannot collide. Path is shell-safe (alphanumerics +
+/// dashes) — `ThreadId(n)` debug formatting was avoided because its parens
+/// collide with `sh` subshell syntax when the path is substituted into
+/// `sh -c '... touch <path>'`.
 fn sentinel_path(tag: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let thread = std::thread::current().id();
-    PathBuf::from(format!("/tmp/cronduit-pg-kill-{tag}-{nanos}-{thread:?}"))
+    let pid = std::process::id();
+    PathBuf::from(format!("/tmp/cronduit-pg-kill-{tag}-{pid}-{nanos}"))
 }
 
 async fn seed_command_job(pool: &DbPool, name: &str, command_str: &str) -> DbJob {
@@ -200,8 +203,7 @@ async fn stop_kills_shell_pipeline_grandchildren() {
     );
     let job = seed_command_job(&pool, "pg-kill-pipeline", &cmd_str).await;
 
-    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> = Arc::new(RwLock::new(HashMap::new()));
     let (cmd_tx, cmd_rx) = mpsc::channel::<SchedulerCmd>(16);
     let driver = spawn_stop_arm_driver(active_runs.clone(), cmd_rx);
 
@@ -297,14 +299,10 @@ async fn stop_kills_backgrounded_processes_in_script() {
 
     // (sleep 3 && touch <sentinel>) &
     // sleep 30
-    let script_body = format!(
-        "(sleep 3 && touch {}) &\nsleep 30\n",
-        sentinel.display()
-    );
+    let script_body = format!("(sleep 3 && touch {}) &\nsleep 30\n", sentinel.display());
     let job = seed_script_job(&pool, "pg-kill-background", &script_body).await;
 
-    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> = Arc::new(RwLock::new(HashMap::new()));
     let (cmd_tx, cmd_rx) = mpsc::channel::<SchedulerCmd>(16);
     let driver = spawn_stop_arm_driver(active_runs.clone(), cmd_rx);
 

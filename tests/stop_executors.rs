@@ -157,8 +157,7 @@ async fn stop_command_executor_yields_stopped_status() {
     )
     .await;
 
-    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> = Arc::new(RwLock::new(HashMap::new()));
     let (cmd_tx, cmd_rx) = mpsc::channel::<SchedulerCmd>(16);
     let driver = spawn_stop_arm_driver(active_runs.clone(), cmd_rx);
 
@@ -245,8 +244,7 @@ async fn stop_script_executor_yields_stopped_status() {
     )
     .await;
 
-    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> = Arc::new(RwLock::new(HashMap::new()));
     let (cmd_tx, cmd_rx) = mpsc::channel::<SchedulerCmd>(16);
     let driver = spawn_stop_arm_driver(active_runs.clone(), cmd_rx);
 
@@ -347,8 +345,7 @@ async fn stop_docker_executor_yields_stopped_status() {
     let config_json = r#"{"image":"alpine:latest","cmd":["sleep","30"]}"#;
     let job = seed_job(&pool, "stop-docker-exec", "docker", config_json, 3600).await;
 
-    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> = Arc::new(RwLock::new(HashMap::new()));
     let (cmd_tx, cmd_rx) = mpsc::channel::<SchedulerCmd>(16);
     let driver = spawn_stop_arm_driver(active_runs.clone(), cmd_rx);
 

@@ -153,8 +153,7 @@ async fn stop_run_happy_path() {
 
 #[tokio::test]
 async fn stop_run_already_finalized_silent_refresh() {
-    let (app, _pool, run_id) =
-        build_app_with_scheduler_reply(StopResult::AlreadyFinalized).await;
+    let (app, _pool, run_id) = build_app_with_scheduler_reply(StopResult::AlreadyFinalized).await;
 
     let response = app
         .oneshot(build_stop_request(run_id, TEST_CSRF, TEST_CSRF))

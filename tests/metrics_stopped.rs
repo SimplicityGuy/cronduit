@@ -160,8 +160,7 @@ async fn stop_increments_runs_total_stopped() {
     let job_name = "metrics-stopped-cmd-T15";
     let job = seed_command_job(&pool, job_name, "sleep 30").await;
 
-    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> =
-        Arc::new(RwLock::new(HashMap::new()));
+    let active_runs: Arc<RwLock<HashMap<i64, RunEntry>>> = Arc::new(RwLock::new(HashMap::new()));
     let (cmd_tx, cmd_rx) = mpsc::channel::<SchedulerCmd>(16);
     let driver = spawn_stop_arm_driver(active_runs.clone(), cmd_rx);
 
@@ -205,9 +204,7 @@ async fn stop_increments_runs_total_stopped() {
     // exporter-prometheus text format renders labels in key-sorted order,
     // so the canonical form is `{job="...",status="stopped"}`. We check
     // for the job-scoped sample with a positive count.
-    let expected_prefix = format!(
-        r#"cronduit_runs_total{{job="{job_name}",status="stopped"}}"#
-    );
+    let expected_prefix = format!(r#"cronduit_runs_total{{job="{job_name}",status="stopped"}}"#);
     let line = body
         .lines()
         .find(|l| l.starts_with(&expected_prefix))

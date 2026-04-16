@@ -35,7 +35,9 @@ use tokio_util::sync::CancellationToken;
 /// seed job whose id we return. Each iteration of the race test gets its own
 /// pool so tests cannot interfere.
 async fn setup_pool_with_job() -> (DbPool, i64) {
-    let pool = DbPool::connect("sqlite::memory:").await.expect("sqlite pool");
+    let pool = DbPool::connect("sqlite::memory:")
+        .await
+        .expect("sqlite pool");
     pool.migrate().await.expect("run migrations");
     let job_id = cronduit::db::queries::upsert_job(
         &pool,
