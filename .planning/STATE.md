@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
 status: executing
-stopped_at: Phase 11 context gathered
-last_updated: "2026-04-16T21:01:58.511Z"
+stopped_at: Phase 11 UI-SPEC approved
+last_updated: "2026-04-16T21:12:09.939Z"
 last_activity: 2026-04-15
 progress:
   total_phases: 5
@@ -115,8 +115,8 @@ _(None during v1.1 so far. v1.0 quick task `260414-gbf` is archived in `.plannin
 
 ## Session Continuity
 
-Last session: 2026-04-16T21:01:58.506Z
-Stopped at: Phase 11 context gathered
+Last session: 2026-04-16T21:12:09.934Z
+Stopped at: Phase 11 UI-SPEC approved
 Resume command: `/gsd-plan-phase 10` — decomposes Stop-a-Running-Job + hygiene preamble into executable plans. Recommended to do the Stop spike (validate `RunControl` + `StopReason::Operator` round-trip on all three executors) as the first plan in Phase 10.
 
 Last activity: 2026-04-14 — v1.1 roadmap created (5 phases, 3 rcs)
