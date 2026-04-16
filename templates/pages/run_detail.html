@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Run #{{ run.id }} - Cronduit{% endblock %}
-{% block nav_dashboard_active %}border-b-2 border-[var(--cd-text-accent)] text-[var(--cd-text-primary)]{% endblock %}
+{% block nav_dashboard_active %}border-b-2 border-(--cd-text-accent) text-(--cd-text-primary){% endblock %}
 {% block content %}
 
 <!-- Breadcrumb -->
 <div class="flex items-center gap-2 mb-4" style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary)">
-  <a href="/" class="text-[var(--cd-text-accent)] hover:underline no-underline">Dashboard</a>
+  <a href="/" class="text-(--cd-text-accent) hover:underline no-underline">Dashboard</a>
   <span>&gt;</span>
-  <a href="/jobs/{{ run.job_id }}" class="text-[var(--cd-text-accent)] hover:underline no-underline">{{ run.job_name }}</a>
+  <a href="/jobs/{{ run.job_id }}" class="text-(--cd-text-accent) hover:underline no-underline">{{ run.job_name }}</a>
   <span>&gt;</span>
-  <span class="text-[var(--cd-text-primary)]">Run #{{ run.id }}</span>
+  <span class="text-(--cd-text-primary)">Run #{{ run.id }}</span>
 </div>
 
 <!-- Page title -->

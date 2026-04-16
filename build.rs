@@ -4,7 +4,6 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=assets/src/app.css");
     println!("cargo:rerun-if-changed=templates/");
-    println!("cargo:rerun-if-changed=tailwind.config.js");
 
     let output = Path::new("assets/static/app.css");
     let input = Path::new("assets/src/app.css");

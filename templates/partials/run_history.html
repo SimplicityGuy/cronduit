@@ -28,7 +28,7 @@
     </thead>
     <tbody>
       {% for run in runs %}
-      <tr class="hover:bg-[var(--cd-bg-hover)] border-b border-[var(--cd-border-subtle)]">
+      <tr class="hover:bg-(--cd-bg-hover) border-b border-(--cd-border-subtle)">
         <td class="py-2 px-4">
           <a href="/jobs/{{ job_id }}/runs/{{ run.id }}" class="no-underline">
             <span class="cd-badge cd-badge--{{ run.status }}">{{ run.status_label }}</span>

@@ -18,11 +18,11 @@ path = "src/main.rs"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.51", features = ["full"] }
+tokio = { version = "1.52", features = ["full"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
 
 # HTTP / web placeholder
-axum = { version = "0.8.8", default-features = false, features = ["tokio", "http1", "http2", "json", "query", "form"] }
+axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2", "json", "query", "form"] }
 tower-http = { version = "0.6.8", default-features = false, features = ["trace"] }
 hyper = { version = "1", default-features = false }
 
@@ -80,7 +80,7 @@ tempfile = "3"
 libc = "0.2"
 
 # Utilities
-sha2 = "0.10"
+sha2 = "0.11"
 serde_json = "1"
 url = "2"
 regex = "1"
@@ -102,8 +102,8 @@ axum-extra = { version = "0.12", features = ["cookie", "query"] }
 # ANSI to HTML (D-06)
 ansi-to-html = "0.2"
 
-# Random bytes for CSRF tokens and @random cron slot picker (D-13/FOUND-12)
-rand = "0.9"
+# Random bytes for CSRF tokens and @random cron slot picker (D-13/D-11)
+rand = "0.10"
 
 # Hex encoding for CSRF tokens
 hex = "0.4"
@@ -129,7 +129,7 @@ notify = "8.2"
 integration = []
 
 [dev-dependencies]
-testcontainers = "0.27.2"
+testcontainers = "0.27.3"
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
 assert_cmd = "2"
 predicates = "3"

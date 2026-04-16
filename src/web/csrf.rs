@@ -18,7 +18,7 @@ pub const CSRF_FIELD_NAME: &str = "csrf_token";
 /// Generate a random 32-byte CSRF token as a 64-char hex string.
 pub fn generate_csrf_token() -> String {
     let mut token = [0u8; 32];
-    rand::rng().fill(&mut token[..]);
+    rand::rng().fill_bytes(&mut token);
     hex::encode(token)
 }
 

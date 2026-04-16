@@ -16,23 +16,23 @@
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/theme.js"></script>
 </head>
-<body class="bg-[var(--cd-bg-primary)] text-[var(--cd-text-primary)] font-mono min-h-screen">
+<body class="bg-(--cd-bg-primary) text-(--cd-text-primary) font-mono min-h-screen">
   <!-- Navigation -->
-  <nav class="bg-[var(--cd-bg-surface)] border-b border-[var(--cd-border-subtle)] px-4 py-3">
+  <nav class="bg-(--cd-bg-surface) border-b border-(--cd-border-subtle) px-4 py-3">
     <div class="max-w-7xl mx-auto flex items-center justify-between">
       <div class="flex items-center gap-6">
         <!-- Brand -->
-        <a href="/" class="text-[var(--cd-text-accent)] font-bold text-lg no-underline tracking-wide">
+        <a href="/" class="text-(--cd-text-accent) font-bold text-lg no-underline tracking-wide">
           cronduit
         </a>
         <!-- Nav links -->
         <div class="flex items-center gap-4">
           <a href="/"
-             class="text-[var(--cd-text-secondary)] hover:text-[var(--cd-text-primary)] no-underline text-sm py-1 {% block nav_dashboard_active %}{% endblock %}">
+             class="text-(--cd-text-secondary) hover:text-(--cd-text-primary) no-underline text-sm py-1 {% block nav_dashboard_active %}{% endblock %}">
             Dashboard
           </a>
           <a href="/settings"
-             class="text-[var(--cd-text-secondary)] hover:text-[var(--cd-text-primary)] no-underline text-sm py-1 {% block nav_settings_active %}{% endblock %}">
+             class="text-(--cd-text-secondary) hover:text-(--cd-text-primary) no-underline text-sm py-1 {% block nav_settings_active %}{% endblock %}">
             Settings
           </a>
         </div>
@@ -40,7 +40,7 @@
       <!-- Theme toggle -->
       <button onclick="__cdToggleTheme()"
               aria-label="Toggle dark/light mode"
-              class="text-[var(--cd-text-secondary)] hover:text-[var(--cd-text-primary)] bg-transparent border border-[var(--cd-border)] rounded px-2 py-1 cursor-pointer text-sm">
+              class="text-(--cd-text-secondary) hover:text-(--cd-text-primary) bg-transparent border border-(--cd-border) rounded-sm px-2 py-1 cursor-pointer text-sm">
         <span id="theme-icon">&#9790;</span>
       </button>
     </div>
@@ -66,7 +66,7 @@
       var duration = e.detail && e.detail.duration !== undefined ? e.detail.duration : 3000;
       var container = document.getElementById('toast-container');
       var toast = document.createElement('div');
-      toast.className = 'pointer-events-auto rounded font-mono';
+      toast.className = 'pointer-events-auto rounded-sm font-mono';
       toast.style.padding = 'var(--cd-space-3) var(--cd-space-4)';
       toast.style.fontSize = 'var(--cd-text-sm)';
       toast.style.borderRadius = 'var(--cd-radius-md)';

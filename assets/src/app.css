@@ -1,6 +1,9 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@source "../../templates";
+
+@theme {
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'Cascadia Code', 'Consolas', monospace;
+}
 
 /* === JetBrains Mono font face === */
 @font-face {
