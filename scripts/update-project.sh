@@ -319,15 +319,9 @@ update_tailwind_version() {
     current_tw=$(grep -Eo 'tailwindlabs/tailwindcss/releases/download/v[0-9]+\.[0-9]+\.[0-9]+' justfile | head -1 | sed 's|.*/v||')
     print_info "Current Tailwind: v${current_tw}"
 
-    # Cronduit is pinned to the Tailwind v3 line — v4 breaks tailwind.config.js format (see existing
-    # justfile comment "Pinned to v3.4.17 -- v4 breaks tailwind.config.js format"). So we only look
-    # at v3.x tags. --major can override this explicitly if the operator has updated the config.
-    local filter
-    if [[ "$MAJOR_UPGRADES" == true ]]; then
-        filter='^v[0-9]+\.[0-9]+\.[0-9]+$'
-    else
-        filter='^v3\.[0-9]+\.[0-9]+$'
-    fi
+    # Cronduit uses Tailwind v4+ (CSS-based config via @import "tailwindcss" / @source / @theme).
+    # Accept any semver tag for updates.
+    local filter='^v[0-9]+\.[0-9]+\.[0-9]+$'
 
     # Rule 1 fix: the Tailwind repo has hundreds of tags and the default
     # `gh api .../tags` returns only the first 30 (all v4.x in 2026), so

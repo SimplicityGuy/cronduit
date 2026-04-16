@@ -42,7 +42,7 @@ RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 # a stub `/* tailwind not built yet */` file and the web UI renders unstyled.
 # Version kept in sync with justfile's `just tailwind` recipe.
 RUN set -eux; \
-    TAILWIND_VERSION=v3.4.17; \
+    TAILWIND_VERSION=v4.2.2; \
     BUILD_ARCH="$(uname -m)"; \
     case "$BUILD_ARCH" in \
       "x86_64") TAILWIND_ARCH="x64" ;; \
