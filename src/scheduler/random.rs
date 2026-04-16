@@ -42,7 +42,11 @@ pub fn is_random_schedule(schedule: &str) -> bool {
 /// - Non-`@random` fields pass through unchanged.
 /// - Validates the result with `croner::Cron::from_str()` and retries if invalid.
 /// - T-05-01: Rejects schedules that don't have exactly 5 fields.
-pub fn resolve_schedule(raw: &str, existing_resolved: Option<&str>, rng: &mut impl RngExt) -> String {
+pub fn resolve_schedule(
+    raw: &str,
+    existing_resolved: Option<&str>,
+    rng: &mut impl RngExt,
+) -> String {
     // If we have an existing resolved schedule, preserve it (stability across reloads).
     if let Some(existing) = existing_resolved {
         return existing.to_string();
