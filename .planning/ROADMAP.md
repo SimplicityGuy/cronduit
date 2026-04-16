@@ -145,7 +145,21 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
   4. Clicking "Run Now" and immediately clicking through to the run-detail page NEVER shows the transient "error getting logs" message (T-V11-LOG-08, -09).
   5. Existing permalinks of the form `/jobs/{job_id}/runs/{run_id}` continue to resolve — URL compatibility is preserved for operators with bookmarks or Prometheus alert annotations.
 
-**Plans**: TBD
+**Plans**: 14 plans
+- [ ] `11-01-PLAN.md` — T-V11-LOG-02 benchmark spike (Option A gate) (UI-20)
+- [ ] `11-02-PLAN.md` — Migration file 1 (add nullable job_run_number + next_run_number counter) (DB-09, DB-10)
+- [ ] `11-03-PLAN.md` — Rust migrate_backfill orchestrator + marker file 2 (DB-09, DB-10, DB-11, DB-12)
+- [ ] `11-04-PLAN.md` — Migration file 3 (NOT NULL + unique index) + DbPool::migrate two-pass (DB-10)
+- [ ] `11-05-PLAN.md` — insert_running_run counter tx refactor + DbRun/DbRunDetail extensions (DB-11)
+- [ ] `11-06-PLAN.md` — Run Now race fix: sync insert + SchedulerCmd::RunNowWithRunId (UI-19) [human-verify]
+- [ ] `11-07-PLAN.md` — LogLine.id plumbing + insert_log_batch RETURNING id + log_writer_task broadcast zip (UI-20)
+- [ ] `11-08-PLAN.md` — SSE handler emits id: line per log_line event (UI-18, UI-20)
+- [ ] `11-09-PLAN.md` — run_detail handler page-load backfill + last_log_id plumbing (UI-17, DB-13)
+- [ ] `11-10-PLAN.md` — Terminal run_finished SSE event from finalize_run (UI-17, UI-18)
+- [ ] `11-11-PLAN.md` — Client-side dedupe script + run_finished listener inline in run_detail.html (UI-17, UI-18, UI-20) [human-verify]
+- [ ] `11-12-PLAN.md` — Template diffs for Run #N + (id X) + data-max-id across run_detail/run_history/static_log_viewer (UI-16) [human-verify]
+- [ ] `11-13-PLAN.md` — main.rs startup assertion NULL-count = 0 + listener-after-backfill (DB-09, DB-10)
+- [ ] `11-14-PLAN.md` — Phase close-out: schema_parity + full suite + 11-PHASE-SUMMARY.md (all reqs) [human-verify]
 **UI hint**: yes
 
 ---

@@ -1184,22 +1184,45 @@ pub async fn backfill_job_run_number(pool: &crate::db::DbPool) -> anyhow::Result
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should legacy `SchedulerCmd::RunNow { job_id }` be removed or kept as a no-caller variant?**
-   - What we know: after Phase 11, the only caller site is `src/web/handlers/api.rs:50`, which becomes `RunNowWithRunId`.
-   - What's unclear: whether any future caller might want the "scheduler does the insert" shape.
-   - Recommendation: delete the variant. If a future phase needs an insert-less shape, it can reintroduce. Saves dead code.
+All three open questions have been resolved during the revision pass (2026-04-16). The
+resolutions below are authoritative; downstream plans reference them.
 
-2. **Exact HTMX SSE extension API for dedupe hook (A5).**
-   - What we know: HTMX 2.x has `htmx:sseMessage` and `htmx:sseError` events. The SSE ID field is surfaced via `EventSource.lastEventId` on the underlying browser API.
-   - What's unclear: whether `htmx:sseBeforeMessage` exists as a writable-to-preventDefault hook, or whether we need a capture-phase listener.
-   - Recommendation: 15-minute spike in plan 11-07 (first client-side change). Land a minimum-viable dedupe and iterate.
+1. **(RESOLVED) Should legacy `SchedulerCmd::RunNow { job_id }` be removed or kept?**
+   - **Resolution: KEEP both variants.** Scheduled (cron-tick) runs continue to use the
+     scheduler-driven insert path via `SchedulerCmd::RunNow { job_id }` → `run::run_job`
+     which performs the `job_runs` INSERT internally. Only the manual "Run Now" button
+     from the UI uses the new `SchedulerCmd::RunNowWithRunId { job_id, run_id }` variant
+     (Plan 11-06). Both variants coexist; neither is dead code. Documented explicitly in
+     Plan 11-06 Task 2 action text and CONTEXT.md (implicit via D-01's "handler inserts"
+     wording which applies to the manual path only).
 
-3. **Postgres backfill chunking: `UPDATE ... FROM SELECT ... LIMIT` vs `UPDATE ... WHERE id IN (SELECT ... LIMIT)`.**
-   - What we know: both are supported since Postgres 9.x.
-   - What's unclear: which has better query-planner behavior on a 100k+ row table.
-   - Recommendation: start with the `UPDATE ... WHERE id IN (SELECT ... LIMIT 10000)` form for both backends (portable); if perf test T-V11-RUNNUM-08 fails, switch Postgres to `UPDATE ... FROM (SELECT ... LIMIT 10000 FOR UPDATE SKIP LOCKED) sub WHERE job_runs.id = sub.id`.
+2. **(RESOLVED) Exact HTMX SSE extension API for dedupe hook.**
+   - **Resolution: use `htmx:sseBeforeMessage`.** Grep of `assets/vendor/htmx-ext-sse.js`
+     (the vendored extension) confirmed the hook is present at line 119 as a cancellable
+     event:
+     ```javascript
+     if (!api.triggerEvent(elt, 'htmx:sseBeforeMessage', event)) {
+       // skip default swap
+     }
+     api.triggerEvent(elt, 'htmx:sseMessage', event)  // line 123
+     ```
+     Because `triggerEvent` honors `preventDefault`, calling `evt.preventDefault()` from
+     a listener makes the extension skip the default swap — exactly the dedupe hook we
+     need. No capture-phase `stopImmediatePropagation` fallback required. Plan 11-11
+     Task 1 uses `htmx:sseBeforeMessage` directly. Plan 11-11 Task 2's
+     `script_references_htmx_sse_hook` contract test asserts the hook name is present
+     in the rendered page.
+
+3. **(RESOLVED) Postgres backfill chunking: which UPDATE form?**
+   - **Resolution: use the portable `UPDATE ... WHERE id IN (SELECT ... LIMIT 10000)` form
+     for both backends.** Simpler, more portable, identical behavior on SQLite 3.33+ and
+     Postgres 9.x+. The `UPDATE ... FROM (SELECT ...) sub WHERE ... FOR UPDATE SKIP LOCKED`
+     form is an optimization reserved for future phases if the backfill throughput becomes
+     a measurable problem under > 100k-row upgrade-in-place scenarios. Plan 11-03 Task 2
+     uses the portable form. If throughput turns out to be insufficient, the swap is
+     contained to `queries::backfill_job_run_number_batch` — no downstream change.
 
 ---
 
