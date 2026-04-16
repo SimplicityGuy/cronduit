@@ -38,15 +38,15 @@ clean:
     rm -rf .sqlx/tmp assets/static/app.css cronduit.dev.db cronduit.dev.db-wal cronduit.dev.db-shm
 
 # Standalone Tailwind binary — NO Node.
-# Pinned to v3.4.19 -- v4 breaks tailwind.config.js format
+# Pinned to v4.2.2 -- v4 breaks tailwind.config.js format
 tailwind:
     @mkdir -p assets/static bin
     @if [ ! -x ./bin/tailwindcss ]; then \
-        echo "Downloading standalone Tailwind binary (v3.4.19)..."; \
+        echo "Downloading standalone Tailwind binary (v4.2.2)..."; \
         OS=$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/macos/'); \
         ARCH=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/'); \
         curl -sSLo ./bin/tailwindcss \
-            "https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.19/tailwindcss-${OS}-${ARCH}"; \
+            "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.2.2/tailwindcss-${OS}-${ARCH}"; \
         chmod +x ./bin/tailwindcss; \
     fi
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --minify
