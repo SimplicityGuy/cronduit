@@ -46,6 +46,11 @@ struct RunDetailPage {
     /// on `#log-lines` so the client-side dedupe handler (Plan 11-11) can
     /// compare SSE `event.lastEventId` against it and skip already-rendered
     /// lines on reconnect (D-08 / D-09).
+    ///
+    /// `#[allow(dead_code)]` is scoped to this field because the server-side
+    /// plumbing lands ahead of the template consumer (Plan 11-12). Remove
+    /// the attribute when the template starts reading `{{ last_log_id }}`.
+    #[allow(dead_code)]
     last_log_id: i64,
 }
 
@@ -57,6 +62,8 @@ struct LogViewerPartial {
     has_older: bool,
     next_offset: i64,
     /// Max `job_logs.id` across this partial's log page — see RunDetailPage.
+    /// Read by the template in Plan 11-12; allow scoped until then.
+    #[allow(dead_code)]
     last_log_id: i64,
 }
 
@@ -69,6 +76,8 @@ struct StaticLogViewerPartial {
     has_older: bool,
     next_offset: i64,
     /// Max `job_logs.id` across this partial's log page — see RunDetailPage.
+    /// Read by the template in Plan 11-12; allow scoped until then.
+    #[allow(dead_code)]
     last_log_id: i64,
 }
 
