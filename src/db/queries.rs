@@ -466,6 +466,9 @@ pub struct DashboardJob {
 pub struct DbRun {
     pub id: i64,
     pub job_id: i64,
+    /// Per-job sequential run number (Phase 11 DB-11). Starts at 1, increments
+    /// atomically via `insert_running_run`'s counter transaction.
+    pub job_run_number: i64,
     pub status: String,
     pub trigger: String,
     pub start_time: String,
@@ -480,6 +483,8 @@ pub struct DbRun {
 pub struct DbRunDetail {
     pub id: i64,
     pub job_id: i64,
+    /// Per-job sequential run number (Phase 11 DB-11). Mirrors `DbRun::job_run_number`.
+    pub job_run_number: i64,
     pub job_name: String,
     pub status: String,
     pub trigger: String,
@@ -699,7 +704,7 @@ pub async fn get_run_history(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
+                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
             )
             .bind(job_id)
             .bind(limit)
@@ -712,6 +717,7 @@ pub async fn get_run_history(
                 .map(|r| DbRun {
                     id: r.get("id"),
                     job_id: r.get("job_id"),
+                    job_run_number: r.get("job_run_number"),
                     status: r.get("status"),
                     trigger: r.get("trigger"),
                     start_time: r.get("start_time"),
@@ -732,7 +738,7 @@ pub async fn get_run_history(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
+                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
             )
             .bind(job_id)
             .bind(limit)
@@ -745,6 +751,7 @@ pub async fn get_run_history(
                 .map(|r| DbRun {
                     id: r.get("id"),
                     job_id: r.get("job_id"),
+                    job_run_number: r.get("job_run_number"),
                     status: r.get("status"),
                     trigger: r.get("trigger"),
                     start_time: r.get("start_time"),
@@ -763,14 +770,14 @@ pub async fn get_run_history(
 /// Fetch a single run by id with its associated job name.
 pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<DbRunDetail>> {
     let sql_sqlite = r#"
-        SELECT r.id, r.job_id, j.name AS job_name, r.status, r.trigger,
+        SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
                r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = ?1
     "#;
     let sql_postgres = r#"
-        SELECT r.id, r.job_id, j.name AS job_name, r.status, r.trigger,
+        SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
                r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
@@ -786,6 +793,7 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
             Ok(row.map(|r| DbRunDetail {
                 id: r.get("id"),
                 job_id: r.get("job_id"),
+                job_run_number: r.get("job_run_number"),
                 job_name: r.get("job_name"),
                 status: r.get("status"),
                 trigger: r.get("trigger"),
@@ -804,6 +812,7 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
             Ok(row.map(|r| DbRunDetail {
                 id: r.get("id"),
                 job_id: r.get("job_id"),
+                job_run_number: r.get("job_run_number"),
                 job_name: r.get("job_name"),
                 status: r.get("status"),
                 trigger: r.get("trigger"),
