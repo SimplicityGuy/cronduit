@@ -57,7 +57,8 @@ struct LogViewerPartial {
     has_older: bool,
     next_offset: i64,
     /// Max `job_logs.id` across this partial's log page — see RunDetailPage.
-    /// Read by the template in Plan 11-12; allow scoped until then.
+    /// Rendered into the log-viewer scaffolding when the partial is used as
+    /// the running-run first paint include; harmless when used for pagination.
     #[allow(dead_code)]
     last_log_id: i64,
 }
@@ -70,9 +71,10 @@ struct StaticLogViewerPartial {
     total_logs: i64,
     has_older: bool,
     next_offset: i64,
-    /// Max `job_logs.id` across this partial's log page — see RunDetailPage.
-    /// Read by the template in Plan 11-12; allow scoped until then.
-    #[allow(dead_code)]
+    /// Max `job_logs.id` across this partial's log page. Rendered into
+    /// `static_log_viewer.html` via `data-max-id="{{ last_log_id }}"` on
+    /// `#log-lines`. Present even for terminal runs (no SSE) so the cursor
+    /// stays consistent if/when a post-terminal stream attaches.
     last_log_id: i64,
 }
 
