@@ -44,8 +44,44 @@ pub async fn sse_logs(
                 loop {
                     match rx.recv().await {
                         Ok(line) => {
+                            // Phase 11 D-10 / UI-17: detect the graceful
+                            // terminal sentinel broadcast by
+                            // `scheduler::run::continue_run` immediately
+                            // before `drop(broadcast_tx)`. `stream =
+                            // "__run_finished__"` is the pattern key; `line`
+                            // carries the `run_id` as a decimal string. Emit
+                            // `event: run_finished\ndata: {"run_id": N}\n\n`
+                            // and break the subscribe loop. The client
+                            // (Plan 11-11) listens for `sse:run_finished` and
+                            // swaps the running log pane to the static
+                            // partial. The existing `RecvError::Closed` arm
+                            // below stays as the abrupt-disconnect fallback
+                            // (emits `run_complete`) and is only reached when
+                            // a subscriber somehow misses the sentinel — e.g.
+                            // the client subscribed AFTER finalize_run
+                            // broadcast the sentinel but BEFORE drop() of
+                            // the sender.
+                            if line.stream == "__run_finished__" {
+                                let data = format!(r#"{{"run_id": {}}}"#, line.line);
+                                yield Ok(Event::default().event("run_finished").data(data));
+                                break;
+                            }
                             let html = format_log_line_html(&line);
-                            yield Ok(Event::default().event("log_line").data(html));
+                            // Phase 11 D-09 / UI-18: when the broadcast line
+                            // carries a persisted `job_logs.id` (populated by
+                            // `log_writer_task` after `insert_log_batch`'s
+                            // RETURNING id), emit it as the SSE frame's
+                            // `id:` field so the browser stores it and sends
+                            // `Last-Event-ID: n` on reconnect, and so the
+                            // HTMX SSE extension surfaces it as
+                            // `event.lastEventId` on the `sse:log_line` DOM
+                            // event for client-side dedupe against
+                            // `data-max-id` (Plan 11-11 / 11-14).
+                            let mut ev = Event::default().event("log_line").data(html);
+                            if let Some(id) = line.id {
+                                ev = ev.id(id.to_string());
+                            }
+                            yield Ok(ev);
                         }
                         Err(RecvError::Lagged(n)) => {
                             let marker = format!(
@@ -130,6 +166,7 @@ mod tests {
             stream: "stdout".to_string(),
             ts: "2026-01-01T00:00:00Z".to_string(),
             line: "hello world".to_string(),
+            id: None,
         };
         let html = format_log_line_html(&line);
         assert!(html.contains("hello world"));
@@ -143,6 +180,7 @@ mod tests {
             stream: "stderr".to_string(),
             ts: "2026-01-01T00:00:00Z".to_string(),
             line: "error <msg>".to_string(),
+            id: None,
         };
         let html = format_log_line_html(&line);
         assert!(html.contains("border-l-4"));

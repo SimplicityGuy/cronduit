@@ -41,6 +41,12 @@ struct RunDetailPage {
     has_older: bool,
     next_offset: i64,
     csrf_token: String,
+    /// Max `job_logs.id` across the server-rendered backfill (0 when empty).
+    /// Rendered into `run_detail.html` via `data-max-id="{{ last_log_id }}"`
+    /// on `#log-lines` so the client-side dedupe handler (Plan 11-11) can
+    /// compare SSE `event.lastEventId` against it and skip already-rendered
+    /// lines on reconnect (D-08 / D-09).
+    last_log_id: i64,
 }
 
 #[derive(Template)]
@@ -50,6 +56,11 @@ struct LogViewerPartial {
     logs: Vec<LogLineView>,
     has_older: bool,
     next_offset: i64,
+    /// Max `job_logs.id` across this partial's log page — see RunDetailPage.
+    /// Rendered into the log-viewer scaffolding when the partial is used as
+    /// the running-run first paint include; harmless when used for pagination.
+    #[allow(dead_code)]
+    last_log_id: i64,
 }
 
 #[derive(Template)]
@@ -60,6 +71,11 @@ struct StaticLogViewerPartial {
     total_logs: i64,
     has_older: bool,
     next_offset: i64,
+    /// Max `job_logs.id` across this partial's log page. Rendered into
+    /// `static_log_viewer.html` via `data-max-id="{{ last_log_id }}"` on
+    /// `#log-lines`. Present even for terminal runs (no SSE) so the cursor
+    /// stays consistent if/when a post-terminal stream attaches.
+    last_log_id: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +84,11 @@ struct StaticLogViewerPartial {
 
 pub struct RunDetailView {
     pub id: i64,
+    /// Per-job sequential run number (Phase 11 DB-11 / UI-16). Rendered as
+    /// the primary `Run #N` identifier in the title, breadcrumb, and header;
+    /// global `id` remains the URL key and appears as a muted `(id N)` suffix
+    /// per D-05.
+    pub job_run_number: i64,
     pub job_id: i64,
     pub job_name: String,
     pub status: String,
@@ -81,6 +102,11 @@ pub struct RunDetailView {
 }
 
 pub struct LogLineView {
+    /// `job_logs.id` of the persisted row. Populated from `DbLogLine.id`
+    /// so the handler's `last_log_id` computation (D-08) has an authoritative
+    /// per-line identifier for the template's `data-max-id` attribute and for
+    /// the client-side dedupe contract (D-09) landing in Plan 11-11.
+    pub id: i64,
     pub stream: String,
     pub is_stderr: bool,
     pub ts: String,
@@ -96,11 +122,18 @@ pub struct LogLineView {
 // ---------------------------------------------------------------------------
 
 /// Fetch log lines and build view models (shared by both handlers).
+///
+/// Returns a 5-tuple: `(logs, total, has_older, next_offset, last_log_id)`.
+/// `last_log_id` is the max `job_logs.id` across the fetched page (0 when the
+/// page is empty) — it flows into the template's `data-max-id` attribute so
+/// the client-side dedupe (Plan 11-11) can compare live-stream
+/// `event.lastEventId` against it. Uses the existing `queries::get_log_lines`
+/// (src/db/queries.rs:844) unchanged — no new query helper added.
 async fn fetch_logs(
     pool: &crate::db::DbPool,
     run_id: i64,
     offset: i64,
-) -> (Vec<LogLineView>, i64, bool, i64) {
+) -> (Vec<LogLineView>, i64, bool, i64, i64) {
     let log_result = match queries::get_log_lines(pool, run_id, LOG_PAGE_SIZE, offset).await {
         Ok(r) => r,
         Err(e) => {
@@ -122,6 +155,7 @@ async fn fetch_logs(
         .map(|l| {
             let is_stderr = l.stream == "stderr";
             LogLineView {
+                id: l.id,
                 stream: l.stream,
                 is_stderr,
                 ts: l.ts,
@@ -130,7 +164,9 @@ async fn fetch_logs(
         })
         .collect();
 
-    (logs, total, has_older, next_offset)
+    let last_log_id = logs.iter().map(|l| l.id).max().unwrap_or(0);
+
+    (logs, total, has_older, next_offset, last_log_id)
 }
 
 pub async fn run_detail(
@@ -147,7 +183,8 @@ pub async fn run_detail(
     };
 
     let offset = params.offset.max(0);
-    let (logs, total_logs, has_older, next_offset) = fetch_logs(&state.pool, run_id, offset).await;
+    let (logs, total_logs, has_older, next_offset, last_log_id) =
+        fetch_logs(&state.pool, run_id, offset).await;
 
     if is_htmx {
         LogViewerPartial {
@@ -155,6 +192,7 @@ pub async fn run_detail(
             logs,
             has_older,
             next_offset,
+            last_log_id,
         }
         .into_web_template()
         .into_response()
@@ -164,6 +202,7 @@ pub async fn run_detail(
 
         let run_view = RunDetailView {
             id: run.id,
+            job_run_number: run.job_run_number,
             job_id: run.job_id,
             job_name: run.job_name,
             status,
@@ -189,6 +228,7 @@ pub async fn run_detail(
             has_older,
             next_offset,
             csrf_token,
+            last_log_id,
         }
         .into_web_template()
         .into_response()
@@ -202,13 +242,15 @@ pub async fn log_viewer_partial(
     Query(params): Query<LogPaginationParams>,
 ) -> impl IntoResponse {
     let offset = params.offset.max(0);
-    let (logs, _total, has_older, next_offset) = fetch_logs(&state.pool, run_id, offset).await;
+    let (logs, _total, has_older, next_offset, last_log_id) =
+        fetch_logs(&state.pool, run_id, offset).await;
 
     LogViewerPartial {
         run_id,
         logs,
         has_older,
         next_offset,
+        last_log_id,
     }
     .into_web_template()
     .into_response()
@@ -220,7 +262,8 @@ pub async fn static_log_partial(
     State(state): State<AppState>,
     Path(run_id): Path<i64>,
 ) -> impl IntoResponse {
-    let (logs, total_logs, has_older, next_offset) = fetch_logs(&state.pool, run_id, 0).await;
+    let (logs, total_logs, has_older, next_offset, last_log_id) =
+        fetch_logs(&state.pool, run_id, 0).await;
 
     StaticLogViewerPartial {
         run_id,
@@ -228,6 +271,7 @@ pub async fn static_log_partial(
         total_logs,
         has_older,
         next_offset,
+        last_log_id,
     }
     .into_web_template()
     .into_response()

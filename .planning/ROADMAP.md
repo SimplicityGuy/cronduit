@@ -76,7 +76,7 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 ### 🚧 v1.1 Operator Quality of Life (Phases 10–14)
 
 - [x] **Phase 10: Stop-a-Running-Job + Hygiene Preamble** — SCHED-09..14 + FOUND-12..13. Highest-risk spike; new `stopped` status wired through all three executors. Ships as part of rc.1. (completed 2026-04-15)
-- [ ] **Phase 11: Per-Job Run Numbers + Log UX Fixes** — DB-09..13 + UI-16..20. Three-step migration + log pipeline inversion. Ships as part of rc.1.
+- [x] **Phase 11: Per-Job Run Numbers + Log UX Fixes** — DB-09..13 + UI-16..20. Three-step migration + log pipeline inversion. Ships as part of rc.1. (completed 2026-04-17)
 - [ ] **Phase 12: Docker Healthcheck + rc.1 Cut** — OPS-06..08. New `cronduit health` CLI + Dockerfile HEALTHCHECK. Ships AS `v1.1.0-rc.1`.
 - [ ] **Phase 13: Observability Polish (rc.2)** — OBS-01..05. Timeline page + sparkline/success-rate + duration p50/p95. Ships AS `v1.1.0-rc.2`.
 - [ ] **Phase 14: Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship** — ERG-01..04 + DB-14. `enabled_override` tri-state, CSRF-gated bulk API, final milestone ship. Ships AS `v1.1.0-rc.3` then promoted to `v1.1.0`.
@@ -145,7 +145,21 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
   4. Clicking "Run Now" and immediately clicking through to the run-detail page NEVER shows the transient "error getting logs" message (T-V11-LOG-08, -09).
   5. Existing permalinks of the form `/jobs/{job_id}/runs/{run_id}` continue to resolve — URL compatibility is preserved for operators with bookmarks or Prometheus alert annotations.
 
-**Plans**: TBD
+**Plans**: 14 plans
+- [ ] `11-01-PLAN.md` — T-V11-LOG-02 benchmark spike (Option A gate) (UI-20)
+- [ ] `11-02-PLAN.md` — Migration file 1 (add nullable job_run_number + next_run_number counter) (DB-09, DB-10)
+- [ ] `11-03-PLAN.md` — Rust migrate_backfill orchestrator + marker file 2 (DB-09, DB-10, DB-11, DB-12)
+- [ ] `11-04-PLAN.md` — Migration file 3 (NOT NULL + unique index) + DbPool::migrate two-pass (DB-10)
+- [ ] `11-05-PLAN.md` — insert_running_run counter tx refactor + DbRun/DbRunDetail extensions (DB-11)
+- [ ] `11-06-PLAN.md` — Run Now race fix: sync insert + SchedulerCmd::RunNowWithRunId (UI-19) [human-verify]
+- [ ] `11-07-PLAN.md` — LogLine.id plumbing + insert_log_batch RETURNING id + log_writer_task broadcast zip (UI-20)
+- [ ] `11-08-PLAN.md` — SSE handler emits id: line per log_line event (UI-18, UI-20)
+- [ ] `11-09-PLAN.md` — run_detail handler page-load backfill + last_log_id plumbing (UI-17, DB-13)
+- [ ] `11-10-PLAN.md` — Terminal run_finished SSE event from finalize_run (UI-17, UI-18)
+- [ ] `11-11-PLAN.md` — Client-side dedupe script + run_finished listener inline in run_detail.html (UI-17, UI-18, UI-20) [human-verify]
+- [ ] `11-12-PLAN.md` — Template diffs for Run #N + (id X) + data-max-id across run_detail/run_history/static_log_viewer (UI-16) [human-verify]
+- [ ] `11-13-PLAN.md` — main.rs startup assertion NULL-count = 0 + listener-after-backfill (DB-09, DB-10)
+- [ ] `11-14-PLAN.md` — Phase close-out: schema_parity + full suite + 11-PHASE-SUMMARY.md (all reqs) [human-verify]
 **UI hint**: yes
 
 ---
@@ -258,7 +272,7 @@ Full REQ-ID → phase traceability lives in [`REQUIREMENTS.md`](REQUIREMENTS.md#
 | Phase                                                      | Plans Complete | Status      | rc target        | Completed |
 | ---------------------------------------------------------- | -------------- | ----------- | ---------------- | --------- |
 | 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/10           | 10/10 | Complete   | 2026-04-15 |
-| 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | Not started | `v1.1.0-rc.1`    | —         |
+| 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | 16/15 | Complete    | 2026-04-17 |
 | 12. Docker Healthcheck + rc.1 Cut                          | 0/?            | Not started | `v1.1.0-rc.1` ◀  | —         |
 | 13. Observability Polish (rc.2)                            | 0/?            | Not started | `v1.1.0-rc.2` ◀  | —         |
 | 14. Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship         | 0/?            | Not started | `v1.1.0-rc.3` ◀ / `v1.1.0` | — |

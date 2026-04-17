@@ -18,6 +18,7 @@
   <table style="width:100%;border-collapse:collapse">
     <thead>
       <tr style="background:var(--cd-bg-surface-raised)">
+        <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary);width:1%"></th>
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Status</th>
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Trigger</th>
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Started</th>
@@ -28,7 +29,11 @@
     </thead>
     <tbody>
       {% for run in runs %}
-      <tr class="hover:bg-(--cd-bg-hover) border-b border-(--cd-border-subtle)">
+      <tr class="hover:bg-(--cd-bg-hover) border-b border-(--cd-border-subtle)"
+          title="global id: {{ run.id }}">
+        <td class="py-2 px-4" style="font-size:var(--cd-text-base);color:var(--cd-text-primary);white-space:nowrap">
+          #{{ run.job_run_number }}
+        </td>
         <td class="py-2 px-4">
           <a href="/jobs/{{ job_id }}/runs/{{ run.id }}" class="no-underline">
             <span class="cd-badge cd-badge--{{ run.status }}">{{ run.status_label }}</span>

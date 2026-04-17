@@ -6,7 +6,7 @@
     No log output captured for this run.
   </div>
   {% else %}
-  <div id="log-lines" style="background:var(--cd-bg-surface-sunken);padding:var(--cd-space-4);border-radius:8px;overflow-x:auto">
+  <div id="log-lines" data-max-id="{{ last_log_id }}" style="background:var(--cd-bg-surface-sunken);padding:var(--cd-space-4);border-radius:8px;overflow-x:auto">
     {% include "partials/log_viewer.html" %}
   </div>
   {% endif %}

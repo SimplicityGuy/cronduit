@@ -83,6 +83,10 @@ pub struct JobDetailView {
 
 pub struct RunHistoryView {
     pub id: i64,
+    /// Per-job sequential run number (Phase 11 DB-11 / UI-16). Rendered as
+    /// the leftmost `#N` cell in `run_history.html`; global `id` remains the
+    /// URL key and the row-level hover tooltip (D-13 permalink scheme).
+    pub job_run_number: i64,
     pub status: String,
     pub status_label: String,
     pub trigger: String,
@@ -166,6 +170,7 @@ pub async fn job_detail(
             let status_label = status.to_uppercase();
             RunHistoryView {
                 id: r.id,
+                job_run_number: r.job_run_number,
                 status,
                 status_label,
                 trigger: r.trigger,
@@ -271,6 +276,7 @@ pub async fn job_runs_partial(
             let status_label = status.to_uppercase();
             RunHistoryView {
                 id: r.id,
+                job_run_number: r.job_run_number,
                 status,
                 status_label,
                 trigger: r.trigger,

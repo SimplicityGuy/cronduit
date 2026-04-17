@@ -283,31 +283,69 @@ impl From<PgDbJobRow> for DbJob {
 }
 
 /// Insert a new job_runs row with status='running'. Returns the new run id.
+///
+/// Phase 11 DB-11: uses a two-statement transaction to atomically reserve a
+/// per-job sequential `job_run_number` from `jobs.next_run_number` and insert
+/// the new `job_runs` row with that number. The `UPDATE ... RETURNING
+/// next_run_number - 1` pattern gives us the pre-increment value (the number
+/// to assign to THIS row) while persisting the post-increment value for the
+/// next caller.
+///
+/// Concurrency: on SQLite the writer pool has `max_connections = 1` so the
+/// two statements are effectively serialized; on Postgres the tx block + row
+/// lock from UPDATE guarantees no two callers can read the same counter.
+/// Replaces the former `MAX + 1` race-prone pattern.
 pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> anyhow::Result<i64> {
     let now = chrono::Utc::now().to_rfc3339();
 
     match pool.writer() {
         PoolRef::Sqlite(p) => {
-            let row = sqlx::query(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time) VALUES (?1, 'running', ?2, ?3) RETURNING id",
+            let mut tx = p.begin().await?;
+            let reserved: i64 = sqlx::query_scalar(
+                "UPDATE jobs SET next_run_number = next_run_number + 1 \
+                 WHERE id = ?1 RETURNING next_run_number - 1",
+            )
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            let run_id: i64 = sqlx::query_scalar(
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
+                 VALUES (?1, 'running', ?2, ?3, ?4) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
-            .fetch_one(p)
+            .bind(reserved)
+            .fetch_one(&mut *tx)
             .await?;
-            Ok(row.get::<i64, _>("id"))
+
+            tx.commit().await?;
+            Ok(run_id)
         }
         PoolRef::Postgres(p) => {
-            let row = sqlx::query(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time) VALUES ($1, 'running', $2, $3) RETURNING id",
+            let mut tx = p.begin().await?;
+            let reserved: i64 = sqlx::query_scalar(
+                "UPDATE jobs SET next_run_number = next_run_number + 1 \
+                 WHERE id = $1 RETURNING next_run_number - 1",
+            )
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            let run_id: i64 = sqlx::query_scalar(
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
+                 VALUES ($1, 'running', $2, $3, $4) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
-            .fetch_one(p)
+            .bind(reserved)
+            .fetch_one(&mut *tx)
             .await?;
-            Ok(row.get::<i64, _>("id"))
+
+            tx.commit().await?;
+            Ok(run_id)
         }
     }
 }
@@ -359,52 +397,66 @@ pub async fn finalize_run(
     Ok(())
 }
 
-/// Insert a batch of log lines into job_logs.
+/// Insert a batch of log lines into job_logs and return the persisted ids.
 ///
-/// Each tuple is `(stream, ts, line)`.
+/// Each tuple is `(stream, ts, line)`. The returned `Vec<i64>` contains the
+/// `job_logs.id` of each inserted row in the same order as the input slice.
+///
+/// Phase 11 D-01 / UI-20 (Option A): uses per-line `INSERT ... RETURNING id`
+/// inside a single transaction so callers (`log_writer_task`) can zip the ids
+/// with the input batch and broadcast `LogLine { id: Some(id), .. }`. The
+/// single-tx discipline preserves the D-03 throughput contract: exactly one
+/// `tx.begin()` + one `tx.commit()` per call, no per-line fsync. The
+/// `RETURNING id` shape mirrors `insert_running_run` (L298-351).
 pub async fn insert_log_batch(
     pool: &DbPool,
     run_id: i64,
     lines: &[(String, String, String)],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<i64>> {
     if lines.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+
+    let mut ids = Vec::with_capacity(lines.len());
 
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             let mut tx = p.begin().await?;
             for (stream, ts, line) in lines {
-                sqlx::query(
-                    "INSERT INTO job_logs (run_id, stream, ts, line) VALUES (?1, ?2, ?3, ?4)",
+                let id: i64 = sqlx::query_scalar(
+                    "INSERT INTO job_logs (run_id, stream, ts, line) \
+                     VALUES (?1, ?2, ?3, ?4) RETURNING id",
                 )
                 .bind(run_id)
                 .bind(stream)
                 .bind(ts)
                 .bind(line)
-                .execute(&mut *tx)
+                .fetch_one(&mut *tx)
                 .await?;
+                ids.push(id);
             }
             tx.commit().await?;
         }
         PoolRef::Postgres(p) => {
             let mut tx = p.begin().await?;
             for (stream, ts, line) in lines {
-                sqlx::query(
-                    "INSERT INTO job_logs (run_id, stream, ts, line) VALUES ($1, $2, $3, $4)",
+                let id: i64 = sqlx::query_scalar(
+                    "INSERT INTO job_logs (run_id, stream, ts, line) \
+                     VALUES ($1, $2, $3, $4) RETURNING id",
                 )
                 .bind(run_id)
                 .bind(stream)
                 .bind(ts)
                 .bind(line)
-                .execute(&mut *tx)
+                .fetch_one(&mut *tx)
                 .await?;
+                ids.push(id);
             }
             tx.commit().await?;
         }
     }
 
-    Ok(())
+    Ok(ids)
 }
 
 // ── Dashboard / UI query types ───────────────────────────────────────────
@@ -428,6 +480,9 @@ pub struct DashboardJob {
 pub struct DbRun {
     pub id: i64,
     pub job_id: i64,
+    /// Per-job sequential run number (Phase 11 DB-11). Starts at 1, increments
+    /// atomically via `insert_running_run`'s counter transaction.
+    pub job_run_number: i64,
     pub status: String,
     pub trigger: String,
     pub start_time: String,
@@ -442,6 +497,8 @@ pub struct DbRun {
 pub struct DbRunDetail {
     pub id: i64,
     pub job_id: i64,
+    /// Per-job sequential run number (Phase 11 DB-11). Mirrors `DbRun::job_run_number`.
+    pub job_run_number: i64,
     pub job_name: String,
     pub status: String,
     pub trigger: String,
@@ -661,7 +718,7 @@ pub async fn get_run_history(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
+                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
             )
             .bind(job_id)
             .bind(limit)
@@ -674,6 +731,7 @@ pub async fn get_run_history(
                 .map(|r| DbRun {
                     id: r.get("id"),
                     job_id: r.get("job_id"),
+                    job_run_number: r.get("job_run_number"),
                     status: r.get("status"),
                     trigger: r.get("trigger"),
                     start_time: r.get("start_time"),
@@ -694,7 +752,7 @@ pub async fn get_run_history(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
+                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
             )
             .bind(job_id)
             .bind(limit)
@@ -707,6 +765,7 @@ pub async fn get_run_history(
                 .map(|r| DbRun {
                     id: r.get("id"),
                     job_id: r.get("job_id"),
+                    job_run_number: r.get("job_run_number"),
                     status: r.get("status"),
                     trigger: r.get("trigger"),
                     start_time: r.get("start_time"),
@@ -725,14 +784,14 @@ pub async fn get_run_history(
 /// Fetch a single run by id with its associated job name.
 pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<DbRunDetail>> {
     let sql_sqlite = r#"
-        SELECT r.id, r.job_id, j.name AS job_name, r.status, r.trigger,
+        SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
                r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = ?1
     "#;
     let sql_postgres = r#"
-        SELECT r.id, r.job_id, j.name AS job_name, r.status, r.trigger,
+        SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
                r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
@@ -748,6 +807,7 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
             Ok(row.map(|r| DbRunDetail {
                 id: r.get("id"),
                 job_id: r.get("job_id"),
+                job_run_number: r.get("job_run_number"),
                 job_name: r.get("job_name"),
                 status: r.get("status"),
                 trigger: r.get("trigger"),
@@ -766,6 +826,7 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
             Ok(row.map(|r| DbRunDetail {
                 id: r.get("id"),
                 job_id: r.get("job_id"),
+                job_run_number: r.get("job_run_number"),
                 job_name: r.get("job_name"),
                 status: r.get("status"),
                 trigger: r.get("trigger"),
@@ -941,6 +1002,233 @@ pub async fn wal_checkpoint(pool: &DbPool) -> Result<(), sqlx::Error> {
         }
         PoolRef::Postgres(_) => Ok(()),
     }
+}
+
+// ── Phase 11 backfill helpers (DB-09/10/11/12) ───────────────────────────
+
+/// Phase 11 backfill batch: update up to `batch_size` rows where
+/// `job_run_number IS NULL`, assigning a per-job sequential number via
+/// `ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC)` so the result
+/// is deterministic and idempotent across partial-crash re-runs.
+///
+/// Returns the number of rows actually updated. Zero rows means the backfill
+/// is complete (or un-progressable, which is the same thing since the
+/// `WHERE job_run_number IS NULL` guard re-applies).
+///
+/// Uses the portable `UPDATE ... WHERE id IN (SELECT ... LIMIT N)` form per
+/// RESEARCH Open Question Q3 (RESOLVED): simpler than `UPDATE ... FROM ...`
+/// and works identically on SQLite 3.33+ and Postgres 9.x+.
+pub async fn backfill_job_run_number_batch(pool: &DbPool, batch_size: i64) -> anyhow::Result<i64> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            // SQLite 3.33+ `UPDATE ... FROM` — matches the Postgres arm.
+            //
+            // Earlier drafts used a correlated scalar subquery form, but
+            // SQLite's optimizer pushes the outer `WHERE s.id = job_runs.id`
+            // equality INTO the inner subquery, which shrinks the `FROM
+            // job_runs WHERE job_run_number IS NULL` scan to a single row
+            // and causes ROW_NUMBER() to always evaluate to 1. The FROM-join
+            // form materializes the ROW_NUMBER() result as a derived table
+            // BEFORE the join, so partitioning is preserved correctly.
+            //
+            // The LEFT JOIN on `prev` adds a per-job offset = MAX(job_run_number)
+            // of already-backfilled rows. Without it, a partial-crash restart
+            // (second batch) would re-number from 1, colliding with the first
+            // batch's assignments (T-V11-RUNNUM-08 resume test regression).
+            let result = sqlx::query(
+                "UPDATE job_runs \
+                 SET job_run_number = s.rn + COALESCE(prev.max_filled, 0) \
+                 FROM ( \
+                    SELECT id, job_id, \
+                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC) AS rn \
+                    FROM job_runs \
+                    WHERE job_run_number IS NULL \
+                 ) AS s \
+                 LEFT JOIN ( \
+                    SELECT job_id, MAX(job_run_number) AS max_filled \
+                    FROM job_runs \
+                    WHERE job_run_number IS NOT NULL \
+                    GROUP BY job_id \
+                 ) AS prev ON prev.job_id = s.job_id \
+                 WHERE job_runs.id = s.id \
+                   AND job_runs.id IN ( \
+                        SELECT id FROM job_runs \
+                        WHERE job_run_number IS NULL \
+                        ORDER BY id ASC \
+                        LIMIT ?1 \
+                   )",
+            )
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+        PoolRef::Postgres(p) => {
+            let result = sqlx::query(
+                "UPDATE job_runs \
+                 SET job_run_number = s.rn + COALESCE(prev.max_filled, 0) \
+                 FROM ( \
+                    SELECT id, job_id, \
+                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC) AS rn \
+                    FROM job_runs \
+                    WHERE job_run_number IS NULL \
+                 ) s \
+                 LEFT JOIN ( \
+                    SELECT job_id, MAX(job_run_number) AS max_filled \
+                    FROM job_runs \
+                    WHERE job_run_number IS NOT NULL \
+                    GROUP BY job_id \
+                 ) AS prev ON prev.job_id = s.job_id \
+                 WHERE job_runs.id = s.id \
+                   AND job_runs.id IN ( \
+                        SELECT id FROM job_runs \
+                        WHERE job_run_number IS NULL \
+                        ORDER BY id ASC \
+                        LIMIT $1 \
+                   )",
+            )
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+    }
+}
+
+/// Phase 11 post-backfill resync: set `jobs.next_run_number` to one more
+/// than the current max `job_run_number` per job. Idempotent by construction.
+pub async fn resync_next_run_number(pool: &DbPool) -> anyhow::Result<()> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            sqlx::query(
+                "UPDATE jobs \
+                 SET next_run_number = COALESCE( \
+                    (SELECT MAX(job_run_number) + 1 \
+                     FROM job_runs \
+                     WHERE job_runs.job_id = jobs.id), \
+                    1 \
+                 )",
+            )
+            .execute(p)
+            .await?;
+        }
+        PoolRef::Postgres(p) => {
+            sqlx::query(
+                "UPDATE jobs \
+                 SET next_run_number = COALESCE( \
+                    (SELECT MAX(job_run_number) + 1 \
+                     FROM job_runs \
+                     WHERE job_runs.job_id = jobs.id), \
+                    1 \
+                 )",
+            )
+            .execute(p)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Phase 11 DB-15 startup assertion support: counts rows where
+/// `job_run_number IS NULL`. Must return 0 after migrations complete.
+pub async fn count_job_runs_with_null_run_number(pool: &DbPool) -> anyhow::Result<i64> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let n: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM job_runs WHERE job_run_number IS NULL")
+                    .fetch_one(p)
+                    .await?;
+            Ok(n)
+        }
+        PoolRef::Postgres(p) => {
+            let n: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM job_runs WHERE job_run_number IS NULL")
+                    .fetch_one(p)
+                    .await?;
+            Ok(n)
+        }
+    }
+}
+
+/// Phase 11 sentinel check: returns true iff `_v11_backfill_done` exists and
+/// contains a row. O(1) fast-path for the orchestrator's re-run short-circuit.
+pub async fn v11_backfill_sentinel_exists(pool: &DbPool) -> anyhow::Result<bool> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let table_exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'table' AND name = '_v11_backfill_done'",
+            )
+            .fetch_one(p)
+            .await?;
+            if table_exists == 0 {
+                return Ok(false);
+            }
+            let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _v11_backfill_done")
+                .fetch_one(p)
+                .await?;
+            Ok(row_count > 0)
+        }
+        PoolRef::Postgres(p) => {
+            let table_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS ( \
+                    SELECT 1 FROM information_schema.tables \
+                    WHERE table_name = '_v11_backfill_done' \
+                 )",
+            )
+            .fetch_one(p)
+            .await?;
+            if !table_exists {
+                return Ok(false);
+            }
+            let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _v11_backfill_done")
+                .fetch_one(p)
+                .await?;
+            Ok(row_count > 0)
+        }
+    }
+}
+
+/// Phase 11 sentinel write: ensures `_v11_backfill_done` exists with one
+/// marker row. Idempotent (CREATE TABLE IF NOT EXISTS + INSERT guarded by
+/// a single-row unique primary key).
+pub async fn v11_backfill_sentinel_mark_done(pool: &DbPool) -> anyhow::Result<()> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS _v11_backfill_done ( \
+                    id INTEGER PRIMARY KEY CHECK (id = 1), \
+                    finished_at TEXT NOT NULL \
+                 )",
+            )
+            .execute(p)
+            .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO _v11_backfill_done (id, finished_at) VALUES (1, ?1)",
+            )
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(p)
+            .await?;
+        }
+        PoolRef::Postgres(p) => {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS _v11_backfill_done ( \
+                    id SMALLINT PRIMARY KEY CHECK (id = 1), \
+                    finished_at TEXT NOT NULL \
+                 )",
+            )
+            .execute(p)
+            .await?;
+            sqlx::query(
+                "INSERT INTO _v11_backfill_done (id, finished_at) VALUES (1, $1) \
+                 ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(p)
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

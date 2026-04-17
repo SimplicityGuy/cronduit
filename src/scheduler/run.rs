@@ -52,16 +52,22 @@ struct JobExecConfig {
     script: Option<String>,
 }
 
-/// Execute a job run through its full lifecycle.
+/// Execute a job run through its full lifecycle (scheduler-driven path).
 ///
-/// 1. Insert running row
-/// 2. Create log channel
-/// 3. Spawn log writer task
-/// 4. Dispatch to command/script executor
-/// 5. Close sender (signals log writer to finish)
-/// 6. Wait for log writer to complete
-/// 7. Finalize run
-/// 8. Return RunResult
+/// Used by the cron-tick dispatch + catch-up + the legacy
+/// `SchedulerCmd::RunNow` arm (RESEARCH Q1 RESOLVED: scheduled runs continue
+/// to insert the row here, on the scheduler task, exactly as before Phase
+/// 11). Manual UI "Run Now" clicks go through `run_job_with_existing_run_id`
+/// instead — that path has the API handler insert the row on the handler
+/// thread first to eliminate the run-detail 404 race (UI-19).
+///
+/// 1. Insert running row (via `insert_running_run` — the row creator)
+/// 2. `continue_run` handles the rest of the lifecycle:
+///    - Create log channel
+///    - Spawn log writer task
+///    - Dispatch to command/script/docker executor
+///    - Close sender + wait for log writer
+///    - Finalize run, record metrics, remove broadcast_tx
 pub async fn run_job(
     pool: DbPool,
     docker: Option<Docker>,
@@ -72,7 +78,7 @@ pub async fn run_job(
 ) -> RunResult {
     let start = tokio::time::Instant::now();
 
-    // 1. Insert running row.
+    // 1. Insert running row (scheduler-driven path owns this step).
     let run_id = match insert_running_run(&pool, job.id, &trigger).await {
         Ok(id) => id,
         Err(e) => {
@@ -97,6 +103,56 @@ pub async fn run_job(
         "run started"
     );
 
+    // 2. Hand off to the shared lifecycle helper.
+    continue_run(pool, docker, job, run_id, start, cancel, active_runs).await
+}
+
+/// Execute a job run through its lifecycle with a PRE-INSERTED run_id.
+///
+/// Used by the UI Run Now path (Phase 11 UI-19 fix): the API handler at
+/// `src/web/handlers/api.rs::run_now` inserts the `job_runs` row on the
+/// handler thread BEFORE returning `HX-Refresh: true`, so the browser's
+/// immediate navigation to `/jobs/{job_id}/runs/{run_id}` always finds the
+/// row. The scheduler's `SchedulerCmd::RunNowWithRunId` arm dispatches this
+/// function with the pre-inserted id; this function SKIPS the insert step
+/// and calls the shared `continue_run` helper for the rest of the lifecycle.
+///
+/// The legacy scheduler-driven `run_job` path is preserved unchanged for
+/// cron-tick + catch-up runs (RESEARCH Q1 RESOLVED).
+pub async fn run_job_with_existing_run_id(
+    pool: DbPool,
+    docker: Option<Docker>,
+    job: DbJob,
+    run_id: i64,
+    cancel: CancellationToken,
+    active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
+) -> RunResult {
+    let start = tokio::time::Instant::now();
+    tracing::info!(
+        target: "cronduit.run",
+        job = %job.name,
+        run_id,
+        trigger = "manual",
+        "run started (pre-inserted by handler — UI-19)"
+    );
+    continue_run(pool, docker, job, run_id, start, cancel, active_runs).await
+}
+
+/// Shared per-run lifecycle AFTER the `job_runs` row has been inserted.
+///
+/// Callers (`run_job`, `run_job_with_existing_run_id`) are responsible for
+/// the INSERT step; this helper handles everything downstream:
+/// broadcast channel creation, active_runs insertion, executor dispatch,
+/// log writer task lifecycle, finalization, metrics, cleanup.
+async fn continue_run(
+    pool: DbPool,
+    docker: Option<Docker>,
+    job: DbJob,
+    run_id: i64,
+    start: tokio::time::Instant,
+    cancel: CancellationToken,
+    active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
+) -> RunResult {
     // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
 
@@ -296,7 +352,32 @@ pub async fn run_job(
         metrics::counter!("cronduit_run_failures_total", "job" => job.name.clone(), "reason" => reason.as_label().to_string()).increment(1);
     }
 
-    // 7c. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
+    // 7c. Phase 11 D-10: broadcast the __run_finished__ sentinel BEFORE the
+    // broadcast sender is dropped so every live SSE subscriber receives a
+    // graceful terminal frame (`event: run_finished`) and can swap the
+    // running log pane to the static partial (Plan 11-11). Ordering
+    // (RESEARCH.md §P10): (1) writer_handle already awaited at step 6 → every
+    // persisted log_line has been broadcast with `id: Some(n)`; (2)
+    // finalize_run DB update has run at step 7; (3) send the sentinel now;
+    // (4) remove the run from active_runs so the next Run Now finds a clean
+    // slate; (5) drop broadcast_tx — the `RecvError::Closed` arm in sse.rs
+    // stays as the abrupt-disconnect fallback (emits `run_complete`) and is
+    // only reached if a subscriber somehow misses the sentinel.
+    //
+    // `stream = "__run_finished__"` is the pattern-match key; `line =
+    // run_id.to_string()` carries the payload the SSE handler serializes as
+    // `{"run_id": N}`. `id = None` because the sentinel is not a persisted
+    // `job_logs` row — the client's dedupe cursor (Plan 11-14) ignores
+    // frames without `id:`, which is the correct semantics here. A
+    // `SendError` (no live subscribers) is intentionally discarded.
+    let _ = broadcast_tx.send(LogLine {
+        stream: "__run_finished__".to_string(),
+        ts: chrono::Utc::now().to_rfc3339(),
+        line: run_id.to_string(),
+        id: None,
+    });
+
+    // 7d. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
     active_runs.write().await.remove(&run_id);
     drop(broadcast_tx);
 
@@ -336,11 +417,20 @@ fn classify_failure_reason(status: &str, error_msg: Option<&str>) -> FailureReas
     }
 }
 
-/// Log writer task that drains log lines from the receiver in micro-batches
-/// and inserts them into job_logs, while also publishing each line to the
-/// broadcast channel for SSE subscribers (UI-14).
+/// Log writer task that drains log lines from the receiver in micro-batches,
+/// inserts them into job_logs, then broadcasts each persisted line (with its
+/// `job_logs.id` populated from `RETURNING id`) to the SSE channel (UI-14).
 ///
 /// D-12: Micro-batch inserts of DEFAULT_BATCH_SIZE (64) lines per transaction.
+///
+/// Phase 11 D-01 / UI-20 (Option A): insert-then-broadcast. After
+/// `insert_log_batch` returns `Vec<i64>`, we zip the ids with the input batch
+/// (guaranteed equal length) and send each `LogLine { id: Some(id), ..line }`
+/// through the broadcast channel. Subscribers never see a line that has not
+/// yet been persisted; on insert error, we broadcast nothing (the operator
+/// sees the failure via the `cronduit.log_writer` tracing target, and the
+/// run will show no logs for that batch — the D-01 "never leak unpersisted
+/// lines" choice).
 async fn log_writer_task(
     pool: DbPool,
     run_id: i64,
@@ -353,22 +443,35 @@ async fn log_writer_task(
             // Channel closed and fully drained.
             break;
         }
-        // Publish each line to the broadcast channel for SSE subscribers.
-        // Ignore SendError if no subscribers are connected (T-6-02).
-        for line in &batch {
-            let _ = broadcast_tx.send(line.clone());
-        }
+        // Phase 11 D-01 / UI-20: persist FIRST, then broadcast with the
+        // `RETURNING id` values zipped onto each line so subscribers can
+        // dedupe on a stable, monotonic identifier.
         let tuples: Vec<(String, String, String)> = batch
-            .into_iter()
-            .map(|l| (l.stream, l.ts, l.line))
+            .iter()
+            .map(|l| (l.stream.clone(), l.ts.clone(), l.line.clone()))
             .collect();
-        if let Err(e) = insert_log_batch(&pool, run_id, &tuples).await {
-            tracing::error!(
-                target: "cronduit.log_writer",
-                run_id,
-                error = %e,
-                "failed to insert log batch"
-            );
+        match insert_log_batch(&pool, run_id, &tuples).await {
+            Ok(ids) => {
+                // SQLite INTEGER PRIMARY KEY and Postgres BIGSERIAL both
+                // preserve insert order inside a single tx, so zipping the
+                // returned `Vec<i64>` with `batch` in input order assigns
+                // each line its own persisted id.
+                for (line, id) in batch.into_iter().zip(ids.into_iter()) {
+                    let _ = broadcast_tx.send(LogLine {
+                        id: Some(id),
+                        ..line
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "cronduit.log_writer",
+                    run_id,
+                    error = %e,
+                    "failed to insert log batch"
+                );
+                // Subscribers never see unpersisted lines (D-01 lock).
+            }
         }
     }
 }
@@ -581,6 +684,75 @@ mod tests {
                     line == "before-timeout"
                 });
                 assert!(has_before, "partial logs should be preserved on timeout");
+            }
+            _ => unreachable!(),
+        }
+
+        pool.close().await;
+    }
+
+    /// Phase 11 Plan 11-06 (UI-19 fix): `run_job_with_existing_run_id` skips the
+    /// `insert_running_run` step because the API handler thread already inserted
+    /// the row. Test pre-inserts a row, calls the new fn, and asserts:
+    ///   1. No duplicate row was created (exactly ONE row exists for the job).
+    ///   2. The returned `run_id` matches the pre-inserted id.
+    ///   3. The row's status is finalized (not "running") — proving the
+    ///      lifecycle after insert still runs (log capture + finalize).
+    #[tokio::test]
+    async fn run_job_with_existing_run_id_skips_insert() {
+        let pool = setup_pool().await;
+        let job = insert_test_job(
+            &pool,
+            "skip-insert-job",
+            "command",
+            r#"{"command":"echo pre-inserted"}"#,
+        )
+        .await;
+
+        // Pre-insert a row on behalf of the "API handler".
+        let pre_run_id = crate::db::queries::insert_running_run(&pool, job.id, "manual")
+            .await
+            .unwrap();
+
+        let cancel = CancellationToken::new();
+        let result = run_job_with_existing_run_id(
+            pool.clone(),
+            None,
+            job.clone(),
+            pre_run_id,
+            cancel,
+            test_active_runs(),
+        )
+        .await;
+
+        assert_eq!(
+            result.run_id, pre_run_id,
+            "run_id must be the pre-inserted id (not a new row)"
+        );
+        assert_eq!(result.status, "success");
+
+        // Exactly one row must exist for this job.
+        match pool.reader() {
+            PoolRef::Sqlite(p) => {
+                let row = sqlx::query("SELECT COUNT(*) as cnt FROM job_runs WHERE job_id = ?1")
+                    .bind(job.id)
+                    .fetch_one(p)
+                    .await
+                    .unwrap();
+                let cnt: i64 = row.get("cnt");
+                assert_eq!(
+                    cnt, 1,
+                    "run_job_with_existing_run_id must NOT create a second row"
+                );
+
+                // Status must be finalized.
+                let r = sqlx::query("SELECT status FROM job_runs WHERE id = ?1")
+                    .bind(pre_run_id)
+                    .fetch_one(p)
+                    .await
+                    .unwrap();
+                let status: String = r.get("status");
+                assert_eq!(status, "success", "row must be finalized after run");
             }
             _ => unreachable!(),
         }
