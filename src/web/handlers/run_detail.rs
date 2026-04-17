@@ -42,15 +42,10 @@ struct RunDetailPage {
     next_offset: i64,
     csrf_token: String,
     /// Max `job_logs.id` across the server-rendered backfill (0 when empty).
-    /// Consumed by templates (Plan 11-12) via `data-max-id="{{ last_log_id }}"`
+    /// Rendered into `run_detail.html` via `data-max-id="{{ last_log_id }}"`
     /// on `#log-lines` so the client-side dedupe handler (Plan 11-11) can
     /// compare SSE `event.lastEventId` against it and skip already-rendered
     /// lines on reconnect (D-08 / D-09).
-    ///
-    /// `#[allow(dead_code)]` is scoped to this field because the server-side
-    /// plumbing lands ahead of the template consumer (Plan 11-12). Remove
-    /// the attribute when the template starts reading `{{ last_log_id }}`.
-    #[allow(dead_code)]
     last_log_id: i64,
 }
 
@@ -87,6 +82,11 @@ struct StaticLogViewerPartial {
 
 pub struct RunDetailView {
     pub id: i64,
+    /// Per-job sequential run number (Phase 11 DB-11 / UI-16). Rendered as
+    /// the primary `Run #N` identifier in the title, breadcrumb, and header;
+    /// global `id` remains the URL key and appears as a muted `(id N)` suffix
+    /// per D-05.
+    pub job_run_number: i64,
     pub job_id: i64,
     pub job_name: String,
     pub status: String,
@@ -200,6 +200,7 @@ pub async fn run_detail(
 
         let run_view = RunDetailView {
             id: run.id,
+            job_run_number: run.job_run_number,
             job_id: run.job_id,
             job_name: run.job_name,
             status,
