@@ -130,6 +130,7 @@ mod tests {
             stream: "stdout".to_string(),
             ts: "2026-01-01T00:00:00Z".to_string(),
             line: "hello world".to_string(),
+            id: None,
         };
         let html = format_log_line_html(&line);
         assert!(html.contains("hello world"));
@@ -143,6 +144,7 @@ mod tests {
             stream: "stderr".to_string(),
             ts: "2026-01-01T00:00:00Z".to_string(),
             line: "error <msg>".to_string(),
+            id: None,
         };
         let html = format_log_line_html(&line);
         assert!(html.contains("border-l-4"));

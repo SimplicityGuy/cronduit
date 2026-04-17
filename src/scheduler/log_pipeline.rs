@@ -26,6 +26,14 @@ pub struct LogLine {
     pub ts: String,
     /// Line content (already truncated if it exceeded `MAX_LINE_BYTES`).
     pub line: String,
+    /// Persistent `job_logs.id` from the `RETURNING id` of `insert_log_batch`
+    /// (Phase 11 D-01 / UI-20 -- Option A). `None` for pre-broadcast /
+    /// pre-persistence lines: anything constructed via `make_log_line` before
+    /// it flows through the log writer task, and the `[truncated N lines]`
+    /// marker inserted by `drain_batch` (which is never inserted into
+    /// `job_logs`). Populated (`Some(id)`) only after `log_writer_task` zips
+    /// the returned ids with the persisted batch before broadcasting.
+    pub id: Option<i64>,
 }
 
 /// Internal shared state between sender and receiver.
@@ -92,12 +100,15 @@ impl LogReceiver {
         let mut state = self.state.lock().unwrap();
         let mut batch = Vec::with_capacity(max.min(state.buf.len() + 1));
 
-        // If lines were dropped, insert truncation marker FIRST
+        // If lines were dropped, insert truncation marker FIRST.
+        // Phase 11 D-01: `id: None` -- this marker is never persisted to
+        // `job_logs`, so it never has a `RETURNING id` value to carry.
         if state.dropped_count > 0 {
             batch.push(LogLine {
                 stream: "system".to_string(),
                 ts: chrono::Utc::now().to_rfc3339(),
                 line: format!("[truncated {} lines]", state.dropped_count),
+                id: None,
             });
             state.dropped_count = 0;
         }
@@ -175,11 +186,17 @@ pub fn truncate_line(line: String) -> String {
 }
 
 /// Create a `LogLine` with the current UTC timestamp and automatic truncation.
+///
+/// Phase 11 D-01: constructs `id: None` -- this is a pre-persistence factory.
+/// Lines produced here get their `id` populated only after the log writer task
+/// calls `insert_log_batch` and zips the returned `RETURNING id` values with
+/// the persisted batch before broadcasting.
 pub fn make_log_line(stream: &str, content: String) -> LogLine {
     LogLine {
         stream: stream.to_string(),
         ts: chrono::Utc::now().to_rfc3339(),
         line: truncate_line(content),
+        id: None,
     }
 }
 
@@ -252,6 +269,37 @@ mod tests {
         // Timestamp should be valid RFC3339
         chrono::DateTime::parse_from_rfc3339(&line.ts).expect("valid RFC3339 timestamp");
         assert_eq!(line.line, "error happened");
+    }
+
+    /// Phase 11 D-01 / UI-20: LogLine has an `id: Option<i64>` field, and the
+    /// pre-persistence factory `make_log_line` constructs it as `None`. The
+    /// field is populated only by `log_writer_task` AFTER `insert_log_batch`
+    /// returns the `RETURNING id` values for a persisted batch.
+    #[test]
+    fn make_log_line_id_is_none() {
+        let line = make_log_line("stdout", "pre-persistence".to_string());
+        assert!(
+            line.id.is_none(),
+            "make_log_line must construct LogLine with id = None (pre-persistence)"
+        );
+    }
+
+    /// Phase 11 D-01 / UI-20: the `[truncated N lines]` marker is a
+    /// pre-broadcast / pre-persistence line that will never have a
+    /// job_logs.id (it's never inserted), so it must carry `id = None`.
+    #[test]
+    fn truncated_marker_id_is_none() {
+        let (tx, rx) = channel(4);
+        for i in 0..6 {
+            tx.send(make_log_line("stdout", format!("line{i}")));
+        }
+        let batch = rx.drain_batch(10);
+        assert_eq!(batch[0].stream, "system");
+        assert!(batch[0].line.contains("[truncated 2 lines]"));
+        assert!(
+            batch[0].id.is_none(),
+            "the [truncated N lines] marker must have id = None"
+        );
     }
 
     #[test]
