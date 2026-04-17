@@ -43,20 +43,44 @@ pub async fn run_now(
     let job = match queries::get_job_by_id(&state.pool, job_id).await {
         Ok(Some(job)) => job,
         Ok(None) => return (StatusCode::NOT_FOUND, "Job not found").into_response(),
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response(),
+        Err(err) => {
+            tracing::error!(target: "cronduit.web", error = %err, job_id, "run_now: job lookup failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
     };
 
-    // 3. Send RunNow command through scheduler channel (D-08)
-    match state.cmd_tx.send(SchedulerCmd::RunNow { job_id }).await {
+    // 3. Phase 11 UI-19 fix (Plan 11-06): insert the running `job_runs` row
+    // SYNCHRONOUSLY on the handler thread BEFORE dispatching to the
+    // scheduler. This eliminates the sub-second race where the browser's
+    // HX-Refresh navigation to `/jobs/{job_id}/runs/{run_id}` would
+    // otherwise hit a 404 (and the log-viewer would flash "Unable to
+    // stream logs") because the scheduler task hadn't yet inserted the
+    // row. Row is reserved here; scheduler reuses this id.
+    let run_id = match queries::insert_running_run(&state.pool, job_id, "manual").await {
+        Ok(id) => id,
+        Err(err) => {
+            tracing::error!(target: "cronduit.web", error = %err, job_id, "run_now: insert failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Database error").into_response();
+        }
+    };
+
+    // 4. Dispatch the new variant carrying both ids. Scheduler's arm calls
+    // `run::run_job_with_existing_run_id` which skips the INSERT step.
+    match state
+        .cmd_tx
+        .send(SchedulerCmd::RunNowWithRunId { job_id, run_id })
+        .await
+    {
         Ok(()) => {
             tracing::info!(
                 target: "cronduit.web",
                 job_id,
+                run_id,
                 job_name = %job.name,
-                "Run Now requested via API"
+                "run_now: row inserted + scheduler notified (UI-19)"
             );
 
-            // 4. Return 200 with HX-Trigger for toast (D-10) + HX-Refresh so the
+            // 5. Return 200 with HX-Trigger for toast (D-10) + HX-Refresh so the
             // Job Detail page reloads and the newly queued run appears in the
             // run list without a manual refresh. Matches the reload/reroll
             // handler pattern in this module.
@@ -71,11 +95,32 @@ pub async fn run_now(
 
             (HxResponseTrigger::normal([event]), headers, StatusCode::OK).into_response()
         }
-        Err(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Scheduler is shutting down",
-        )
-            .into_response(),
+        Err(_) => {
+            // Scheduler mpsc receiver closed (shutting down). Finalize the
+            // just-inserted row as error so it doesn't linger in 'running'
+            // forever. T-11-06-04 mitigation.
+            tracing::warn!(
+                target: "cronduit.web",
+                job_id,
+                run_id,
+                "run_now: scheduler channel closed — finalizing pre-inserted row as error"
+            );
+            let _ = queries::finalize_run(
+                &state.pool,
+                run_id,
+                "error",
+                None,
+                tokio::time::Instant::now(),
+                Some("scheduler shutting down"),
+                None,
+            )
+            .await;
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Scheduler is shutting down",
+            )
+                .into_response()
+        }
     }
 }
 
