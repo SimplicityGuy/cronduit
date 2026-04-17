@@ -283,31 +283,69 @@ impl From<PgDbJobRow> for DbJob {
 }
 
 /// Insert a new job_runs row with status='running'. Returns the new run id.
+///
+/// Phase 11 DB-11: uses a two-statement transaction to atomically reserve a
+/// per-job sequential `job_run_number` from `jobs.next_run_number` and insert
+/// the new `job_runs` row with that number. The `UPDATE ... RETURNING
+/// next_run_number - 1` pattern gives us the pre-increment value (the number
+/// to assign to THIS row) while persisting the post-increment value for the
+/// next caller.
+///
+/// Concurrency: on SQLite the writer pool has `max_connections = 1` so the
+/// two statements are effectively serialized; on Postgres the tx block + row
+/// lock from UPDATE guarantees no two callers can read the same counter.
+/// Replaces the former `MAX + 1` race-prone pattern.
 pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> anyhow::Result<i64> {
     let now = chrono::Utc::now().to_rfc3339();
 
     match pool.writer() {
         PoolRef::Sqlite(p) => {
-            let row = sqlx::query(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time) VALUES (?1, 'running', ?2, ?3) RETURNING id",
+            let mut tx = p.begin().await?;
+            let reserved: i64 = sqlx::query_scalar(
+                "UPDATE jobs SET next_run_number = next_run_number + 1 \
+                 WHERE id = ?1 RETURNING next_run_number - 1",
+            )
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            let run_id: i64 = sqlx::query_scalar(
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
+                 VALUES (?1, 'running', ?2, ?3, ?4) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
-            .fetch_one(p)
+            .bind(reserved)
+            .fetch_one(&mut *tx)
             .await?;
-            Ok(row.get::<i64, _>("id"))
+
+            tx.commit().await?;
+            Ok(run_id)
         }
         PoolRef::Postgres(p) => {
-            let row = sqlx::query(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time) VALUES ($1, 'running', $2, $3) RETURNING id",
+            let mut tx = p.begin().await?;
+            let reserved: i64 = sqlx::query_scalar(
+                "UPDATE jobs SET next_run_number = next_run_number + 1 \
+                 WHERE id = $1 RETURNING next_run_number - 1",
+            )
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            let run_id: i64 = sqlx::query_scalar(
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
+                 VALUES ($1, 'running', $2, $3, $4) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
-            .fetch_one(p)
+            .bind(reserved)
+            .fetch_one(&mut *tx)
             .await?;
-            Ok(row.get::<i64, _>("id"))
+
+            tx.commit().await?;
+            Ok(run_id)
         }
     }
 }
