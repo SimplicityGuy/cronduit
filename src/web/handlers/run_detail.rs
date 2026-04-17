@@ -41,6 +41,12 @@ struct RunDetailPage {
     has_older: bool,
     next_offset: i64,
     csrf_token: String,
+    /// Max `job_logs.id` across the server-rendered backfill (0 when empty).
+    /// Consumed by templates (Plan 11-12) via `data-max-id="{{ last_log_id }}"`
+    /// on `#log-lines` so the client-side dedupe handler (Plan 11-11) can
+    /// compare SSE `event.lastEventId` against it and skip already-rendered
+    /// lines on reconnect (D-08 / D-09).
+    last_log_id: i64,
 }
 
 #[derive(Template)]
@@ -50,6 +56,8 @@ struct LogViewerPartial {
     logs: Vec<LogLineView>,
     has_older: bool,
     next_offset: i64,
+    /// Max `job_logs.id` across this partial's log page — see RunDetailPage.
+    last_log_id: i64,
 }
 
 #[derive(Template)]
@@ -60,6 +68,8 @@ struct StaticLogViewerPartial {
     total_logs: i64,
     has_older: bool,
     next_offset: i64,
+    /// Max `job_logs.id` across this partial's log page — see RunDetailPage.
+    last_log_id: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +172,7 @@ pub async fn run_detail(
     };
 
     let offset = params.offset.max(0);
-    let (logs, total_logs, has_older, next_offset, _last_log_id) =
+    let (logs, total_logs, has_older, next_offset, last_log_id) =
         fetch_logs(&state.pool, run_id, offset).await;
 
     if is_htmx {
@@ -171,6 +181,7 @@ pub async fn run_detail(
             logs,
             has_older,
             next_offset,
+            last_log_id,
         }
         .into_web_template()
         .into_response()
@@ -205,6 +216,7 @@ pub async fn run_detail(
             has_older,
             next_offset,
             csrf_token,
+            last_log_id,
         }
         .into_web_template()
         .into_response()
@@ -218,7 +230,7 @@ pub async fn log_viewer_partial(
     Query(params): Query<LogPaginationParams>,
 ) -> impl IntoResponse {
     let offset = params.offset.max(0);
-    let (logs, _total, has_older, next_offset, _last_log_id) =
+    let (logs, _total, has_older, next_offset, last_log_id) =
         fetch_logs(&state.pool, run_id, offset).await;
 
     LogViewerPartial {
@@ -226,6 +238,7 @@ pub async fn log_viewer_partial(
         logs,
         has_older,
         next_offset,
+        last_log_id,
     }
     .into_web_template()
     .into_response()
@@ -237,7 +250,7 @@ pub async fn static_log_partial(
     State(state): State<AppState>,
     Path(run_id): Path<i64>,
 ) -> impl IntoResponse {
-    let (logs, total_logs, has_older, next_offset, _last_log_id) =
+    let (logs, total_logs, has_older, next_offset, last_log_id) =
         fetch_logs(&state.pool, run_id, 0).await;
 
     StaticLogViewerPartial {
@@ -246,6 +259,7 @@ pub async fn static_log_partial(
         total_logs,
         has_older,
         next_offset,
+        last_log_id,
     }
     .into_web_template()
     .into_response()
