@@ -44,6 +44,28 @@ pub async fn sse_logs(
                 loop {
                     match rx.recv().await {
                         Ok(line) => {
+                            // Phase 11 D-10 / UI-17: detect the graceful
+                            // terminal sentinel broadcast by
+                            // `scheduler::run::continue_run` immediately
+                            // before `drop(broadcast_tx)`. `stream =
+                            // "__run_finished__"` is the pattern key; `line`
+                            // carries the `run_id` as a decimal string. Emit
+                            // `event: run_finished\ndata: {"run_id": N}\n\n`
+                            // and break the subscribe loop. The client
+                            // (Plan 11-11) listens for `sse:run_finished` and
+                            // swaps the running log pane to the static
+                            // partial. The existing `RecvError::Closed` arm
+                            // below stays as the abrupt-disconnect fallback
+                            // (emits `run_complete`) and is only reached when
+                            // a subscriber somehow misses the sentinel — e.g.
+                            // the client subscribed AFTER finalize_run
+                            // broadcast the sentinel but BEFORE drop() of
+                            // the sender.
+                            if line.stream == "__run_finished__" {
+                                let data = format!(r#"{{"run_id": {}}}"#, line.line);
+                                yield Ok(Event::default().event("run_finished").data(data));
+                                break;
+                            }
                             let html = format_log_line_html(&line);
                             // Phase 11 D-09 / UI-18: when the broadcast line
                             // carries a persisted `job_logs.id` (populated by
