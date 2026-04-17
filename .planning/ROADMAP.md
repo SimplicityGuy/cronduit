@@ -272,7 +272,7 @@ Full REQ-ID → phase traceability lives in [`REQUIREMENTS.md`](REQUIREMENTS.md#
 | Phase                                                      | Plans Complete | Status      | rc target        | Completed |
 | ---------------------------------------------------------- | -------------- | ----------- | ---------------- | --------- |
 | 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/10           | 10/10 | Complete   | 2026-04-15 |
-| 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | 12/15 | In Progress|  |
+| 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | 13/15 | In Progress|  |
 | 12. Docker Healthcheck + rc.1 Cut                          | 0/?            | Not started | `v1.1.0-rc.1` ◀  | —         |
 | 13. Observability Polish (rc.2)                            | 0/?            | Not started | `v1.1.0-rc.2` ◀  | —         |
 | 14. Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship         | 0/?            | Not started | `v1.1.0-rc.3` ◀ / `v1.1.0` | — |
