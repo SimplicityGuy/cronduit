@@ -760,4 +760,35 @@ mod tests {
             "absent id yields AlreadyFinalized (race case)"
         );
     }
+
+    /// Phase 11 Plan 11-06 (UI-19 fix): `SchedulerCmd::RunNowWithRunId`
+    /// variant carries both `job_id` AND the pre-inserted `run_id` so the
+    /// scheduler's handler arm can dispatch `run_job_with_existing_run_id`
+    /// instead of `run_job`. This test proves the variant exists, is
+    /// constructible, and carries both fields.
+    ///
+    /// Also proves the legacy `RunNow { job_id }` variant is STILL present
+    /// (not deleted) per RESEARCH Q1 RESOLVED — scheduled runs continue to
+    /// use it.
+    #[tokio::test]
+    async fn run_now_with_run_id_variant_carries_both_ids() {
+        let cmd = cmd::SchedulerCmd::RunNowWithRunId {
+            job_id: 7,
+            run_id: 42,
+        };
+        match cmd {
+            cmd::SchedulerCmd::RunNowWithRunId { job_id, run_id } => {
+                assert_eq!(job_id, 7);
+                assert_eq!(run_id, 42);
+            }
+            other => panic!("expected RunNowWithRunId, got {:?}", other),
+        }
+
+        // Legacy variant still exists (RESEARCH Q1 RESOLVED).
+        let legacy = cmd::SchedulerCmd::RunNow { job_id: 99 };
+        match legacy {
+            cmd::SchedulerCmd::RunNow { job_id } => assert_eq!(job_id, 99),
+            _ => panic!("legacy RunNow variant must remain — scheduled runs rely on it"),
+        }
+    }
 }
