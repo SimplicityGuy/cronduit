@@ -11,7 +11,25 @@ use tokio::sync::oneshot;
 #[derive(Debug)]
 pub enum SchedulerCmd {
     /// Trigger a manual run for a specific job (UI-12).
+    ///
+    /// Dispatched by the cron-tick scheduler when a scheduled run fires
+    /// (see `SchedulerLoop::run`'s fire-due-jobs path) and the legacy code
+    /// paths that rely on the scheduler inserting the `job_runs` row
+    /// itself via `run::run_job`. The scheduler handler arm calls
+    /// `run_job(pool, docker, job, "manual", cancel, active_runs)` which
+    /// performs the INSERT internally. Still used by the cron path after
+    /// Phase 11 (RESEARCH Q1 RESOLVED).
     RunNow { job_id: i64 },
+    /// Trigger a manual run where the `job_runs` row has ALREADY been
+    /// inserted on the API handler thread (Phase 11 UI-19 fix).
+    ///
+    /// Dispatched by `src/web/handlers/api.rs::run_now` which now inserts
+    /// the row synchronously before sending this command — the browser's
+    /// immediate follow-up navigation to `/jobs/{job_id}/runs/{run_id}`
+    /// therefore always finds an existing row (no 404, no transient
+    /// "Unable to stream logs" flash). The scheduler handler arm calls
+    /// `run_job_with_existing_run_id(...)` which SKIPS the INSERT step.
+    RunNowWithRunId { job_id: i64, run_id: i64 },
     /// Hot-reload config from disk (RELOAD-01, RELOAD-03).
     Reload {
         response_tx: oneshot::Sender<ReloadResult>,

@@ -24,7 +24,7 @@ pub mod script;
 pub mod sync;
 
 use crate::db::DbPool;
-use crate::db::queries::DbJob;
+use crate::db::queries::{self, DbJob};
 use bollard::Docker;
 use chrono::Utc;
 use chrono_tz::Tz;
@@ -209,6 +209,53 @@ impl SchedulerLoop {
                                 );
                             }
                         }
+                        Some(cmd::SchedulerCmd::RunNowWithRunId { job_id, run_id }) => {
+                            // Phase 11 UI-19 fix (Plan 11-06): the API handler
+                            // already inserted the job_runs row on the handler
+                            // thread before dispatching this command. We skip
+                            // the INSERT step by calling
+                            // `run_job_with_existing_run_id` which reuses the
+                            // pre-inserted run_id.
+                            if let Some(job) = self.jobs.get(&job_id) {
+                                let child_cancel = self.cancel.child_token();
+                                join_set.spawn(run::run_job_with_existing_run_id(
+                                    self.pool.clone(),
+                                    self.docker.clone(),
+                                    job.clone(),
+                                    run_id,
+                                    child_cancel,
+                                    self.active_runs.clone(),
+                                ));
+                                tracing::info!(
+                                    target: "cronduit.scheduler",
+                                    job_id,
+                                    run_id,
+                                    job_name = %job.name,
+                                    "manual run dispatched (row pre-inserted by API handler)"
+                                );
+                            } else {
+                                // Unknown job_id but the row already exists in
+                                // job_runs (the handler thread inserted it).
+                                // Finalize the orphan row as error so it does
+                                // not linger in 'running' state forever.
+                                tracing::warn!(
+                                    target: "cronduit.scheduler",
+                                    job_id,
+                                    run_id,
+                                    "RunNowWithRunId for unknown job — finalizing orphan row as error"
+                                );
+                                let _ = queries::finalize_run(
+                                    &self.pool,
+                                    run_id,
+                                    "error",
+                                    None,
+                                    tokio::time::Instant::now(),
+                                    Some("job no longer exists"),
+                                    None,
+                                )
+                                .await;
+                            }
+                        }
                         Some(cmd::SchedulerCmd::Reload { response_tx }) => {
                             let (result, new_heap) = reload::do_reload(
                                 &self.pool,
@@ -244,6 +291,42 @@ impl SchedulerLoop {
                                                 child_cancel,
                                                 self.active_runs.clone(),
                                             ));
+                                        }
+                                    }
+                                    cmd::SchedulerCmd::RunNowWithRunId { job_id: jid, run_id: rid } => {
+                                        // Phase 11 Plan 11-06 (UI-19 fix):
+                                        // drain-time handling of the pre-
+                                        // inserted variant. The row already
+                                        // exists — either dispatch the run or
+                                        // finalize it as error so it doesn't
+                                        // linger in 'running' forever.
+                                        if let Some(job) = self.jobs.get(&jid) {
+                                            let child_cancel = self.cancel.child_token();
+                                            join_set.spawn(run::run_job_with_existing_run_id(
+                                                self.pool.clone(),
+                                                self.docker.clone(),
+                                                job.clone(),
+                                                rid,
+                                                child_cancel,
+                                                self.active_runs.clone(),
+                                            ));
+                                        } else {
+                                            tracing::warn!(
+                                                target: "cronduit.scheduler",
+                                                job_id = jid,
+                                                run_id = rid,
+                                                "RunNowWithRunId (drained) for unknown job — finalizing orphan row as error"
+                                            );
+                                            let _ = queries::finalize_run(
+                                                &self.pool,
+                                                rid,
+                                                "error",
+                                                None,
+                                                tokio::time::Instant::now(),
+                                                Some("job no longer exists"),
+                                                None,
+                                            )
+                                            .await;
                                         }
                                     }
                                     cmd::SchedulerCmd::Reroll { job_id: rid, response_tx: tx } => {
