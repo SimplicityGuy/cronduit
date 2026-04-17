@@ -6,6 +6,7 @@
 //! D-13: Split migration directories are compile-time required because
 //! `sqlx::migrate!(PATH)` is a macro whose path is baked into the binary.
 
+pub mod migrate_backfill;
 pub mod queries;
 pub use queries::{
     DashboardJob, DbJob, DbLogLine, DbRun, DbRunDetail, Paginated, disable_missing_jobs,
@@ -95,6 +96,16 @@ impl DbPool {
     }
 
     /// Idempotent migration runner. Safe to call on every startup.
+    ///
+    /// Phase 11 ordering (D-12/D-13): `sqlx::migrate!` runs first (files 1+2
+    /// on this plan, all three files once Plan 11-04 lands). The chunked
+    /// backfill orchestrator then fills every `NULL job_run_number` and
+    /// resyncs `jobs.next_run_number`. A sentinel table `_v11_backfill_done`
+    /// makes re-runs O(1). Plan 11-04 adds a SECOND `sqlx::migrate!` call
+    /// AFTER the orchestrator so file 3 (NOT NULL) applies only after
+    /// pre-existing NULLs have been filled.
+    ///
+    /// Runs BEFORE the HTTP listener binds — no concurrent writers.
     pub async fn migrate(&self) -> anyhow::Result<()> {
         match self {
             DbPool::Sqlite { write, .. } => {
@@ -104,6 +115,11 @@ impl DbPool {
                 sqlx::migrate!("./migrations/postgres").run(pool).await?;
             }
         }
+        // Phase 11 D-12/D-13: chunked backfill + resync + sentinel marker.
+        // Fast-path: returns immediately if `_v11_backfill_done` already present.
+        migrate_backfill::backfill_job_run_number(self).await?;
+        // Plan 11-04 appends a SECOND sqlx::migrate! call here so file 3 (NOT NULL)
+        // applies AFTER the orchestrator has filled every NULL.
         Ok(())
     }
 
