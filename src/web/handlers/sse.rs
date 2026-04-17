@@ -45,7 +45,21 @@ pub async fn sse_logs(
                     match rx.recv().await {
                         Ok(line) => {
                             let html = format_log_line_html(&line);
-                            yield Ok(Event::default().event("log_line").data(html));
+                            // Phase 11 D-09 / UI-18: when the broadcast line
+                            // carries a persisted `job_logs.id` (populated by
+                            // `log_writer_task` after `insert_log_batch`'s
+                            // RETURNING id), emit it as the SSE frame's
+                            // `id:` field so the browser stores it and sends
+                            // `Last-Event-ID: n` on reconnect, and so the
+                            // HTMX SSE extension surfaces it as
+                            // `event.lastEventId` on the `sse:log_line` DOM
+                            // event for client-side dedupe against
+                            // `data-max-id` (Plan 11-11 / 11-14).
+                            let mut ev = Event::default().event("log_line").data(html);
+                            if let Some(id) = line.id {
+                                ev = ev.id(id.to_string());
+                            }
+                            yield Ok(ev);
                         }
                         Err(RecvError::Lagged(n)) => {
                             let marker = format!(
