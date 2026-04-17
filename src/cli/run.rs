@@ -1,6 +1,6 @@
 use crate::cli::Cli;
 use crate::config;
-use crate::db::{DbBackend, DbPool, strip_db_credentials};
+use crate::db::{DbBackend, DbPool, queries, strip_db_credentials};
 use crate::shutdown;
 use crate::web::{self, AppState};
 use secrecy::{ExposeSecret, SecretString};
@@ -61,6 +61,29 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     // 4. Open DB pool and run migrations (idempotent per DB-03).
     let pool = DbPool::connect(resolved_db_url.expose_secret()).await?;
     pool.migrate().await?;
+
+    // Phase 11 D-15 (verbatim from CONTEXT.md + ROADMAP): assert post-migration
+    // that every job_runs row has a non-null job_run_number. In production this
+    // can never fire (D-12 two-phase startup + D-14 fail-fast on migration error
+    // + file-3 NOT NULL constraint all enforce it). In tests it guards against
+    // future regressions that let the scheduler spawn against unbackfilled rows.
+    //
+    // Locked decision: CONTEXT.md D-15 says literally "Panic with a clear
+    // message if not." — we use panic!(), NOT anyhow::bail, to honor that
+    // wording. The message identifies the NULL count and the recovery path
+    // (restart is recoverable because backfill is idempotent).
+    let null_count = queries::count_job_runs_with_null_run_number(&pool)
+        .await
+        .expect("count_job_runs_with_null_run_number query must succeed");
+    if null_count > 0 {
+        panic!(
+            "Phase 11 backfill invariant violated: {} job_runs rows have NULL \
+             job_run_number after migration. Aborting scheduler startup to \
+             prevent inconsistent state. Re-run cronduit to retry backfill — \
+             file 2 (backfill) is idempotent on WHERE job_run_number IS NULL.",
+            null_count
+        );
+    }
 
     // 5. Sync config to DB and parse timezone.
     let tz: chrono_tz::Tz = cfg
