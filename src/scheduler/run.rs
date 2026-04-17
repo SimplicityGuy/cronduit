@@ -52,16 +52,22 @@ struct JobExecConfig {
     script: Option<String>,
 }
 
-/// Execute a job run through its full lifecycle.
+/// Execute a job run through its full lifecycle (scheduler-driven path).
 ///
-/// 1. Insert running row
-/// 2. Create log channel
-/// 3. Spawn log writer task
-/// 4. Dispatch to command/script executor
-/// 5. Close sender (signals log writer to finish)
-/// 6. Wait for log writer to complete
-/// 7. Finalize run
-/// 8. Return RunResult
+/// Used by the cron-tick dispatch + catch-up + the legacy
+/// `SchedulerCmd::RunNow` arm (RESEARCH Q1 RESOLVED: scheduled runs continue
+/// to insert the row here, on the scheduler task, exactly as before Phase
+/// 11). Manual UI "Run Now" clicks go through `run_job_with_existing_run_id`
+/// instead — that path has the API handler insert the row on the handler
+/// thread first to eliminate the run-detail 404 race (UI-19).
+///
+/// 1. Insert running row (via `insert_running_run` — the row creator)
+/// 2. `continue_run` handles the rest of the lifecycle:
+///    - Create log channel
+///    - Spawn log writer task
+///    - Dispatch to command/script/docker executor
+///    - Close sender + wait for log writer
+///    - Finalize run, record metrics, remove broadcast_tx
 pub async fn run_job(
     pool: DbPool,
     docker: Option<Docker>,
@@ -72,7 +78,7 @@ pub async fn run_job(
 ) -> RunResult {
     let start = tokio::time::Instant::now();
 
-    // 1. Insert running row.
+    // 1. Insert running row (scheduler-driven path owns this step).
     let run_id = match insert_running_run(&pool, job.id, &trigger).await {
         Ok(id) => id,
         Err(e) => {
@@ -97,6 +103,56 @@ pub async fn run_job(
         "run started"
     );
 
+    // 2. Hand off to the shared lifecycle helper.
+    continue_run(pool, docker, job, run_id, start, cancel, active_runs).await
+}
+
+/// Execute a job run through its lifecycle with a PRE-INSERTED run_id.
+///
+/// Used by the UI Run Now path (Phase 11 UI-19 fix): the API handler at
+/// `src/web/handlers/api.rs::run_now` inserts the `job_runs` row on the
+/// handler thread BEFORE returning `HX-Refresh: true`, so the browser's
+/// immediate navigation to `/jobs/{job_id}/runs/{run_id}` always finds the
+/// row. The scheduler's `SchedulerCmd::RunNowWithRunId` arm dispatches this
+/// function with the pre-inserted id; this function SKIPS the insert step
+/// and calls the shared `continue_run` helper for the rest of the lifecycle.
+///
+/// The legacy scheduler-driven `run_job` path is preserved unchanged for
+/// cron-tick + catch-up runs (RESEARCH Q1 RESOLVED).
+pub async fn run_job_with_existing_run_id(
+    pool: DbPool,
+    docker: Option<Docker>,
+    job: DbJob,
+    run_id: i64,
+    cancel: CancellationToken,
+    active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
+) -> RunResult {
+    let start = tokio::time::Instant::now();
+    tracing::info!(
+        target: "cronduit.run",
+        job = %job.name,
+        run_id,
+        trigger = "manual",
+        "run started (pre-inserted by handler — UI-19)"
+    );
+    continue_run(pool, docker, job, run_id, start, cancel, active_runs).await
+}
+
+/// Shared per-run lifecycle AFTER the `job_runs` row has been inserted.
+///
+/// Callers (`run_job`, `run_job_with_existing_run_id`) are responsible for
+/// the INSERT step; this helper handles everything downstream:
+/// broadcast channel creation, active_runs insertion, executor dispatch,
+/// log writer task lifecycle, finalization, metrics, cleanup.
+async fn continue_run(
+    pool: DbPool,
+    docker: Option<Docker>,
+    job: DbJob,
+    run_id: i64,
+    start: tokio::time::Instant,
+    cancel: CancellationToken,
+    active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
+) -> RunResult {
     // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
 
