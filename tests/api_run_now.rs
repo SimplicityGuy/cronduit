@@ -114,21 +114,31 @@ async fn run_now_dispatches_scheduler_cmd_and_returns_hx_refresh() {
         "HX-Refresh must be \"true\" so the dashboard/job detail refreshes and the newly queued run appears"
     );
 
-    // The handler must have dispatched exactly one SchedulerCmd::RunNow
-    // with the correct job_id through the mpsc channel (D-08, UI-12).
+    // The handler must have dispatched exactly one
+    // SchedulerCmd::RunNowWithRunId (Phase 11 Plan 11-06 UI-19 fix). The
+    // handler thread inserts the job_runs row synchronously BEFORE sending
+    // the command — the `run_id` in the payload is that pre-inserted id
+    // which the scheduler then passes to `run_job_with_existing_run_id`.
     let cmd = tokio::time::timeout(std::time::Duration::from_millis(500), cmd_rx.recv())
         .await
         .expect("cmd channel must receive a message within 500ms")
         .expect("channel must not be closed");
 
     match cmd {
-        SchedulerCmd::RunNow { job_id: got } => {
+        SchedulerCmd::RunNowWithRunId {
+            job_id: got,
+            run_id,
+        } => {
             assert_eq!(
                 got, job_id,
-                "RunNow must carry the job_id from the URL path"
+                "RunNowWithRunId must carry the job_id from the URL path"
+            );
+            assert!(
+                run_id > 0,
+                "RunNowWithRunId must carry a non-zero pre-inserted run_id"
             );
         }
-        other => panic!("expected SchedulerCmd::RunNow, got {:?}", other),
+        other => panic!("expected SchedulerCmd::RunNowWithRunId, got {:?}", other),
     }
 }
 
