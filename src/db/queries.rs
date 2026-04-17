@@ -943,6 +943,214 @@ pub async fn wal_checkpoint(pool: &DbPool) -> Result<(), sqlx::Error> {
     }
 }
 
+// ── Phase 11 backfill helpers (DB-09/10/11/12) ───────────────────────────
+
+/// Phase 11 backfill batch: update up to `batch_size` rows where
+/// `job_run_number IS NULL`, assigning a per-job sequential number via
+/// `ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC)` so the result
+/// is deterministic and idempotent across partial-crash re-runs.
+///
+/// Returns the number of rows actually updated. Zero rows means the backfill
+/// is complete (or un-progressable, which is the same thing since the
+/// `WHERE job_run_number IS NULL` guard re-applies).
+///
+/// Uses the portable `UPDATE ... WHERE id IN (SELECT ... LIMIT N)` form per
+/// RESEARCH Open Question Q3 (RESOLVED): simpler than `UPDATE ... FROM ...`
+/// and works identically on SQLite 3.33+ and Postgres 9.x+.
+pub async fn backfill_job_run_number_batch(
+    pool: &DbPool,
+    batch_size: i64,
+) -> anyhow::Result<i64> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            let result = sqlx::query(
+                "UPDATE job_runs \
+                 SET job_run_number = ( \
+                    SELECT rn FROM ( \
+                        SELECT id, \
+                               ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC) AS rn \
+                        FROM job_runs \
+                        WHERE job_run_number IS NULL \
+                    ) s WHERE s.id = job_runs.id \
+                 ) \
+                 WHERE id IN ( \
+                    SELECT id FROM job_runs \
+                    WHERE job_run_number IS NULL \
+                    ORDER BY id ASC \
+                    LIMIT ?1 \
+                 )",
+            )
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+        PoolRef::Postgres(p) => {
+            let result = sqlx::query(
+                "UPDATE job_runs \
+                 SET job_run_number = s.rn \
+                 FROM ( \
+                    SELECT id, \
+                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC) AS rn \
+                    FROM job_runs \
+                    WHERE job_run_number IS NULL \
+                 ) s \
+                 WHERE job_runs.id = s.id \
+                   AND job_runs.id IN ( \
+                        SELECT id FROM job_runs \
+                        WHERE job_run_number IS NULL \
+                        ORDER BY id ASC \
+                        LIMIT $1 \
+                   )",
+            )
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+    }
+}
+
+/// Phase 11 post-backfill resync: set `jobs.next_run_number` to one more
+/// than the current max `job_run_number` per job. Idempotent by construction.
+pub async fn resync_next_run_number(pool: &DbPool) -> anyhow::Result<()> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            sqlx::query(
+                "UPDATE jobs \
+                 SET next_run_number = COALESCE( \
+                    (SELECT MAX(job_run_number) + 1 \
+                     FROM job_runs \
+                     WHERE job_runs.job_id = jobs.id), \
+                    1 \
+                 )",
+            )
+            .execute(p)
+            .await?;
+        }
+        PoolRef::Postgres(p) => {
+            sqlx::query(
+                "UPDATE jobs \
+                 SET next_run_number = COALESCE( \
+                    (SELECT MAX(job_run_number) + 1 \
+                     FROM job_runs \
+                     WHERE job_runs.job_id = jobs.id), \
+                    1 \
+                 )",
+            )
+            .execute(p)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Phase 11 DB-15 startup assertion support: counts rows where
+/// `job_run_number IS NULL`. Must return 0 after migrations complete.
+pub async fn count_job_runs_with_null_run_number(pool: &DbPool) -> anyhow::Result<i64> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM job_runs WHERE job_run_number IS NULL",
+            )
+            .fetch_one(p)
+            .await?;
+            Ok(n)
+        }
+        PoolRef::Postgres(p) => {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM job_runs WHERE job_run_number IS NULL",
+            )
+            .fetch_one(p)
+            .await?;
+            Ok(n)
+        }
+    }
+}
+
+/// Phase 11 sentinel check: returns true iff `_v11_backfill_done` exists and
+/// contains a row. O(1) fast-path for the orchestrator's re-run short-circuit.
+pub async fn v11_backfill_sentinel_exists(pool: &DbPool) -> anyhow::Result<bool> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let table_exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'table' AND name = '_v11_backfill_done'",
+            )
+            .fetch_one(p)
+            .await?;
+            if table_exists == 0 {
+                return Ok(false);
+            }
+            let row_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM _v11_backfill_done")
+                    .fetch_one(p)
+                    .await?;
+            Ok(row_count > 0)
+        }
+        PoolRef::Postgres(p) => {
+            let table_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS ( \
+                    SELECT 1 FROM information_schema.tables \
+                    WHERE table_name = '_v11_backfill_done' \
+                 )",
+            )
+            .fetch_one(p)
+            .await?;
+            if !table_exists {
+                return Ok(false);
+            }
+            let row_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM _v11_backfill_done")
+                    .fetch_one(p)
+                    .await?;
+            Ok(row_count > 0)
+        }
+    }
+}
+
+/// Phase 11 sentinel write: ensures `_v11_backfill_done` exists with one
+/// marker row. Idempotent (CREATE TABLE IF NOT EXISTS + INSERT guarded by
+/// a single-row unique primary key).
+pub async fn v11_backfill_sentinel_mark_done(pool: &DbPool) -> anyhow::Result<()> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS _v11_backfill_done ( \
+                    id INTEGER PRIMARY KEY CHECK (id = 1), \
+                    finished_at TEXT NOT NULL \
+                 )",
+            )
+            .execute(p)
+            .await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO _v11_backfill_done (id, finished_at) VALUES (1, ?1)",
+            )
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(p)
+            .await?;
+        }
+        PoolRef::Postgres(p) => {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS _v11_backfill_done ( \
+                    id SMALLINT PRIMARY KEY CHECK (id = 1), \
+                    finished_at TEXT NOT NULL \
+                 )",
+            )
+            .execute(p)
+            .await?;
+            sqlx::query(
+                "INSERT INTO _v11_backfill_done (id, finished_at) VALUES (1, $1) \
+                 ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(p)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
