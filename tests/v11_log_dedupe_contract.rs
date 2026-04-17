@@ -71,6 +71,40 @@ async fn build_test_app() -> (Router, DbPool) {
     (router, pool)
 }
 
+/// Variant of `build_test_app` that wires the job-detail route (`/jobs/{job_id}`)
+/// instead of run-detail. Used by `run_history_renders_run_number_and_title_attr`
+/// which needs the `run_history.html` partial rendered inside the job-detail page.
+async fn build_test_app_with_job_detail() -> (Router, DbPool) {
+    let pool = DbPool::connect("sqlite::memory:")
+        .await
+        .expect("in-memory sqlite pool");
+    pool.migrate().await.expect("run migrations");
+
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::channel::<SchedulerCmd>(16);
+
+    let metrics_handle = setup_metrics();
+
+    let state = AppState {
+        started_at: chrono::Utc::now(),
+        version: "test",
+        pool: pool.clone(),
+        cmd_tx,
+        config_path: std::path::PathBuf::from("/tmp/cronduit-test.toml"),
+        tz: chrono_tz::UTC,
+        last_reload: Arc::new(Mutex::new(None::<ReloadState>)),
+        watch_config: false,
+        metrics_handle,
+        active_runs: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+    };
+
+    let router = Router::new()
+        .route("/jobs/{job_id}", get(handlers::job_detail::job_detail))
+        .with_state(state)
+        .layer(middleware::from_fn(csrf::ensure_csrf_cookie));
+
+    (router, pool)
+}
+
 /// T-V11-LOG-03 / VALIDATION 11-11-01: the inline dedupe script on
 /// run_detail.html references `dataset.maxId` as the high-water-mark cursor
 /// and calls `preventDefault()` to drop frames at or below it.
@@ -234,14 +268,89 @@ async fn v11_dedupe_contract() {
     assert_eq!(max, 102);
 }
 
+/// VALIDATION 11-12-01: the server-rendered run-detail page carries
+/// `data-max-id="{N}"` on `#log-lines` where N is the max `job_logs.id`
+/// across the backfilled page. Locks the D-08/D-09 wire contract: Plan 11-11's
+/// dedupe handler reads this attribute to discard SSE frames with
+/// `lastEventId <= N`.
 #[tokio::test]
-#[ignore = "Wave-0 stub — real body lands in Plan 11-12"]
 async fn data_max_id_rendered() {
-    assert!(true, "stub — see Plan 11-12");
+    let (app, pool) = build_test_app().await;
+    let job_id = seed_test_job(&pool, "maxid-job").await;
+    let run_id = seed_running_run(&pool, job_id).await;
+    let batch = make_test_batch(5);
+    let ids = cronduit::db::queries::insert_log_batch(&pool, run_id, &batch)
+        .await
+        .expect("insert log batch");
+    let max = *ids.last().expect("at least one inserted id");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/jobs/{}/runs/{}", job_id, run_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("run_detail oneshot");
+    let body_bytes = axum::body::to_bytes(response.into_body(), 10 * 1024 * 1024)
+        .await
+        .expect("read body");
+    let body = String::from_utf8_lossy(&body_bytes);
+
+    let needle = format!("data-max-id=\"{}\"", max);
+    assert!(
+        body.contains(&needle),
+        "data-max-id must equal {} (last inserted log id); first 800 chars: {}",
+        max,
+        &body.chars().take(800).collect::<String>()
+    );
 }
 
+/// VALIDATION 11-12-03: the run_history partial included on the job-detail
+/// page renders the per-job `#N` cell for each run and the row-level
+/// `title="global id: ..."` hover tooltip (D-04). Proves the UI-16 template
+/// diff is wired for all runs on the page, not just a single one.
 #[tokio::test]
-#[ignore = "Wave-0 stub — real body lands in Plan 11-12"]
 async fn run_history_renders_run_number_and_title_attr() {
-    assert!(true, "stub — see Plan 11-12");
+    let (app, pool) = build_test_app_with_job_detail().await;
+    let job_id = seed_test_job(&pool, "history-job").await;
+    let mut run_ids: Vec<i64> = Vec::with_capacity(3);
+    for _ in 0..3 {
+        run_ids.push(seed_running_run(&pool, job_id).await);
+    }
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/jobs/{}", job_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("job_detail oneshot");
+    let body_bytes = axum::body::to_bytes(response.into_body(), 10 * 1024 * 1024)
+        .await
+        .expect("read body");
+    let body = String::from_utf8_lossy(&body_bytes);
+
+    assert!(body.contains("#1"), "run history must render #1");
+    assert!(body.contains("#2"), "run history must render #2");
+    assert!(body.contains("#3"), "run history must render #3");
+    assert!(
+        body.contains("title=\"global id:"),
+        "row-level global id tooltip must be present; body tail: {}",
+        &body.chars().rev().take(400).collect::<String>()
+    );
+    // Each inserted global id should appear on its row's tooltip.
+    for id in &run_ids {
+        let needle = format!("global id: {}", id);
+        assert!(
+            body.contains(&needle),
+            "tooltip must contain 'global id: {}'",
+            id
+        );
+    }
 }

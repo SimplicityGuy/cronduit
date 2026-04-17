@@ -234,8 +234,43 @@ async fn get_recent_job_logs_chronological() {
     );
 }
 
+/// VALIDATION 11-12-02: the run-detail `<h1>` renders `Run #N` (where N is
+/// the per-job `job_run_number`) as primary text followed by a muted
+/// `(id {global})` suffix per D-05. Also asserts the `<title>` and breadcrumb
+/// tail both use `Run #N`. Seeds a single run so `job_run_number` is 1.
 #[tokio::test]
-#[ignore = "Wave-0 stub — real body lands in Plan 11-12"]
 async fn header_renders_runnum_with_id_suffix() {
-    assert!(true, "stub — see Plan 11-12");
+    let (app, pool) = build_test_app().await;
+    let job_id = seed_test_job(&pool, "hdr-job").await;
+    let run_id = seed_running_run(&pool, job_id).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/jobs/{}/runs/{}", job_id, run_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("run_detail oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body_bytes = axum::body::to_bytes(response.into_body(), 10 * 1024 * 1024)
+        .await
+        .expect("read body");
+    let body = String::from_utf8_lossy(&body_bytes);
+
+    assert!(
+        body.contains("Run #1"),
+        "header primary must read 'Run #1' (job_run_number); first 400 chars: {}",
+        &body.chars().take(400).collect::<String>()
+    );
+    let id_suffix = format!("(id {})", run_id);
+    assert!(
+        body.contains(&id_suffix),
+        "header muted suffix must read '(id {})'; first 400 chars: {}",
+        run_id,
+        &body.chars().take(400).collect::<String>()
+    );
 }
