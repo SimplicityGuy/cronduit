@@ -113,7 +113,38 @@
     autoScroll = (logLines.scrollTop + logLines.clientHeight >= logLines.scrollHeight - 50);
   });
 
+  // Phase 11 D-09 dedupe: drop SSE frames already rendered server-side.
+  // HTMX SSE extension fires htmx:sseBeforeMessage as a cancellable event
+  // (assets/vendor/htmx-ext-sse.js:119). Calling evt.preventDefault() on
+  // that hook makes the extension skip the default swap for this frame.
+  // We compare event.lastEventId (the SSE id: field emitted by Plan 11-08)
+  // against #log-lines.dataset.maxId (rendered server-side by Plan 11-12
+  // from RunDetailPage.last_log_id) and drop anything at or below the
+  // high-water mark. Accepted ids advance the cursor.
+  logLines.addEventListener('htmx:sseBeforeMessage', function(evt) {
+    if (!evt.detail || evt.detail.type !== 'log_line') return;
+    var incoming = parseInt(evt.detail.lastEventId || '0', 10) || 0;
+    var max = parseInt(logLines.dataset.maxId || '0', 10);
+    if (incoming && incoming <= max) { evt.preventDefault(); return; }
+    if (incoming > max) { logLines.dataset.maxId = String(incoming); }
+  });
+
+  // Phase 11 D-10 graceful terminal: swap live view to static partial when
+  // the scheduler broadcasts the __run_finished__ sentinel. Plan 11-10 emits
+  // `event: run_finished\ndata: {"run_id": N}` immediately before
+  // drop(broadcast_tx). The existing sse:run_complete listener below stays
+  // in place as the abrupt-disconnect fallback (RecvError::Closed path).
+  logLines.addEventListener('sse:run_finished', function() {
+    if (typeof htmx !== 'undefined' && htmx.ajax) {
+      htmx.ajax('GET', '/partials/runs/{{ run_id }}/logs', {
+        target: '#log-container',
+        swap: 'outerHTML'
+      });
+    }
+  });
+
   // Listen for run_complete SSE event -- HTMX OOB swap to static view per D-04
+  // (abrupt-disconnect fallback; graceful path is sse:run_finished above).
   logLines.addEventListener('sse:run_complete', function(e) {
     htmx.ajax('GET', '/partials/runs/{{ run_id }}/logs', {
       target: '#log-container',
