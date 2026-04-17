@@ -77,8 +77,8 @@ async fn seed_run_with_status(
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             let row = sqlx::query(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time, end_time, error_message) \
-                 VALUES (?1, ?2, 'scheduled', ?3, ?4, ?5) RETURNING id",
+                "INSERT INTO job_runs (job_id, job_run_number, status, trigger, start_time, end_time, error_message) \
+                 VALUES (?1, 1, ?2, 'scheduled', ?3, ?4, ?5) RETURNING id",
             )
             .bind(job_id)
             .bind(status)
@@ -92,8 +92,8 @@ async fn seed_run_with_status(
         }
         PoolRef::Postgres(p) => {
             let row = sqlx::query(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time, end_time, error_message) \
-                 VALUES ($1, $2, 'scheduled', $3, $4, $5) RETURNING id",
+                "INSERT INTO job_runs (job_id, job_run_number, status, trigger, start_time, end_time, error_message) \
+                 VALUES ($1, 1, $2, 'scheduled', $3, $4, $5) RETURNING id",
             )
             .bind(job_id)
             .bind(status)
