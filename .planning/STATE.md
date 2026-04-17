@@ -4,8 +4,8 @@ milestone: v1.1
 milestone_name: — Operator Quality of Life
 status: executing
 stopped_at: Phase 11 UI-SPEC approved
-last_updated: "2026-04-16T23:18:46.859Z"
-last_activity: 2026-04-16 -- Phase 11 planning complete
+last_updated: "2026-04-16T23:40:55.919Z"
+last_activity: 2026-04-16 -- Phase 11 execution started
 progress:
   total_phases: 5
   completed_phases: 1
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 10 — stop-a-running-job-hygiene-preamble
+**Current focus:** Phase 11 — per-job-run-numbers-log-ux-fixes
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 10 (stop-a-running-job-hygiene-preamble) — EXECUTING
-Plan: 1 of 10
-Status: Ready to execute
-Last activity: 2026-04-16 -- Phase 11 planning complete
+Phase: 11 (per-job-run-numbers-log-ux-fixes) — EXECUTING
+Plan: 1 of 15
+Status: Executing Phase 11
+Last activity: 2026-04-16 -- Phase 11 execution started
 
 Progress: [░░░░░░░░░░] 0% (0 of 5 v1.1 phases complete)
 
