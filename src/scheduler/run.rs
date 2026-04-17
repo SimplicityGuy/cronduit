@@ -392,11 +392,20 @@ fn classify_failure_reason(status: &str, error_msg: Option<&str>) -> FailureReas
     }
 }
 
-/// Log writer task that drains log lines from the receiver in micro-batches
-/// and inserts them into job_logs, while also publishing each line to the
-/// broadcast channel for SSE subscribers (UI-14).
+/// Log writer task that drains log lines from the receiver in micro-batches,
+/// inserts them into job_logs, then broadcasts each persisted line (with its
+/// `job_logs.id` populated from `RETURNING id`) to the SSE channel (UI-14).
 ///
 /// D-12: Micro-batch inserts of DEFAULT_BATCH_SIZE (64) lines per transaction.
+///
+/// Phase 11 D-01 / UI-20 (Option A): insert-then-broadcast. After
+/// `insert_log_batch` returns `Vec<i64>`, we zip the ids with the input batch
+/// (guaranteed equal length) and send each `LogLine { id: Some(id), ..line }`
+/// through the broadcast channel. Subscribers never see a line that has not
+/// yet been persisted; on insert error, we broadcast nothing (the operator
+/// sees the failure via the `cronduit.log_writer` tracing target, and the
+/// run will show no logs for that batch — the D-01 "never leak unpersisted
+/// lines" choice).
 async fn log_writer_task(
     pool: DbPool,
     run_id: i64,
@@ -409,22 +418,35 @@ async fn log_writer_task(
             // Channel closed and fully drained.
             break;
         }
-        // Publish each line to the broadcast channel for SSE subscribers.
-        // Ignore SendError if no subscribers are connected (T-6-02).
-        for line in &batch {
-            let _ = broadcast_tx.send(line.clone());
-        }
+        // Phase 11 D-01 / UI-20: persist FIRST, then broadcast with the
+        // `RETURNING id` values zipped onto each line so subscribers can
+        // dedupe on a stable, monotonic identifier.
         let tuples: Vec<(String, String, String)> = batch
-            .into_iter()
-            .map(|l| (l.stream, l.ts, l.line))
+            .iter()
+            .map(|l| (l.stream.clone(), l.ts.clone(), l.line.clone()))
             .collect();
-        if let Err(e) = insert_log_batch(&pool, run_id, &tuples).await {
-            tracing::error!(
-                target: "cronduit.log_writer",
-                run_id,
-                error = %e,
-                "failed to insert log batch"
-            );
+        match insert_log_batch(&pool, run_id, &tuples).await {
+            Ok(ids) => {
+                // SQLite INTEGER PRIMARY KEY and Postgres BIGSERIAL both
+                // preserve insert order inside a single tx, so zipping the
+                // returned `Vec<i64>` with `batch` in input order assigns
+                // each line its own persisted id.
+                for (line, id) in batch.into_iter().zip(ids.into_iter()) {
+                    let _ = broadcast_tx.send(LogLine {
+                        id: Some(id),
+                        ..line
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "cronduit.log_writer",
+                    run_id,
+                    error = %e,
+                    "failed to insert log batch"
+                );
+                // Subscribers never see unpersisted lines (D-01 lock).
+            }
         }
     }
 }
