@@ -27,6 +27,48 @@ pub async fn setup_sqlite_with_phase11_migrations() -> DbPool {
     pool
 }
 
+/// Connect to an in-memory SQLite DB and apply only the initial schema + file 1
+/// (nullable `job_run_number`) + file 2 (backfill marker). File 3 (NOT NULL
+/// tightening, landed by Plan 11-04) is **not** applied, so `job_run_number`
+/// remains nullable and the backfill orchestrator can exercise its seeding +
+/// chunk loop on NULL-filled rows.
+///
+/// This fixture is the "pre-file-3" state used by `migration_01_*` (which
+/// asserts the nullable column shape) and `migration_02_*` (which seeds rows
+/// with NULL job_run_number, then invokes the backfill orchestrator).
+/// `migration_03_*` uses the full `setup_sqlite_with_phase11_migrations`
+/// because its assertions depend on file 3 having run.
+///
+/// Implementation: applies each migration file's SQL directly against the
+/// writer pool. Does **not** populate `_sqlx_migrations` — the sqlx bookkeeping
+/// is irrelevant for these tests because they never call `DbPool::migrate`
+/// afterwards. (Tests that do call `DbPool::migrate` post-setup — like
+/// `migration_01_idempotent` — continue to use `setup_sqlite_with_phase11_migrations`
+/// and accept the full all-three-files state.)
+pub async fn setup_sqlite_before_file3_migrations() -> DbPool {
+    let pool = DbPool::connect("sqlite::memory:")
+        .await
+        .expect("connect in-memory sqlite");
+    let writer = match pool.writer() {
+        PoolRef::Sqlite(p) => p.clone(),
+        _ => panic!("sqlite-only fixture"),
+    };
+    // Apply files 0, 1, 2 SQL directly. File names tracked manually here so
+    // the fixture is explicit about which migrations it stops before.
+    let files = [
+        include_str!("../../migrations/sqlite/20260410_000000_initial.up.sql"),
+        include_str!("../../migrations/sqlite/20260416_000001_job_run_number_add.up.sql"),
+        include_str!("../../migrations/sqlite/20260417_000002_job_run_number_backfill.up.sql"),
+    ];
+    for sql in files {
+        sqlx::query(sql)
+            .execute(&writer)
+            .await
+            .expect("apply migration sql");
+    }
+    pool
+}
+
 /// Seed a minimally-valid `jobs` row and return its id.
 ///
 /// Matches the columns in the initial migration exactly. Downstream plans that

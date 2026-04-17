@@ -15,7 +15,10 @@ mod common;
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use common::v11_fixtures::{seed_null_runs, seed_test_job, setup_sqlite_with_phase11_migrations};
+use common::v11_fixtures::{
+    seed_null_runs, seed_test_job, setup_sqlite_before_file3_migrations,
+    setup_sqlite_with_phase11_migrations,
+};
 use cronduit::db::DbPool;
 use cronduit::db::migrate_backfill;
 use cronduit::db::queries::{self, PoolRef};
@@ -60,7 +63,11 @@ impl<'a> MakeWriter<'a> for CapturedWriter {
 
 #[tokio::test]
 async fn migration_01_add_nullable_columns() {
-    let pool = setup_sqlite_with_phase11_migrations().await;
+    // File 1 asserts the **nullable** column shape — so we use the
+    // pre-file-3 fixture (applies files 0, 1, 2 but NOT file 3's NOT NULL
+    // tightening). Post-file-3 the nullable assertion at line `jrn.2, 0`
+    // would fail because the constraint is now NOT NULL.
+    let pool = setup_sqlite_before_file3_migrations().await;
     let sqlite_pool = match pool.writer() {
         PoolRef::Sqlite(p) => p,
         _ => panic!("sqlite-only test"),
@@ -122,7 +129,10 @@ async fn migration_01_idempotent() {
 
 #[tokio::test]
 async fn migration_02_backfill_completes() {
-    let pool = setup_sqlite_with_phase11_migrations().await;
+    // Backfill tests need the column NULLABLE so `seed_null_runs` can insert
+    // NULL job_run_number rows for the orchestrator to fill — use the
+    // pre-file-3 fixture.
+    let pool = setup_sqlite_before_file3_migrations().await;
     reset_sentinel(&pool).await;
 
     // Seed 3 jobs with 10, 8, 7 NULL job_run_number rows respectively.
@@ -180,7 +190,8 @@ async fn migration_02_logs_progress() {
         .with_ansi(false)
         .finish();
 
-    let pool = setup_sqlite_with_phase11_migrations().await;
+    // Pre-file-3 state — see migration_02_backfill_completes for rationale.
+    let pool = setup_sqlite_before_file3_migrations().await;
     reset_sentinel(&pool).await;
 
     let j1 = seed_test_job(&pool, "log-job-one").await;
@@ -247,7 +258,8 @@ async fn migration_02_resume_after_crash() {
     // the full orchestrator and confirm remaining rows get backfilled without
     // double-counting (the `WHERE job_run_number IS NULL` guard makes the batch
     // restart clean).
-    let pool = setup_sqlite_with_phase11_migrations().await;
+    // Pre-file-3 state — see migration_02_backfill_completes for rationale.
+    let pool = setup_sqlite_before_file3_migrations().await;
     reset_sentinel(&pool).await;
 
     let j1 = seed_test_job(&pool, "crash-job").await;
@@ -312,7 +324,8 @@ async fn migration_02_resume_after_crash() {
 
 #[tokio::test]
 async fn migration_02_counter_reseed() {
-    let pool = setup_sqlite_with_phase11_migrations().await;
+    // Pre-file-3 state — see migration_02_backfill_completes for rationale.
+    let pool = setup_sqlite_before_file3_migrations().await;
     reset_sentinel(&pool).await;
 
     let j1 = seed_test_job(&pool, "counter-job-one").await;
@@ -347,7 +360,8 @@ async fn migration_02_counter_reseed() {
 async fn migration_02_row_number_order_by_id() {
     // Seed rows whose start_time is DESCENDING while id is ASCENDING. The
     // backfill must number by id ASC (insert order), NOT by start_time.
-    let pool = setup_sqlite_with_phase11_migrations().await;
+    // Pre-file-3 state — see migration_02_backfill_completes for rationale.
+    let pool = setup_sqlite_before_file3_migrations().await;
     reset_sentinel(&pool).await;
 
     let j1 = seed_test_job(&pool, "order-job").await;
@@ -401,21 +415,124 @@ async fn migration_02_row_number_order_by_id() {
     );
 }
 
+// ── Plan 11-04 migration_03_* (file 3: NOT NULL tightening + unique index) ──
+
 #[tokio::test]
-#[ignore = "Wave-0 stub — real body lands in Plan 11-04"]
 async fn migration_03_sqlite_table_rewrite() {
-    assert!(true, "stub — see Plan 11-04");
+    // After file 3 runs via DbPool::migrate(), job_run_number is NOT NULL.
+    // A direct INSERT with NULL job_run_number MUST fail.
+    let pool = setup_sqlite_with_phase11_migrations().await;
+    let sqlite_pool = match pool.writer() {
+        PoolRef::Sqlite(p) => p,
+        _ => panic!("sqlite-only"),
+    };
+    let job_id = seed_test_job(&pool, "nn-job").await;
+    let now = chrono::Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
+         VALUES (?1, 'running', 'manual', ?2, NULL)",
+    )
+    .bind(job_id)
+    .bind(&now)
+    .execute(sqlite_pool)
+    .await;
+    assert!(
+        result.is_err(),
+        "NULL job_run_number must be rejected after file 3"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.to_lowercase().contains("not null"),
+        "expected NOT NULL constraint violation, got: {err_msg}"
+    );
 }
 
 #[tokio::test]
-#[ignore = "Wave-0 stub — real body lands in Plan 11-04"]
 async fn migration_03_sqlite_indexes_preserved() {
-    assert!(true, "stub — see Plan 11-04");
+    // The 12-step table rewrite drops + recreates `job_runs`. All three indexes
+    // (two carried forward + the new UNIQUE (job_id, job_run_number)) must exist.
+    let pool = setup_sqlite_with_phase11_migrations().await;
+    let sqlite_pool = match pool.reader() {
+        PoolRef::Sqlite(p) => p,
+        _ => panic!("sqlite-only"),
+    };
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='job_runs'",
+    )
+    .fetch_all(sqlite_pool)
+    .await
+    .expect("fetch index names");
+    assert!(
+        names.iter().any(|n| n == "idx_job_runs_job_id_start"),
+        "expected idx_job_runs_job_id_start to survive rewrite; got: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "idx_job_runs_start_time"),
+        "expected idx_job_runs_start_time to survive rewrite; got: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "idx_job_runs_job_id_run_number"),
+        "expected file-3's UNIQUE idx_job_runs_job_id_run_number; got: {names:?}"
+    );
 }
 
 #[cfg(feature = "integration")]
 #[tokio::test]
-#[ignore = "Wave-0 stub — real body lands in Plan 11-04 (integration-gated)"]
 async fn migration_03_postgres_not_null() {
-    assert!(true, "stub — see Plan 11-04");
+    // Integration-gated: spin up a Postgres testcontainer, run DbPool::migrate,
+    // and assert that a NULL-job_run_number insert is rejected. Follows the
+    // testcontainer pattern used in tests/schema_parity.rs.
+    use testcontainers::runners::AsyncRunner;
+    use testcontainers_modules::postgres::Postgres as PgImage;
+
+    let node = PgImage::default()
+        .start()
+        .await
+        .expect("start postgres testcontainer");
+    let host = node.get_host().await.expect("host");
+    let port = node.get_host_port_ipv4(5432).await.expect("port");
+    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+
+    let pool = DbPool::connect(&url).await.expect("connect postgres");
+    pool.migrate().await.expect("apply migrations");
+
+    let pg_pool = match pool.writer() {
+        PoolRef::Postgres(p) => p.clone(),
+        _ => panic!("postgres-only"),
+    };
+
+    // Seed a job so the job_id FK is satisfied.
+    let now = chrono::Utc::now().to_rfc3339();
+    let job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs \
+         (name, schedule, resolved_schedule, job_type, config_json, config_hash, \
+          timeout_secs, created_at, updated_at) \
+         VALUES ('pg-nn-job', '* * * * *', '* * * * *', 'command', '{}', '0', 60, $1, $1) \
+         RETURNING id",
+    )
+    .bind(&now)
+    .fetch_one(&pg_pool)
+    .await
+    .expect("seed job");
+
+    // Attempt an INSERT with NULL job_run_number — must be rejected.
+    let result = sqlx::query(
+        "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
+         VALUES ($1, 'running', 'manual', $2, NULL)",
+    )
+    .bind(job_id)
+    .bind(&now)
+    .execute(&pg_pool)
+    .await;
+    assert!(
+        result.is_err(),
+        "NULL job_run_number must be rejected after file 3 on Postgres"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.to_lowercase().contains("not null") || err_msg.to_lowercase().contains("not-null"),
+        "expected NOT NULL constraint violation on Postgres, got: {err_msg}"
+    );
+
+    pool.close().await;
 }

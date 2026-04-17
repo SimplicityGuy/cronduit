@@ -212,18 +212,14 @@ impl DbPool {
         };
         if !column_exists {
             let row_count: i64 = match self {
-                DbPool::Sqlite { read, .. } => {
-                    sqlx::query_scalar("SELECT COUNT(*) FROM job_runs")
-                        .fetch_one(read)
-                        .await
-                        .unwrap_or(0)
-                }
-                DbPool::Postgres(pool) => {
-                    sqlx::query_scalar("SELECT COUNT(*) FROM job_runs")
-                        .fetch_one(pool)
-                        .await
-                        .unwrap_or(0)
-                }
+                DbPool::Sqlite { read, .. } => sqlx::query_scalar("SELECT COUNT(*) FROM job_runs")
+                    .fetch_one(read)
+                    .await
+                    .unwrap_or(0),
+                DbPool::Postgres(pool) => sqlx::query_scalar("SELECT COUNT(*) FROM job_runs")
+                    .fetch_one(pool)
+                    .await
+                    .unwrap_or(0),
             };
             return Ok(row_count == 0);
         }
