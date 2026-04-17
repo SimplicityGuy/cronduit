@@ -397,52 +397,66 @@ pub async fn finalize_run(
     Ok(())
 }
 
-/// Insert a batch of log lines into job_logs.
+/// Insert a batch of log lines into job_logs and return the persisted ids.
 ///
-/// Each tuple is `(stream, ts, line)`.
+/// Each tuple is `(stream, ts, line)`. The returned `Vec<i64>` contains the
+/// `job_logs.id` of each inserted row in the same order as the input slice.
+///
+/// Phase 11 D-01 / UI-20 (Option A): uses per-line `INSERT ... RETURNING id`
+/// inside a single transaction so callers (`log_writer_task`) can zip the ids
+/// with the input batch and broadcast `LogLine { id: Some(id), .. }`. The
+/// single-tx discipline preserves the D-03 throughput contract: exactly one
+/// `tx.begin()` + one `tx.commit()` per call, no per-line fsync. The
+/// `RETURNING id` shape mirrors `insert_running_run` (L298-351).
 pub async fn insert_log_batch(
     pool: &DbPool,
     run_id: i64,
     lines: &[(String, String, String)],
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<i64>> {
     if lines.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+
+    let mut ids = Vec::with_capacity(lines.len());
 
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             let mut tx = p.begin().await?;
             for (stream, ts, line) in lines {
-                sqlx::query(
-                    "INSERT INTO job_logs (run_id, stream, ts, line) VALUES (?1, ?2, ?3, ?4)",
+                let id: i64 = sqlx::query_scalar(
+                    "INSERT INTO job_logs (run_id, stream, ts, line) \
+                     VALUES (?1, ?2, ?3, ?4) RETURNING id",
                 )
                 .bind(run_id)
                 .bind(stream)
                 .bind(ts)
                 .bind(line)
-                .execute(&mut *tx)
+                .fetch_one(&mut *tx)
                 .await?;
+                ids.push(id);
             }
             tx.commit().await?;
         }
         PoolRef::Postgres(p) => {
             let mut tx = p.begin().await?;
             for (stream, ts, line) in lines {
-                sqlx::query(
-                    "INSERT INTO job_logs (run_id, stream, ts, line) VALUES ($1, $2, $3, $4)",
+                let id: i64 = sqlx::query_scalar(
+                    "INSERT INTO job_logs (run_id, stream, ts, line) \
+                     VALUES ($1, $2, $3, $4) RETURNING id",
                 )
                 .bind(run_id)
                 .bind(stream)
                 .bind(ts)
                 .bind(line)
-                .execute(&mut *tx)
+                .fetch_one(&mut *tx)
                 .await?;
+                ids.push(id);
             }
             tx.commit().await?;
         }
     }
 
-    Ok(())
+    Ok(ids)
 }
 
 // ── Dashboard / UI query types ───────────────────────────────────────────
