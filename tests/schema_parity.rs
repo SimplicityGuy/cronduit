@@ -6,6 +6,14 @@
 //! Failure of this test is a HARD STOP — do not merge.
 //!
 //! Addresses Pitfall 8 (SQLite/Postgres schema drift) and T-01-12.
+//!
+//! Phase 11 coverage note: the Phase 11 migrations add
+//! `jobs.next_run_number` and `job_runs.job_run_number` (SQLite `INTEGER`,
+//! Postgres `BIGINT`). Both collapse to `INT64` via `normalize_type` and
+//! are therefore covered by the dynamic introspection without any change
+//! to this file — the migration files in `migrations/sqlite/` and
+//! `migrations/postgres/` must simply stay in lock-step. See Plan 11-02
+//! and Plan 11-04 for the per-backend migration pair.
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
