@@ -4,6 +4,12 @@
 //! must be < 50ms. If this fails on the CI runner, Phase 11 flips to Option B
 //! (monotonic seq: u64 column on LogLine + nullable seq column on job_logs)
 //! and this plan's SUMMARY.md records the flip.
+//!
+//! Phase 11-07 note: `insert_log_batch` now returns `anyhow::Result<Vec<i64>>`
+//! (RETURNING id per line). The benchmark binds the returned Vec<i64> so the
+//! optimizer cannot elide the per-line fetch_one call; p95 is measured
+//! against the full insert-then-return round-trip, which is what production
+//! actually pays now.
 
 mod common;
 use common::v11_fixtures::*;
@@ -23,16 +29,19 @@ async fn p95_under_50ms() {
     // Warmup — discard first 5 iterations to let SQLite's WAL / pragmas settle.
     for _ in 0..5 {
         let batch = make_test_batch(BATCH_SIZE);
-        insert_log_batch(&pool, run_id, &batch).await.unwrap();
+        let _ids = insert_log_batch(&pool, run_id, &batch).await.unwrap();
     }
 
     for _ in 0..ITERS {
         let batch = make_test_batch(BATCH_SIZE);
         let t0 = std::time::Instant::now();
-        insert_log_batch(&pool, run_id, &batch)
+        let ids = insert_log_batch(&pool, run_id, &batch)
             .await
             .expect("insert batch");
         durations_us.push(t0.elapsed().as_micros() as u64);
+        // Defensively consume the Vec<i64> so the compiler cannot elide
+        // the RETURNING id fetch_one round-trip inside the inner loop.
+        assert_eq!(ids.len(), BATCH_SIZE);
     }
 
     durations_us.sort_unstable();
@@ -42,7 +51,7 @@ async fn p95_under_50ms() {
     let mean: u64 = durations_us.iter().sum::<u64>() / ITERS as u64;
 
     eprintln!(
-        "T-V11-LOG-02 benchmark (64-line batch × {} iters):\n  \
+        "T-V11-LOG-02 benchmark (64-line batch × {} iters) [RETURNING id / Option A]:\n  \
          mean = {}us  p50 = {}us  p95 = {}us  p99 = {}us",
         ITERS, mean, p50, p95, p99
     );
