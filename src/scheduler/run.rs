@@ -588,6 +588,75 @@ mod tests {
         pool.close().await;
     }
 
+    /// Phase 11 Plan 11-06 (UI-19 fix): `run_job_with_existing_run_id` skips the
+    /// `insert_running_run` step because the API handler thread already inserted
+    /// the row. Test pre-inserts a row, calls the new fn, and asserts:
+    ///   1. No duplicate row was created (exactly ONE row exists for the job).
+    ///   2. The returned `run_id` matches the pre-inserted id.
+    ///   3. The row's status is finalized (not "running") — proving the
+    ///      lifecycle after insert still runs (log capture + finalize).
+    #[tokio::test]
+    async fn run_job_with_existing_run_id_skips_insert() {
+        let pool = setup_pool().await;
+        let job = insert_test_job(
+            &pool,
+            "skip-insert-job",
+            "command",
+            r#"{"command":"echo pre-inserted"}"#,
+        )
+        .await;
+
+        // Pre-insert a row on behalf of the "API handler".
+        let pre_run_id = crate::db::queries::insert_running_run(&pool, job.id, "manual")
+            .await
+            .unwrap();
+
+        let cancel = CancellationToken::new();
+        let result = run_job_with_existing_run_id(
+            pool.clone(),
+            None,
+            job.clone(),
+            pre_run_id,
+            cancel,
+            test_active_runs(),
+        )
+        .await;
+
+        assert_eq!(
+            result.run_id, pre_run_id,
+            "run_id must be the pre-inserted id (not a new row)"
+        );
+        assert_eq!(result.status, "success");
+
+        // Exactly one row must exist for this job.
+        match pool.reader() {
+            PoolRef::Sqlite(p) => {
+                let row = sqlx::query("SELECT COUNT(*) as cnt FROM job_runs WHERE job_id = ?1")
+                    .bind(job.id)
+                    .fetch_one(p)
+                    .await
+                    .unwrap();
+                let cnt: i64 = row.get("cnt");
+                assert_eq!(
+                    cnt, 1,
+                    "run_job_with_existing_run_id must NOT create a second row"
+                );
+
+                // Status must be finalized.
+                let r = sqlx::query("SELECT status FROM job_runs WHERE id = ?1")
+                    .bind(pre_run_id)
+                    .fetch_one(p)
+                    .await
+                    .unwrap();
+                let status: String = r.get("status");
+                assert_eq!(status, "success", "row must be finalized after run");
+            }
+            _ => unreachable!(),
+        }
+
+        pool.close().await;
+    }
+
     #[tokio::test]
     async fn concurrent_runs_create_separate_rows() {
         let pool = setup_pool().await;
