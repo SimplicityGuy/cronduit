@@ -352,7 +352,32 @@ async fn continue_run(
         metrics::counter!("cronduit_run_failures_total", "job" => job.name.clone(), "reason" => reason.as_label().to_string()).increment(1);
     }
 
-    // 7c. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
+    // 7c. Phase 11 D-10: broadcast the __run_finished__ sentinel BEFORE the
+    // broadcast sender is dropped so every live SSE subscriber receives a
+    // graceful terminal frame (`event: run_finished`) and can swap the
+    // running log pane to the static partial (Plan 11-11). Ordering
+    // (RESEARCH.md §P10): (1) writer_handle already awaited at step 6 → every
+    // persisted log_line has been broadcast with `id: Some(n)`; (2)
+    // finalize_run DB update has run at step 7; (3) send the sentinel now;
+    // (4) remove the run from active_runs so the next Run Now finds a clean
+    // slate; (5) drop broadcast_tx — the `RecvError::Closed` arm in sse.rs
+    // stays as the abrupt-disconnect fallback (emits `run_complete`) and is
+    // only reached if a subscriber somehow misses the sentinel.
+    //
+    // `stream = "__run_finished__"` is the pattern-match key; `line =
+    // run_id.to_string()` carries the payload the SSE handler serializes as
+    // `{"run_id": N}`. `id = None` because the sentinel is not a persisted
+    // `job_logs` row — the client's dedupe cursor (Plan 11-14) ignores
+    // frames without `id:`, which is the correct semantics here. A
+    // `SendError` (no live subscribers) is intentionally discarded.
+    let _ = broadcast_tx.send(LogLine {
+        stream: "__run_finished__".to_string(),
+        ts: chrono::Utc::now().to_rfc3339(),
+        line: run_id.to_string(),
+        id: None,
+    });
+
+    // 7d. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
     active_runs.write().await.remove(&run_id);
     drop(broadcast_tx);
 
