@@ -957,28 +957,45 @@ pub async fn wal_checkpoint(pool: &DbPool) -> Result<(), sqlx::Error> {
 /// Uses the portable `UPDATE ... WHERE id IN (SELECT ... LIMIT N)` form per
 /// RESEARCH Open Question Q3 (RESOLVED): simpler than `UPDATE ... FROM ...`
 /// and works identically on SQLite 3.33+ and Postgres 9.x+.
-pub async fn backfill_job_run_number_batch(
-    pool: &DbPool,
-    batch_size: i64,
-) -> anyhow::Result<i64> {
+pub async fn backfill_job_run_number_batch(pool: &DbPool, batch_size: i64) -> anyhow::Result<i64> {
     match pool.writer() {
         PoolRef::Sqlite(p) => {
+            // SQLite 3.33+ `UPDATE ... FROM` — matches the Postgres arm.
+            //
+            // Earlier drafts used a correlated scalar subquery form, but
+            // SQLite's optimizer pushes the outer `WHERE s.id = job_runs.id`
+            // equality INTO the inner subquery, which shrinks the `FROM
+            // job_runs WHERE job_run_number IS NULL` scan to a single row
+            // and causes ROW_NUMBER() to always evaluate to 1. The FROM-join
+            // form materializes the ROW_NUMBER() result as a derived table
+            // BEFORE the join, so partitioning is preserved correctly.
+            //
+            // The LEFT JOIN on `prev` adds a per-job offset = MAX(job_run_number)
+            // of already-backfilled rows. Without it, a partial-crash restart
+            // (second batch) would re-number from 1, colliding with the first
+            // batch's assignments (T-V11-RUNNUM-08 resume test regression).
             let result = sqlx::query(
                 "UPDATE job_runs \
-                 SET job_run_number = ( \
-                    SELECT rn FROM ( \
-                        SELECT id, \
-                               ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC) AS rn \
-                        FROM job_runs \
-                        WHERE job_run_number IS NULL \
-                    ) s WHERE s.id = job_runs.id \
-                 ) \
-                 WHERE id IN ( \
-                    SELECT id FROM job_runs \
+                 SET job_run_number = s.rn + COALESCE(prev.max_filled, 0) \
+                 FROM ( \
+                    SELECT id, job_id, \
+                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC) AS rn \
+                    FROM job_runs \
                     WHERE job_run_number IS NULL \
-                    ORDER BY id ASC \
-                    LIMIT ?1 \
-                 )",
+                 ) AS s \
+                 LEFT JOIN ( \
+                    SELECT job_id, MAX(job_run_number) AS max_filled \
+                    FROM job_runs \
+                    WHERE job_run_number IS NOT NULL \
+                    GROUP BY job_id \
+                 ) AS prev ON prev.job_id = s.job_id \
+                 WHERE job_runs.id = s.id \
+                   AND job_runs.id IN ( \
+                        SELECT id FROM job_runs \
+                        WHERE job_run_number IS NULL \
+                        ORDER BY id ASC \
+                        LIMIT ?1 \
+                   )",
             )
             .bind(batch_size)
             .execute(p)
@@ -988,13 +1005,19 @@ pub async fn backfill_job_run_number_batch(
         PoolRef::Postgres(p) => {
             let result = sqlx::query(
                 "UPDATE job_runs \
-                 SET job_run_number = s.rn \
+                 SET job_run_number = s.rn + COALESCE(prev.max_filled, 0) \
                  FROM ( \
-                    SELECT id, \
+                    SELECT id, job_id, \
                            ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id ASC) AS rn \
                     FROM job_runs \
                     WHERE job_run_number IS NULL \
                  ) s \
+                 LEFT JOIN ( \
+                    SELECT job_id, MAX(job_run_number) AS max_filled \
+                    FROM job_runs \
+                    WHERE job_run_number IS NOT NULL \
+                    GROUP BY job_id \
+                 ) AS prev ON prev.job_id = s.job_id \
                  WHERE job_runs.id = s.id \
                    AND job_runs.id IN ( \
                         SELECT id FROM job_runs \
@@ -1050,19 +1073,17 @@ pub async fn resync_next_run_number(pool: &DbPool) -> anyhow::Result<()> {
 pub async fn count_job_runs_with_null_run_number(pool: &DbPool) -> anyhow::Result<i64> {
     match pool.reader() {
         PoolRef::Sqlite(p) => {
-            let n: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM job_runs WHERE job_run_number IS NULL",
-            )
-            .fetch_one(p)
-            .await?;
+            let n: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM job_runs WHERE job_run_number IS NULL")
+                    .fetch_one(p)
+                    .await?;
             Ok(n)
         }
         PoolRef::Postgres(p) => {
-            let n: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM job_runs WHERE job_run_number IS NULL",
-            )
-            .fetch_one(p)
-            .await?;
+            let n: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM job_runs WHERE job_run_number IS NULL")
+                    .fetch_one(p)
+                    .await?;
             Ok(n)
         }
     }
@@ -1082,10 +1103,9 @@ pub async fn v11_backfill_sentinel_exists(pool: &DbPool) -> anyhow::Result<bool>
             if table_exists == 0 {
                 return Ok(false);
             }
-            let row_count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM _v11_backfill_done")
-                    .fetch_one(p)
-                    .await?;
+            let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _v11_backfill_done")
+                .fetch_one(p)
+                .await?;
             Ok(row_count > 0)
         }
         PoolRef::Postgres(p) => {
@@ -1100,10 +1120,9 @@ pub async fn v11_backfill_sentinel_exists(pool: &DbPool) -> anyhow::Result<bool>
             if !table_exists {
                 return Ok(false);
             }
-            let row_count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM _v11_backfill_done")
-                    .fetch_one(p)
-                    .await?;
+            let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _v11_backfill_done")
+                .fetch_one(p)
+                .await?;
             Ok(row_count > 0)
         }
     }
