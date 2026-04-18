@@ -1,0 +1,22 @@
+# tests/Dockerfile.ops08-old — Phase 12 D-08 fixture.
+#
+# Layers the OLD `wget --spider` HEALTHCHECK over the production cronduit:ci
+# image to reproduce the OPS-08 (unhealthy) symptom in CI. The compose-smoke
+# workflow builds cronduit:ci first (using the production Dockerfile), then
+# builds this fixture as `cronduit:ops08-old` and runs both side-by-side to
+# assert OLD → unhealthy and NEW → healthy.
+#
+# This image is for testing only — do NOT push, do NOT tag, do NOT publish.
+# `--start-period=20s` (vs production's 60s) so the test reaches its verdict
+# fast; the production value is for first-boot migration backfill which the
+# fixture doesn't exercise.
+
+FROM cronduit:ci
+
+# Phase 12 D-08: deliberately broken HEALTHCHECK that reproduces the OPS-08
+# (unhealthy) symptom. busybox `wget --spider` misparses axum's chunked /health
+# response and exits non-zero, flipping the container to (unhealthy) after 3
+# retries. ONLY for the compose-smoke before/after assertion. Do NOT use in
+# production images.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["wget", "--spider", "-q", "http://localhost:8080/health"]

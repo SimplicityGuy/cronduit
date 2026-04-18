@@ -104,15 +104,35 @@ jobs:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index,manifest
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # Tag templates replace the hand-rolled multi-tag list below. The
-          # type=semver entries derive semver-aware tags from the pushed git
-          # tag (v1.0.0 -> 1.0.0, 1.0, 1). type=raw,value=latest keeps the
-          # floating latest tag pointed at every release.
+          # Tag templates derive image tags from the pushed git tag.
+          #
+          # On a final release (e.g. tag v1.1.0):
+          #   type=semver,{{version}}        -> :1.1.0
+          #   type=semver,{{major}}.{{minor}} -> :1.1   (gate: hyphen-free ref)
+          #   type=semver,{{major}}           -> :1     (gate: hyphen-free ref)
+          #   type=raw,latest                 -> :latest (gate: hyphen-free ref)
+          #   type=raw,rc                     -> (skipped — no '-rc.' in ref)
+          #
+          # On a pre-release (e.g. tag v1.1.0-rc.1):
+          #   type=semver,{{version}}        -> :1.1.0-rc.1
+          #   type=semver,{{major}}.{{minor}} -> (skipped — hyphen present)
+          #   type=semver,{{major}}           -> (skipped — hyphen present)
+          #   type=raw,latest                 -> (skipped — hyphen present)
+          #   type=raw,rc                     -> :rc (gate: '-rc.' present)
+          #
+          # Phase 12 D-10 — preserves the PROJECT.md commitment that :latest
+          # stays at v1.0.1 until final v1.1.0. The :rc rolling tag lets
+          # operators pin to "the latest release-candidate" if they want
+          # early-adopter coverage. metadata-action's {{major}} and
+          # {{major}}.{{minor}} patterns ALREADY auto-skip pre-releases per
+          # the action's documented behavior; the enable= clauses on those
+          # two lines are belt-and-suspenders for documentation clarity.
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref, '-') }}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref, '-') }}
+            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
+            type=raw,value=rc,enable=${{ contains(github.ref, '-rc.') }}
           # Labels GitHub Container Registry recognizes for the package page:
           #   - org.opencontainers.image.source       (Connected to repository)
           #   - org.opencontainers.image.description  (package subtitle)

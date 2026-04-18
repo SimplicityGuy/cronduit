@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: executing
-stopped_at: Phase 11 UI-SPEC approved
-last_updated: "2026-04-17T21:05:52.485Z"
-last_activity: 2026-04-17
+status: phase_shipped
+stopped_at: Phase 12 shipped — PR #29 awaiting review + merge
+last_updated: "2026-04-18T03:30:00Z"
+last_activity: 2026-04-18 -- Phase 12 shipped as PR #29; maintainer rc.1 tag cut pending PR merge + compose-smoke GHA confirmation
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 25
-  completed_plans: 26
+  completed_phases: 3
+  total_plans: 32
+  completed_plans: 32
   percent: 100
 ---
 
@@ -21,18 +21,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 11 — per-job-run-numbers-log-ux-fixes
+**Current focus:** Phase 12 complete (docker-healthcheck + rc.1 cut). Next: Phase 13 — observability polish + rc.2.
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
 Phase: 12
-Plan: Not started
-Status: Executing Phase 11
-Last activity: 2026-04-17
+Plan: All 7 plans complete (12-01..12-07)
+Status: Phase complete (human_needed: maintainer rc.1 tag cut + GHCR verification + compose-smoke GHA green)
+Last activity: 2026-04-18 -- Phase 12 execution complete; 2 code-review mediums resolved (MD-01 DATABASE_URL, MD-02 CRONDUIT_BIND)
 
-Progress: [░░░░░░░░░░] 0% (0 of 5 v1.1 phases complete)
+Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12)
 
 ## v1.1 Phase Shape
 
@@ -115,8 +115,8 @@ _(None during v1.1 so far. v1.0 quick task `260414-gbf` is archived in `.plannin
 
 ## Session Continuity
 
-Last session: 2026-04-16T21:12:09.934Z
-Stopped at: Phase 11 UI-SPEC approved
-Resume command: `/gsd-plan-phase 10` — decomposes Stop-a-Running-Job + hygiene preamble into executable plans. Recommended to do the Stop spike (validate `RunControl` + `StopReason::Operator` round-trip on all three executors) as the first plan in Phase 10.
+Last session: 2026-04-18T03:20:00Z
+Stopped at: Phase 12 execution complete — awaiting maintainer rc.1 tag cut + PR merge
+Resume command: after PR merges, run `/gsd-verify-work 12` once the rc.1 tag is pushed and GHCR state is confirmed. Then `/gsd-discuss-phase 13` or `/gsd-plan-phase 13` to start Phase 13 (observability polish + rc.2).
 
-Last activity: 2026-04-14 — v1.1 roadmap created (5 phases, 3 rcs)
+Last activity: 2026-04-18 — Phase 12 executed (7/7 plans complete; MD-01 + MD-02 code review fixes applied inline; HUMAN-UAT.md persisted for 3 pending maintainer-action items)

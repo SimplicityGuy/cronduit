@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 pub mod check;
+pub mod health;
 pub mod run;
 
 #[derive(clap::Parser, Debug)]
@@ -39,6 +40,10 @@ pub enum Command {
         /// Path to the config file to validate.
         config: PathBuf,
     },
+    /// Probe the local /health endpoint and exit 0 if status="ok".
+    /// Intended as a Dockerfile HEALTHCHECK target. Reuses the global
+    /// `--bind` flag (default 127.0.0.1:8080). Does NOT read --config (D-04).
+    Health,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
@@ -51,5 +56,6 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<i32> {
     match &cli.command {
         Command::Run => run::execute(&cli).await,
         Command::Check { config } => check::execute(config).await,
+        Command::Health => health::execute(&cli).await,
     }
 }

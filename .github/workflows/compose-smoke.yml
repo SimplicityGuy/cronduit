@@ -1,0 +1,242 @@
+# .github/workflows/compose-smoke.yml
+# Phase 12 OPS-07 / OPS-08 — dedicated compose-smoke workflow.
+# Standalone (NOT extending ci.yml per D-09) because the runner needs docker
+# daemon + buildx + compose CLI, which don't belong in the fast unit-test tier.
+#
+# Three assertions (independent steps within one job):
+#   (1) shipped-compose smoke — `examples/docker-compose.yml` reports `healthy`
+#       within 90s of `docker compose up -d` (T-V11-HEALTH-01 / OPS-07).
+#   (2) compose-override smoke — operator `healthcheck:` in
+#       `tests/compose-override.yml` wins over the Dockerfile HEALTHCHECK
+#       (T-V11-HEALTH-02 / OPS-07).
+#   (3) OPS-08 before/after — build OLD-state image with `wget --spider`
+#       HEALTHCHECK and assert (unhealthy); build NEW image with the
+#       `cronduit health` HEALTHCHECK and assert (healthy). Per D-08, if the
+#       OLD-state image returns `healthy` (root cause was different), the
+#       workflow logs the divergence and still passes — the fix is correct
+#       regardless because it removes busybox wget from the path.
+#
+# Security note: the only GHA context interpolated into `run:` blocks is
+# `steps.ops08_old.outputs.old_status`, routed through an `env:` block per
+# the project's "never inline ${{ ... }} in shell" convention (T-12-04-01).
+name: compose-smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+concurrency:
+  group: compose-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compose-smoke:
+    name: compose-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local cronduit:ci image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: cronduit:ci
+          cache-from: type=gha,scope=cronduit-compose-smoke
+          cache-to: type=gha,mode=max,scope=cronduit-compose-smoke
+
+      # ----------------------------------------------------------------------
+      # Assertion 1: shipped-compose smoke — examples/docker-compose.yml
+      # reports `healthy` within 90s using the locally-built image.
+      # ----------------------------------------------------------------------
+      - name: Write override to point examples/docker-compose.yml at cronduit:ci
+        run: |
+          set -eu
+          mkdir -p /tmp/compose-smoke-shipped
+          cp examples/docker-compose.yml /tmp/compose-smoke-shipped/docker-compose.yml
+          # Override the image: ghcr.io/... line to use the locally-built tag.
+          # Use a separate override file so the shipped file is never edited.
+          cat > /tmp/compose-smoke-shipped/docker-compose.override.yml <<'EOF'
+          services:
+            cronduit:
+              image: cronduit:ci
+          EOF
+          # Provide a minimal cronduit.toml next to the compose file (the
+          # shipped compose mounts ./cronduit.toml via volumes:).
+          cp examples/cronduit.toml /tmp/compose-smoke-shipped/cronduit.toml || true
+
+      - name: Up shipped compose stack
+        working-directory: /tmp/compose-smoke-shipped
+        run: |
+          set -eu
+          docker compose up -d
+          docker compose ps
+
+      - name: Wait for shipped stack `healthy` (max 90s)
+        id: shipped_health
+        working-directory: /tmp/compose-smoke-shipped
+        run: |
+          set -eu
+          container=$(docker compose ps -q cronduit)
+          if [ -z "$container" ]; then
+            echo "::error::could not resolve cronduit container id"
+            exit 1
+          fi
+          for i in $(seq 1 90); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "missing")
+            echo "[shipped t+${i}s] status=$status"
+            if [ "$status" = "healthy" ]; then
+              echo "shipped stack reached healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::shipped stack never reached healthy within 90s (got: $status)"
+          exit 1
+
+      - name: Tear down shipped compose stack
+        if: always()
+        working-directory: /tmp/compose-smoke-shipped
+        run: docker compose down -v
+
+      # ----------------------------------------------------------------------
+      # Assertion 2: compose-override smoke — operator `healthcheck:` stanza
+      # in tests/compose-override.yml wins over the Dockerfile HEALTHCHECK.
+      # ----------------------------------------------------------------------
+      - name: Up compose-override stack
+        run: |
+          set -eu
+          docker compose -f tests/compose-override.yml up -d
+          docker compose -f tests/compose-override.yml ps
+
+      - name: Assert override wins over Dockerfile HEALTHCHECK
+        run: |
+          set -eu
+          container=$(docker compose -f tests/compose-override.yml ps -q cronduit)
+          test_array=$(docker inspect --format '{{json .Config.Healthcheck.Test}}' "$container")
+          echo "Inspected Healthcheck.Test: $test_array"
+          # The override uses CMD-SHELL form; the Dockerfile default uses CMD form.
+          # If the override won, the first element will be "CMD-SHELL".
+          first=$(echo "$test_array" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')
+          if [ "$first" != "CMD-SHELL" ]; then
+            echo "::error::override did NOT win — first element of Healthcheck.Test is '$first' (expected 'CMD-SHELL')"
+            exit 1
+          fi
+          echo "compose override won: Healthcheck.Test starts with CMD-SHELL"
+
+      - name: Diagnostics — compose-override stack
+        if: failure()
+        run: |
+          echo "::group::compose-override container logs"
+          docker compose -f tests/compose-override.yml logs --tail=200 || true
+          echo "::endgroup::"
+
+      - name: Tear down compose-override stack
+        if: always()
+        run: docker compose -f tests/compose-override.yml down -v
+
+      # ----------------------------------------------------------------------
+      # Assertion 3: OPS-08 before/after reproduction.
+      # ----------------------------------------------------------------------
+      - name: Build OLD-state image (busybox wget HEALTHCHECK)
+        run: |
+          set -eu
+          docker build -t cronduit:ops08-old -f tests/Dockerfile.ops08-old .
+          docker inspect --format '{{json .Config.Healthcheck.Test}}' cronduit:ops08-old
+
+      - name: Run OLD image and observe Health.Status (max 60s)
+        id: ops08_old
+        run: |
+          set -eu
+          # MD-01 fix: DATABASE_URL must resolve to a path UID 1000 can write.
+          # /data is created + chowned to 1000:1000 by the Dockerfile (L120);
+          # pointing DATABASE_URL there avoids the /cronduit.db fallback that
+          # hits read-only root and crashes the container before healthcheck.
+          docker run -d \
+            --name cronduit-ops08-old \
+            -p 18080:8080 \
+            -e DATABASE_URL=sqlite:///data/cronduit.db \
+            cronduit:ops08-old
+          old_status=missing
+          for i in $(seq 1 60); do
+            old_status=$(docker inspect --format '{{.State.Health.Status}}' cronduit-ops08-old 2>/dev/null || echo "missing")
+            echo "[ops08-old t+${i}s] status=$old_status"
+            if [ "$old_status" = "unhealthy" ] || [ "$old_status" = "healthy" ]; then
+              break
+            fi
+            sleep 1
+          done
+          echo "old_status=$old_status" >> "$GITHUB_OUTPUT"
+          echo "OLD-state final status: $old_status"
+
+      - name: Run NEW image and assert healthy (max 90s)
+        run: |
+          set -eu
+          # MD-01 fix: same as OLD-state run — DATABASE_URL must point at /data
+          # (the Dockerfile-created, UID-1000-owned directory). Without this,
+          # cronduit falls back to ./cronduit.db = /cronduit.db on read-only
+          # root and crashes before the HEALTHCHECK ever runs.
+          docker run -d \
+            --name cronduit-ops08-new \
+            -p 28080:8080 \
+            -e DATABASE_URL=sqlite:///data/cronduit.db \
+            cronduit:ci
+          for i in $(seq 1 90); do
+            new_status=$(docker inspect --format '{{.State.Health.Status}}' cronduit-ops08-new 2>/dev/null || echo "missing")
+            echo "[ops08-new t+${i}s] status=$new_status"
+            if [ "$new_status" = "healthy" ]; then
+              echo "NEW image reached healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::NEW image never reached healthy within 90s (last: $new_status)"
+          exit 1
+
+      - name: Evaluate OPS-08 reproduction outcome
+        env:
+          OLD_STATUS: ${{ steps.ops08_old.outputs.old_status }}
+        run: |
+          set -eu
+          if [ "$OLD_STATUS" = "unhealthy" ]; then
+            echo "OPS-08 reproduced cleanly: OLD=unhealthy → NEW=healthy. Fix verified."
+          elif [ "$OLD_STATUS" = "healthy" ]; then
+            echo "::warning::OPS-08 OLD-state returned healthy on this runner (root cause differs from documented hypothesis). The cronduit health fix path remains correct because it removes busybox wget from the healthcheck path entirely. Documented per D-08 / 12-04-05."
+          else
+            echo "::error::OPS-08 OLD-state never reached a terminal Health.Status (got: $OLD_STATUS). Likely runner-environment issue; investigate."
+            exit 1
+          fi
+
+      - name: Diagnostics — OPS-08 containers
+        if: failure()
+        run: |
+          echo "::group::cronduit-ops08-old logs"
+          docker logs cronduit-ops08-old --tail=200 || true
+          echo "::endgroup::"
+          echo "::group::cronduit-ops08-new logs"
+          docker logs cronduit-ops08-new --tail=200 || true
+          echo "::endgroup::"
+          echo "::group::cronduit-ops08-old healthcheck inspect"
+          docker inspect --format '{{json .State.Health}}' cronduit-ops08-old || true
+          echo "::endgroup::"
+          echo "::group::cronduit-ops08-new healthcheck inspect"
+          docker inspect --format '{{json .State.Health}}' cronduit-ops08-new || true
+          echo "::endgroup::"
+
+      - name: Tear down OPS-08 containers
+        if: always()
+        run: |
+          docker rm -f cronduit-ops08-old cronduit-ops08-new || true

@@ -77,7 +77,7 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 
 - [x] **Phase 10: Stop-a-Running-Job + Hygiene Preamble** — SCHED-09..14 + FOUND-12..13. Highest-risk spike; new `stopped` status wired through all three executors. Ships as part of rc.1. (completed 2026-04-15)
 - [x] **Phase 11: Per-Job Run Numbers + Log UX Fixes** — DB-09..13 + UI-16..20. Three-step migration + log pipeline inversion. Ships as part of rc.1. (completed 2026-04-17)
-- [ ] **Phase 12: Docker Healthcheck + rc.1 Cut** — OPS-06..08. New `cronduit health` CLI + Dockerfile HEALTHCHECK. Ships AS `v1.1.0-rc.1`.
+- [x] **Phase 12: Docker Healthcheck + rc.1 Cut** — OPS-06..08. New `cronduit health` CLI + Dockerfile HEALTHCHECK. Ships AS `v1.1.0-rc.1`. (completed 2026-04-18; maintainer rc.1 tag cut pending PR merge)
 - [ ] **Phase 13: Observability Polish (rc.2)** — OBS-01..05. Timeline page + sparkline/success-rate + duration p50/p95. Ships AS `v1.1.0-rc.2`.
 - [ ] **Phase 14: Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship** — ERG-01..04 + DB-14. `enabled_override` tri-state, CSRF-gated bulk API, final milestone ship. Ships AS `v1.1.0-rc.3` then promoted to `v1.1.0`.
 
@@ -182,7 +182,14 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
   4. The reported `(unhealthy)` root cause is reproduced in a test environment before the fix is declared complete.
   5. `v1.1.0-rc.1` tag exists on GHCR, the multi-arch (amd64+arm64) image is pushed, release notes are published, and `:latest` remains pinned to `v1.0.1`.
 
-**Plans**: TBD
+**Plans**: 7 plans
+- [x] `12-01-PLAN.md` — `cronduit health` skeleton: clap wiring + Cargo.toml deps + src/cli/health.rs placeholder (OPS-06)
+- [x] `12-02-PLAN.md` — Health probe implementation: hyper-util client + body parse + 9 unit tests covering D-14 (OPS-06)
+- [x] `12-03-PLAN.md` — Dockerfile HEALTHCHECK directive between USER and ENTRYPOINT (OPS-07)
+- [x] `12-04-PLAN.md` — compose-smoke CI workflow + ops08-old fixture + compose-override fixture (OPS-07, OPS-08)
+- [x] `12-05-PLAN.md` — release.yml metadata-action D-10 patch (5 line edits in tags: block) (OPS-07)
+- [x] `12-06-PLAN.md` — docs/release-rc.md maintainer runbook (mermaid diagram, GPG branching, post-push verification table)
+- [x] `12-07-PLAN.md` — Close-out: REQUIREMENTS.md OPS-06/07/08 checkbox flips + maintainer-action checkpoint to cut v1.1.0-rc.1 (OPS-06, OPS-07, OPS-08) [human-action — tag cut deferred to post-PR-merge]
 **UI hint**: no
 
 ---
