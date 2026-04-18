@@ -4,7 +4,9 @@
 
 **Shipped:** v1.0.0 (2026-04-14), patched to v1.0.1 (2026-04-14) — single-binary Rust cron scheduler with terminal-green HTMX web UI, full Docker-API job execution including `--network container:<name>`, `@random` schedule resolver, hot config reload, Prometheus metrics, SSE log tail, multi-arch (amd64+arm64) GHCR release, and a documented threat model. 86/86 v1 requirements complete; audit verdict `passed`. v1.0.1 follow-up (PR #22) closed four post-ship gaps: GHCR OCI manifest annotations, `cmd`-on-non-docker validator, `delete = false` honored at cleanup, Debian 13 (trixie) builder, MIT license metadata. See [`MILESTONES.md`](MILESTONES.md) for the full v1.0 summary.
 
-**Next milestone:** v1.1 — Operator Quality of Life (in progress; scoping started 2026-04-14).
+**Next milestone:** v1.1 — Operator Quality of Life (in progress; 3 of 5 phases complete).
+
+**v1.1 rc.1 cut pending (as of 2026-04-18):** Phases 10 (Stop-a-Running-Job + Hygiene), 11 (Per-Job Run Numbers + Log UX), and 12 (Docker Healthcheck) are implementation-complete on branch `gsd/phase-12-context`. Phase 12 landed OPS-06/07/08 (new `cronduit health` CLI, Dockerfile HEALTHCHECK, compose-smoke CI workflow, release.yml rc-tag gating, and the maintainer rc-cut runbook). The `v1.1.0-rc.1` tag cut is a maintainer action (signed key, per Phase 12 D-13) queued for after the Phase 12 PR merges to `main`.
 
 ## What This Is
 
@@ -256,4 +258,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-14 — v1.1 "Operator Quality of Life" milestone kicked off. Shape A locked (polish-then-expand) with iterative `v1.1.0-rc.N` cadence. Bug fixes + observability polish + bulk ergonomics in scope; webhooks, queuing, and other feature expansions moved from Out of Scope to Future Requirements (v1.2). v1.0 validated requirements retained as-is.*
+*Last updated: 2026-04-18 — Phases 10, 11, 12 implementation-complete on `gsd/phase-12-context`. Phase 12 delivered OPS-06/07/08 (cronduit health subcommand, Dockerfile HEALTHCHECK, compose-smoke CI). `v1.1.0-rc.1` tag cut queued for after PR merge (maintainer action). Next: Phase 13 (observability polish + rc.2). Previous update: 2026-04-14 — v1.1 milestone kicked off.*
