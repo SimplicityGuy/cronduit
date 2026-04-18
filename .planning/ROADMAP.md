@@ -189,7 +189,7 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 - [x] `12-04-PLAN.md` — compose-smoke CI workflow + ops08-old fixture + compose-override fixture (OPS-07, OPS-08)
 - [x] `12-05-PLAN.md` — release.yml metadata-action D-10 patch (5 line edits in tags: block) (OPS-07)
 - [x] `12-06-PLAN.md` — docs/release-rc.md maintainer runbook (mermaid diagram, GPG branching, post-push verification table)
-- [ ] `12-07-PLAN.md` — Close-out: REQUIREMENTS.md OPS-06/07/08 checkbox flips + maintainer-action checkpoint to cut v1.1.0-rc.1 (OPS-06, OPS-07, OPS-08) [human-action]
+- [x] `12-07-PLAN.md` — Close-out: REQUIREMENTS.md OPS-06/07/08 checkbox flips + maintainer-action checkpoint to cut v1.1.0-rc.1 (OPS-06, OPS-07, OPS-08) [human-action — tag cut deferred to post-PR-merge]
 **UI hint**: no
 
 ---
