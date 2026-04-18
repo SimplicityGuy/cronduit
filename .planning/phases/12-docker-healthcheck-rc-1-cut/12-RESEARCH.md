@@ -761,22 +761,22 @@ v101_digest=$(docker manifest inspect ghcr.io/simplicityguy/cronduit:v1.0.1 | jq
 
 **If this table changes:** All assumptions are LOW or MEDIUM risk. A5 is the highest because the runbook's exact command depends on it; the planner must include the branching pre-flight.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should `cronduit health` accept HOST being `[::1]` (IPv6 loopback) when no `--bind` flag is passed, in addition to `127.0.0.1`?**
    - What we know: `examples/docker-compose.yml` binds 127.0.0.1 by default. CONTEXT.md D-03 specifies the default `http://127.0.0.1:8080`.
    - What's unclear: Whether dual-stack hosts where the `/health` listener is reachable only on `[::1]` exist in the v1 audience.
-   - Recommendation: Stick with v4 default per D-03. If an operator binds on v6-only, they pass `--bind [::1]:8080` explicitly and the URL parser handles it. No code change needed to support this; just document it in the subcommand help text.
+   - RESOLVED: Stick with v4 default per D-03 (127.0.0.1); v6-only operators pass `--bind [::1]:8080` explicitly and the URL parser handles it. No code change needed to support this; just document it in the subcommand help text.
 
 2. **Should the compose-smoke workflow run on PR + push to main, or push to main only?**
    - What we know: D-09 says "PR + main + release tags." `ci.yml`'s `compose-smoke` job already runs on PR + main; the new workflow follows the same pattern.
    - What's unclear: Whether running on PR adds enough value to justify the runtime cost (compose-up + healthcheck wait = ~2 min per axis × 2 axes = 4 min added per PR).
-   - Recommendation: Run on PR + main + release tags per D-09. The compose-smoke is a high-leverage test (catches the OPS-08 class of regression). The 4 min cost is acceptable.
+   - RESOLVED: Run on PR + main + release tags per D-09. The compose-smoke is a high-leverage test (catches the OPS-08 class of regression). The 4 min cost is acceptable.
 
 3. **Where should `docs/release-rc.md` live exactly — `docs/`, repo root, or folded into `CONTRIBUTING.md`?**
    - What we know: The repo has a `docs/` directory with `SPEC.md`, `CONFIG.md`, `QUICKSTART.md`, `CI_CACHING.md`. Convention places technical reference docs there.
    - What's unclear: Whether maintainer-only operational runbooks belong in `docs/` (operator-facing) or somewhere more internal.
-   - Recommendation: `docs/release-rc.md` (alongside `CI_CACHING.md` which is similarly maintainer-focused). Keeps everything operator-discoverable. CONTEXT.md Claude's Discretion §last bullet defers this — planner picks per repo doc-placement pattern.
+   - RESOLVED: `docs/release-rc.md` (alongside `CI_CACHING.md` which is similarly maintainer-focused) per Claude's Discretion in CONTEXT.md. Keeps everything operator-discoverable.
 
 ## Environment Availability
 
