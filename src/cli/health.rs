@@ -10,30 +10,121 @@
 //! - **D-05:** Exit `0` iff HTTP 200 AND body parses as JSON AND `body.status == "ok"`. Exit `1`
 //!   on connect-refused, DNS failure, timeout, non-200, unparseable body, or `status != "ok"`.
 //!
-//! Skeleton lands in Plan 12-01; the hyper-util client + body parse + exit-code logic + 7
-//! unit tests (per D-14) land in Plan 12-02.
+//! Skeleton lands in Plan 12-01; the hyper-util client + body parse + exit-code logic + 9
+//! unit tests (per D-14 / VALIDATION.md 12-02-01..07 with the URL case split across v4/v6/default)
+//! land in Plan 12-02.
 
 use crate::cli::Cli;
+use http_body_util::{BodyExt, Empty};
+use hyper::Request;
+use hyper::body::Bytes;
+use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::rt::TokioExecutor;
+use std::time::Duration;
 
-/// Skeleton placeholder. Plan 12-02 replaces the body with the real hyper-util probe.
-pub async fn execute(_cli: &Cli) -> anyhow::Result<i32> {
-    // Phase 12 Plan 12-02 will implement:
-    //   1. Build URL: format!("http://{}/health", cli.bind.as_deref().unwrap_or("127.0.0.1:8080"))
-    //   2. Construct hyper-util client (HttpConnector + TokioExecutor + HTTP/1).
-    //   3. tokio::time::timeout(5s, client.request(req)).await
-    //   4. Check status() == 200 and JSON body.status == "ok".
-    //   5. Return Ok(0) on success, Ok(1) (with tracing::error! to stderr) on any failure mode.
-    //   6. #[cfg(test)] mod tests — 7 cases per VALIDATION.md (12-02-01..07).
-    Ok(0)
+/// Default bind target when `--bind` is absent. Aligns with the loopback
+/// default declared in CLAUDE.md § Constraints ("Default bind 127.0.0.1:8080").
+const DEFAULT_BIND: &str = "127.0.0.1:8080";
+
+/// Total time budget for one probe (D-02). Must stay strictly below the
+/// Dockerfile HEALTHCHECK `--timeout=5s` (D-06).
+const TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Pure URL-construction helper (W5). Separated from `execute` so the URL-shape
+/// tests can assert against this function without ever opening a socket.
+/// Returns the full health URL for the given optional `--bind` value.
+pub(crate) fn parse_health_url(bind: Option<&str>) -> String {
+    let host = bind.unwrap_or(DEFAULT_BIND);
+    format!("http://{host}/health")
 }
 
-/// Plan 12-02 RED-phase stub: the URL helper is declared here so the tests
-/// compile against a symbol that exists. The implementation is replaced in
-/// the GREEN commit; at RED time every caller path still returns `Ok(0)` via
-/// `execute`, so the URL-format assertion is the specific failing test.
-pub(crate) fn parse_health_url(_bind: Option<&str>) -> String {
-    // Intentionally wrong until GREEN — lets url_construction_missing_port_default fail at RED.
-    String::new()
+/// Probe the local `/health` endpoint. Exit `0` iff HTTP 200 AND body parses as
+/// JSON AND `body.status == "ok"`. Exit `1` on any other outcome.
+///
+/// Per D-05 a single non-zero code covers all failure modes; the per-mode
+/// `tracing::error!` lines on stderr give a human reader enough to debug.
+pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
+    let bind = cli.bind.as_deref().unwrap_or(DEFAULT_BIND);
+    let url = parse_health_url(cli.bind.as_deref());
+    let uri: hyper::Uri = match url.parse() {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::error!(target: "cronduit.health", url = %url, error = %e, "invalid URL");
+            return Ok(1);
+        }
+    };
+
+    // D-01: hyper-util client. HttpConnector is fine for loopback; no DNS.
+    // D-02 literal honoring: 2s connect timeout + 5s outer wrap (read budget ~3s
+    // belt-and-suspenders). The outer `tokio::time::timeout(TIMEOUT, ...)` below
+    // remains the absolute upper bound at 5s total.
+    let mut connector = HttpConnector::new();
+    connector.set_connect_timeout(Some(Duration::from_secs(2)));
+    let client: Client<HttpConnector, Empty<Bytes>> =
+        Client::builder(TokioExecutor::new()).build(connector);
+
+    let req = match Request::builder()
+        .uri(uri)
+        .header(hyper::header::HOST, bind)
+        .body(Empty::<Bytes>::new())
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(target: "cronduit.health", error = %e, "request build failed");
+            return Ok(1);
+        }
+    };
+
+    // D-02: 5 s total budget via tokio::time::timeout.
+    let resp = match tokio::time::timeout(TIMEOUT, client.request(req)).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            tracing::error!(
+                target: "cronduit.health",
+                error = %e,
+                "request failed (connect-refused / DNS / transport)"
+            );
+            return Ok(1);
+        }
+        Err(_elapsed) => {
+            tracing::error!(target: "cronduit.health", timeout_secs = 5, "request timed out");
+            return Ok(1);
+        }
+    };
+
+    if resp.status() != hyper::StatusCode::OK {
+        tracing::error!(target: "cronduit.health", status = %resp.status(), "non-200 response");
+        return Ok(1);
+    }
+
+    // D-05: collect body → Bytes → serde_json::Value, then check `status == "ok"`.
+    let body_bytes = match resp.into_body().collect().await {
+        Ok(c) => c.to_bytes(),
+        Err(e) => {
+            tracing::error!(target: "cronduit.health", error = %e, "body read failed");
+            return Ok(1);
+        }
+    };
+
+    let json: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(target: "cronduit.health", error = %e, "body not JSON");
+            return Ok(1);
+        }
+    };
+
+    if json.get("status").and_then(|v| v.as_str()) != Some("ok") {
+        tracing::error!(
+            target: "cronduit.health",
+            status = ?json.get("status"),
+            "status field missing or not 'ok'"
+        );
+        return Ok(1);
+    }
+
+    Ok(0)
 }
 
 #[cfg(test)]
@@ -41,7 +132,6 @@ mod tests {
     use super::*;
     use crate::cli::{Cli, Command, LogFormatArg};
     use std::net::SocketAddr;
-    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
