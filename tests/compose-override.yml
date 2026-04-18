@@ -1,0 +1,28 @@
+# tests/compose-override.yml — Phase 12 D-09 fixture.
+#
+# Asserts compose `healthcheck:` stanzas override the Dockerfile HEALTHCHECK
+# (Success Criterion #3, T-V11-HEALTH-02). Distinguishable from Dockerfile
+# defaults so `docker inspect` makes the override trivially observable:
+#
+#   Dockerfile default: CMD ["/cronduit", "health"], interval=30s
+#   compose override:   CMD-SHELL "/cronduit health", interval=7s
+#
+# The compose-smoke workflow asserts the inspected Healthcheck.Test array
+# starts with "CMD-SHELL" (proving the override won) — the Dockerfile default
+# would start with "CMD".
+
+services:
+  cronduit:
+    image: cronduit:ci
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info,cronduit=debug
+      - DATABASE_URL=sqlite:///data/cronduit.db
+    healthcheck:
+      test: ["CMD-SHELL", "/cronduit health"]
+      interval: 7s
+      timeout: 4s
+      retries: 2
+      start_period: 15s
+    restart: unless-stopped
