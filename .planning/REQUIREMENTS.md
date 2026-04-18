@@ -84,11 +84,11 @@ Continuation from v1.0 UI-01..15.
 
 Continuation from v1.0 OPS-01..05.
 
-- [ ] **OPS-06**: A new `cronduit health` CLI subcommand performs a local HTTP GET against `/health`, parses the JSON response, and exits 0 only if `status == "ok"`. It fails fast on connection-refused (no retry; the Docker healthcheck has its own retry policy) and reads the bind address from either a `--bind` flag or defaults to `http://127.0.0.1:8080`.
+- [x] **OPS-06**: A new `cronduit health` CLI subcommand performs a local HTTP GET against `/health`, parses the JSON response, and exits 0 only if `status == "ok"`. It fails fast on connection-refused (no retry; the Docker healthcheck has its own retry policy) and reads the bind address from either a `--bind` flag or defaults to `http://127.0.0.1:8080`.
 
-- [ ] **OPS-07**: The Dockerfile ships with a `HEALTHCHECK CMD ["/cronduit", "health"]` directive using conservative defaults (`--interval=30s --timeout=5s --start-period=60s --retries=3`), so `docker compose up` reports `healthy` out of the box without any compose-file healthcheck stanza. Operators who write their own `healthcheck:` in compose continue to work (compose overrides Dockerfile). `T-V11-HEALTH-01`, `T-V11-HEALTH-02`.
+- [x] **OPS-07**: The Dockerfile ships with a `HEALTHCHECK CMD ["/cronduit", "health"]` directive using conservative defaults (`--interval=30s --timeout=5s --start-period=60s --retries=3`), so `docker compose up` reports `healthy` out of the box without any compose-file healthcheck stanza. Operators who write their own `healthcheck:` in compose continue to work (compose overrides Dockerfile). `T-V11-HEALTH-01`, `T-V11-HEALTH-02`.
 
-- [ ] **OPS-08**: The root cause of the reported `(unhealthy)` symptom (busybox `wget --spider` in alpine:3 misparses axum's chunked responses) is reproduced in a test environment before the fix is declared complete. If the reproduction shows a different root cause, this requirement is re-scoped; the `cronduit health` subcommand fix path is correct regardless because it removes the entire busybox wget dependency from the healthcheck path.
+- [x] **OPS-08**: The root cause of the reported `(unhealthy)` symptom (busybox `wget --spider` in alpine:3 misparses axum's chunked responses) is reproduced in a test environment before the fix is declared complete. If the reproduction shows a different root cause, this requirement is re-scoped; the `cronduit health` subcommand fix path is correct regardless because it removes the entire busybox wget dependency from the healthcheck path.
 
 ### Foundation (FOUND) — hygiene
 
@@ -167,9 +167,9 @@ Explicit boundaries; NOT in v1.1 or v1.2. Duplicated from PROJECT.md § Out of S
 | ERG-02   | Phase 14 | Pending |
 | ERG-03   | Phase 14 | Pending |
 | ERG-04   | Phase 14 | Pending |
-| OPS-06   | Phase 12 | Pending |
-| OPS-07   | Phase 12 | Pending |
-| OPS-08   | Phase 12 | Pending |
+| OPS-06   | Phase 12 | Done    |
+| OPS-07   | Phase 12 | Done    |
+| OPS-08   | Phase 12 | Done    |
 | FOUND-12 | Phase 10 | Pending |
 | FOUND-13 | Phase 10 | Pending |
 
