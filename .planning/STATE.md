@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: phase_complete
-stopped_at: Phase 12 complete — rc.1 tag cut pending PR merge
-last_updated: "2026-04-18T03:20:00Z"
-last_activity: 2026-04-18 -- Phase 12 execution complete (human_needed: maintainer tag cut + GHCR verification + compose-smoke CI confirmation)
+status: phase_shipped
+stopped_at: Phase 12 shipped — PR #29 awaiting review + merge
+last_updated: "2026-04-18T03:30:00Z"
+last_activity: 2026-04-18 -- Phase 12 shipped as PR #29; maintainer rc.1 tag cut pending PR merge + compose-smoke GHA confirmation
 progress:
   total_phases: 5
   completed_phases: 3
