@@ -5,7 +5,11 @@
 //! Decisions (see `.planning/phases/12-docker-healthcheck-rc-1-cut/12-CONTEXT.md`):
 //! - **D-01:** HTTP client built on `hyper 1` + `hyper-util` (no `reqwest`, no raw TCP).
 //! - **D-02:** 5 s total timeout via `tokio::time::timeout`.
-//! - **D-03:** Target URL derived from the global `--bind` flag, defaulting to `127.0.0.1:8080`.
+//! - **D-03:** Target URL derived in precedence order: `--bind` flag → `CRONDUIT_BIND`
+//!   env var → `127.0.0.1:8080` default. The env var lets operators whose compose
+//!   overrides the internal bind (e.g. `bind = "0.0.0.0:9090"`) share a single env
+//!   setting between `cronduit run` and the Dockerfile `HEALTHCHECK` invocation
+//!   without patching the image.
 //! - **D-04:** Does NOT read `--config`; no TOML parsing in the health path.
 //! - **D-05:** Exit `0` iff HTTP 200 AND body parses as JSON AND `body.status == "ok"`. Exit `1`
 //!   on connect-refused, DNS failure, timeout, non-200, unparseable body, or `status != "ok"`.
@@ -31,9 +35,31 @@ const DEFAULT_BIND: &str = "127.0.0.1:8080";
 /// Dockerfile HEALTHCHECK `--timeout=5s` (D-06).
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Resolve the bind host per D-03 precedence:
+///   1. `--bind` flag (explicit CLI override wins)
+///   2. `CRONDUIT_BIND` env var (operator-set, shared with `cronduit run`)
+///   3. `DEFAULT_BIND` (loopback 127.0.0.1:8080)
+///
+/// Returns an owned `String` so `execute` and the URL-construction helper both
+/// see the same value without re-querying the environment.
+fn resolve_bind(flag: Option<&str>) -> String {
+    if let Some(b) = flag {
+        return b.to_string();
+    }
+    if let Ok(b) = std::env::var("CRONDUIT_BIND")
+        && !b.is_empty()
+    {
+        return b;
+    }
+    DEFAULT_BIND.to_string()
+}
+
 /// Pure URL-construction helper (W5). Separated from `execute` so the URL-shape
 /// tests can assert against this function without ever opening a socket.
 /// Returns the full health URL for the given optional `--bind` value.
+/// Note: this helper is env-agnostic so tests can assert URL shape deterministically;
+/// `execute` calls `resolve_bind` (which consults the env) and passes the result
+/// as `Some(&resolved)` to keep this helper pure.
 pub(crate) fn parse_health_url(bind: Option<&str>) -> String {
     let host = bind.unwrap_or(DEFAULT_BIND);
     format!("http://{host}/health")
@@ -45,8 +71,9 @@ pub(crate) fn parse_health_url(bind: Option<&str>) -> String {
 /// Per D-05 a single non-zero code covers all failure modes; the per-mode
 /// `tracing::error!` lines on stderr give a human reader enough to debug.
 pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
-    let bind = cli.bind.as_deref().unwrap_or(DEFAULT_BIND);
-    let url = parse_health_url(cli.bind.as_deref());
+    let resolved_bind = resolve_bind(cli.bind.as_deref());
+    let bind: &str = &resolved_bind;
+    let url = parse_health_url(Some(bind));
     let uri: hyper::Uri = match url.parse() {
         Ok(u) => u,
         Err(e) => {
@@ -257,6 +284,63 @@ mod tests {
 
         // Just calling execute without surfacing a config-read IO error proves D-04.
         let _ = execute(&cli).await.unwrap();
+    }
+
+    /// D-03 precedence: explicit `--bind` flag wins over the CRONDUIT_BIND env var.
+    /// Uses a synchronization primitive (rather than env guards) to avoid cross-test
+    /// races — each call to `resolve_bind` with `Some` should return that value
+    /// without consulting the environment.
+    #[test]
+    fn resolve_bind_flag_beats_env() {
+        // Even if env is set, flag wins — prove by passing a distinctive flag.
+        let out = super::resolve_bind(Some("10.0.0.1:9090"));
+        assert_eq!(out, "10.0.0.1:9090");
+    }
+
+    /// Module-level lock for env-mutating tests. Rust runs tests in parallel by
+    /// default and `std::env::set_var` is process-wide; tests that read or write
+    /// `CRONDUIT_BIND` must share this lock so one test's set_var doesn't race
+    /// another test's read. One lock per env var surface is the minimum coupling
+    /// that still prevents inter-test env bleed.
+    static CRONDUIT_BIND_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// D-03 precedence: CRONDUIT_BIND env var is used when no flag is supplied.
+    #[test]
+    fn resolve_bind_env_used_when_flag_absent() {
+        let _g = CRONDUIT_BIND_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev = std::env::var("CRONDUIT_BIND").ok();
+        // SAFETY: test-only; env mutation serialized by CRONDUIT_BIND_LOCK.
+        unsafe {
+            std::env::set_var("CRONDUIT_BIND", "192.168.1.5:8081");
+        }
+        let out = super::resolve_bind(None);
+        // Restore env before any assertion can early-return.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("CRONDUIT_BIND", v),
+                None => std::env::remove_var("CRONDUIT_BIND"),
+            }
+        }
+        assert_eq!(out, "192.168.1.5:8081");
+    }
+
+    /// D-03 precedence: default loopback fallback when neither flag nor env set.
+    #[test]
+    fn resolve_bind_defaults_to_loopback() {
+        let _g = CRONDUIT_BIND_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev = std::env::var("CRONDUIT_BIND").ok();
+        unsafe {
+            std::env::remove_var("CRONDUIT_BIND");
+        }
+        let out = super::resolve_bind(None);
+        unsafe {
+            if let Some(v) = prev {
+                std::env::set_var("CRONDUIT_BIND", v);
+            }
+        }
+        assert_eq!(out, DEFAULT_BIND);
     }
 
     /// D-02: the 5 s total timeout fires deterministically. Uses
