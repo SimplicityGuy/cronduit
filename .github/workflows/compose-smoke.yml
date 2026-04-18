@@ -161,7 +161,15 @@ jobs:
         id: ops08_old
         run: |
           set -eu
-          docker run -d --name cronduit-ops08-old -p 18080:8080 cronduit:ops08-old
+          # MD-01 fix: DATABASE_URL must resolve to a path UID 1000 can write.
+          # /data is created + chowned to 1000:1000 by the Dockerfile (L120);
+          # pointing DATABASE_URL there avoids the /cronduit.db fallback that
+          # hits read-only root and crashes the container before healthcheck.
+          docker run -d \
+            --name cronduit-ops08-old \
+            -p 18080:8080 \
+            -e DATABASE_URL=sqlite:///data/cronduit.db \
+            cronduit:ops08-old
           old_status=missing
           for i in $(seq 1 60); do
             old_status=$(docker inspect --format '{{.State.Health.Status}}' cronduit-ops08-old 2>/dev/null || echo "missing")
@@ -177,7 +185,15 @@ jobs:
       - name: Run NEW image and assert healthy (max 90s)
         run: |
           set -eu
-          docker run -d --name cronduit-ops08-new -p 28080:8080 cronduit:ci
+          # MD-01 fix: same as OLD-state run — DATABASE_URL must point at /data
+          # (the Dockerfile-created, UID-1000-owned directory). Without this,
+          # cronduit falls back to ./cronduit.db = /cronduit.db on read-only
+          # root and crashes before the HEALTHCHECK ever runs.
+          docker run -d \
+            --name cronduit-ops08-new \
+            -p 28080:8080 \
+            -e DATABASE_URL=sqlite:///data/cronduit.db \
+            cronduit:ci
           for i in $(seq 1 90); do
             new_status=$(docker inspect --format '{{.State.Health.Status}}' cronduit-ops08-new 2>/dev/null || echo "missing")
             echo "[ops08-new t+${i}s] status=$new_status"
