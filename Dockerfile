@@ -126,5 +126,13 @@ COPY --from=builder /build/examples/cronduit.toml /etc/cronduit/config.toml
 EXPOSE 8080
 USER cronduit:cronduit
 
+# Phase 12 OPS-07: probe /health every 30s; allow 60s for migration backfill
+# (Phase 11 D-12 binds the listener AFTER backfill completes), 5s timeout per
+# probe, 3 consecutive failures flip the container to (unhealthy). Operator
+# `healthcheck:` stanzas in compose still override (compose wins over Dockerfile,
+# verified by .github/workflows/compose-smoke.yml).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD ["/cronduit", "health"]
+
 ENTRYPOINT ["/cronduit"]
 CMD ["run", "--config", "/etc/cronduit/config.toml"]
