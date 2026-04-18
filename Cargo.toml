@@ -25,6 +25,8 @@ tokio-util = { version = "0.7.18", features = ["rt"] }
 axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2", "json", "query", "form"] }
 tower-http = { version = "0.6.8", default-features = false, features = ["trace"] }
 hyper = { version = "1", default-features = false }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
 
 # Database — rustls-only (Pitfall 14 / FOUND-06)
 sqlx = { version = "0.8.6", default-features = false, features = [
