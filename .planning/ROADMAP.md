@@ -184,7 +184,7 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 
 **Plans**: 7 plans
 - [x] `12-01-PLAN.md` — `cronduit health` skeleton: clap wiring + Cargo.toml deps + src/cli/health.rs placeholder (OPS-06)
-- [ ] `12-02-PLAN.md` — Health probe implementation: hyper-util client + body parse + 9 unit tests covering D-14 (OPS-06)
+- [x] `12-02-PLAN.md` — Health probe implementation: hyper-util client + body parse + 9 unit tests covering D-14 (OPS-06)
 - [x] `12-03-PLAN.md` — Dockerfile HEALTHCHECK directive between USER and ENTRYPOINT (OPS-07)
 - [ ] `12-04-PLAN.md` — compose-smoke CI workflow + ops08-old fixture + compose-override fixture (OPS-07, OPS-08)
 - [x] `12-05-PLAN.md` — release.yml metadata-action D-10 patch (5 line edits in tags: block) (OPS-07)
