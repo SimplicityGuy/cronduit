@@ -26,6 +26,16 @@ trim = true
 conventional_commits = true
 filter_unconventional = true
 split_commits = false
+# Rewrite non-conventional squash-merge titles so git-cliff's conventional
+# parser accepts them. Cronduit ships one `Phase N: ...` squash-merge per
+# executed GSD phase (e.g. `Phase 12: Docker Healthcheck + rc.1 Cut (#29)`)
+# and `Milestone vX.Y: ...` squash-merges for milestone-level PRs — neither
+# is conventional-commits form, so without these preprocessors git-cliff
+# silently drops them and rc release notes come out near-empty.
+commit_preprocessors = [
+    { pattern = "^(Phase \\d+: .*)", replace = "feat: $1" },
+    { pattern = "^(Milestone .*)", replace = "feat: $1" },
+]
 commit_parsers = [
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug Fixes" },
