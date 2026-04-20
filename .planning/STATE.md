@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: phase_inserted
-stopped_at: Phase 12.1 (GHCR tag hygiene) inserted after rc.1 verification surfaced :latest divergence
-last_updated: "2026-04-20T00:00:00Z"
-last_activity: 2026-04-19 -- v1.1.0-rc.1 cut + verified; Phase 12 UAT closed 3/3; Phase 12.1 inserted (OPS-09..10)
+status: ready_to_execute
+stopped_at: Phase 12.1 (GHCR tag hygiene) planned — 4 plans across 2 waves ready for /gsd-execute-phase
+last_updated: "2026-04-20T18:00:00Z"
+last_activity: 2026-04-20 -- Phase 12.1 planned (OPS-09..10): 4 plans, 2 waves, verification passed on iteration 2
 progress:
   total_phases: 6
   completed_phases: 3
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 12.1 (inserted) — next up
-Plan: Phase 12 complete (rc.1 cut + verified 2026-04-19); Phase 12.1 not yet planned (run `/gsd-plan-phase 12.1`)
-Status: Phase 12 UAT closed 3/3 pass; Phase 12.1 inserted as urgent prerequisite for Phase 13 rc.2 cut
-Last activity: 2026-04-19 -- v1.1.0-rc.1 tag cut + verified on GHCR; Phase 12 UAT closed; Phase 12.1 (GHCR tag hygiene) inserted
+Phase: 12.1 (inserted) — planned, ready to execute
+Plan: Phase 12.1 decomposed into 4 plans across 2 waves (Wave 1: 01 ci.yml cleanup + 02 main-build.yml + 03 README five-tag contract; Wave 2: 04 verify script + maintainer-action retag checkpoint)
+Status: Phase 12.1 plans passed gsd-plan-checker on iteration 2/3 (1 blocker + 3 warnings resolved); ready for `/gsd-execute-phase 12.1`
+Last activity: 2026-04-20 -- Phase 12.1 planned; research + patterns + validation + 4 plans committed on branch `gsd/phase-12.1-ghcr-tag-hygiene`
 
 Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12; 12.1 inserted)
 
