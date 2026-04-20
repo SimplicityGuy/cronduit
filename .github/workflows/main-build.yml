@@ -1,0 +1,140 @@
+# .github/workflows/main-build.yml
+# Publishes ghcr.io/simplicityguy/cronduit:main on every push to main.
+# Multi-arch (linux/amd64 + linux/arm64) via docker/build-push-action@v6 for
+# build parity with release.yml (same Dockerfile, same platforms, same labels).
+# Does NOT push :latest, :1, :X.Y, :X.Y.Z, or :rc — those are owned by
+# release.yml on semver tag pushes.
+#
+# Phase 12.1 OPS-10 / D-10 tag-contract boundary:
+#   release.yml       -> owns :X.Y.Z, :X.Y, :X, :latest, :rc
+#   main-build.yml    -> owns :main EXCLUSIVELY
+#   compose-smoke.yml -> owns no tags (build-only, never pushes)
+#   ci.yml            -> owns no tags (build-only, never pushes)
+#
+# Security: This workflow only uses server-controlled inputs (github.repository,
+# github.actor, GITHUB_TOKEN, github.ref). No user-supplied text (issue titles,
+# PR bodies, commit messages) flows into run: commands. The two run: steps
+# (`Compute lowercase image name` and `Assert :main is multi-arch`) both route
+# their variables through env: blocks, per release.yml L42-52's rationale.
+
+name: main-build
+
+on:
+  push:
+    branches: [main]
+
+# Cancel in-flight runs when a newer commit lands on main. Unlike release.yml
+# (which must never self-cancel during a tag push), it's safe and desirable for
+# :main to always reflect the most recent push.
+concurrency:
+  group: main-build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Top-level permissions: read-only by default. packages: write is scoped
+# per-job to the main-build job only (mirrors ci.yml L97-100 pattern).
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  main-build:
+    name: multi-arch build -> :main
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute lowercase image name
+        # Derive IMAGE_NAME=<lowercase-owner>/<lowercase-repo> from the
+        # $REPO env var and export to $GITHUB_ENV so later steps see it
+        # via ${{ env.IMAGE_NAME }}. github.repository is a server-
+        # controlled identifier (strict owner/repo format), but we route
+        # it through an env var anyway to follow the project-wide "never
+        # interpolate ${{ }} directly into run: commands" rule.
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          echo "IMAGE_NAME=$(echo "$REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (labels, tags, annotations)
+        id: meta
+        uses: docker/metadata-action@v5
+        # DOCKER_METADATA_ANNOTATIONS_LEVELS: emit BOTH index + manifest
+        # annotations (matches release.yml L86-104 rationale — without this,
+        # annotations silently scope to manifest-only).
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index,manifest
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # ONLY :main. No semver, no latest, no rc, no branch-derived tags.
+          # This is the D-10 / OPS-10 tag-contract boundary.
+          #
+          # Why type=raw,value=main (hardcoded) instead of type=ref,event=branch:
+          # both produce :main on a push to main, but type=ref,event=branch
+          # also fires on pushes to OTHER branches if the on.push.branches filter
+          # is ever relaxed. type=raw,value=main is a hard-coded contract — no
+          # matter what branch triggers the workflow, only :main can possibly
+          # be published. This defends against a future "add develop branch
+          # trigger" refactor that would accidentally create :develop.
+          tags: |
+            type=raw,value=main
+          labels: |
+            org.opencontainers.image.title=Cronduit
+            org.opencontainers.image.description=Self-hosted Docker-native cron scheduler with a web UI (main branch HEAD)
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.vendor=SimplicityGuy
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          annotations: |
+            org.opencontainers.image.title=Cronduit
+            org.opencontainers.image.description=Self-hosted Docker-native cron scheduler with a web UI (main branch HEAD)
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.vendor=SimplicityGuy
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          # Scope the GHA cache separately from release builds so main-push
+          # churn doesn't invalidate the release-build cache.
+          cache-from: type=gha,scope=cronduit-main
+          cache-to: type=gha,mode=max,scope=cronduit-main
+
+      - name: Assert :main is multi-arch (amd64 + arm64)
+        # Post-push verification: if build-push-action silently flattened to a
+        # single architecture (should be impossible with platforms: linux/amd64,
+        # linux/arm64 but defense-in-depth), this step fails the workflow and
+        # surfaces the regression. Routes IMG through env: per project rule.
+        env:
+          IMG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
+        run: |
+          set -euo pipefail
+          archs=$(docker buildx imagetools inspect "$IMG" --raw \
+            | jq -r '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort | join(",")')
+          echo "observed architectures: $archs"
+          if [ "$archs" != "amd64,arm64" ]; then
+            echo "::error::expected :main to publish amd64+arm64, got $archs"
+            exit 1
+          fi
+          echo ":main is multi-arch (amd64 + arm64) — OPS-10 assertion passed"

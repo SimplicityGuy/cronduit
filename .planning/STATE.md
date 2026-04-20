@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: phase_inserted
-stopped_at: Phase 12.1 (GHCR tag hygiene) inserted after rc.1 verification surfaced :latest divergence
-last_updated: "2026-04-20T00:00:00Z"
-last_activity: 2026-04-19 -- v1.1.0-rc.1 cut + verified; Phase 12 UAT closed 3/3; Phase 12.1 inserted (OPS-09..10)
+status: ready_to_plan
+stopped_at: Phase 12 execution complete — awaiting maintainer rc.1 tag cut + PR merge
+last_updated: "2026-04-20T17:06:51.360Z"
+last_activity: 2026-04-20 -- Phase 12.1 execution started
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 32
-  completed_plans: 32
-  percent: 50
+  completed_phases: 4
+  total_plans: 36
+  completed_plans: 33
+  percent: 67
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 12 complete (docker-healthcheck + rc.1 cut). Next: Phase 13 — observability polish + rc.2.
+**Current focus:** Phase 12.1 — ghcr-tag-hygiene
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 12.1 (inserted) — next up
-Plan: Phase 12 complete (rc.1 cut + verified 2026-04-19); Phase 12.1 not yet planned (run `/gsd-plan-phase 12.1`)
-Status: Phase 12 UAT closed 3/3 pass; Phase 12.1 inserted as urgent prerequisite for Phase 13 rc.2 cut
-Last activity: 2026-04-19 -- v1.1.0-rc.1 tag cut + verified on GHCR; Phase 12 UAT closed; Phase 12.1 (GHCR tag hygiene) inserted
+Phase: 13
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-04-20
 
 Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12; 12.1 inserted)
 

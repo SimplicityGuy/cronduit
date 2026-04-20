@@ -78,7 +78,7 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 - [x] **Phase 10: Stop-a-Running-Job + Hygiene Preamble** — SCHED-09..14 + FOUND-12..13. Highest-risk spike; new `stopped` status wired through all three executors. Ships as part of rc.1. (completed 2026-04-15)
 - [x] **Phase 11: Per-Job Run Numbers + Log UX Fixes** — DB-09..13 + UI-16..20. Three-step migration + log pipeline inversion. Ships as part of rc.1. (completed 2026-04-17)
 - [x] **Phase 12: Docker Healthcheck + rc.1 Cut** — OPS-06..08. New `cronduit health` CLI + Dockerfile HEALTHCHECK. Ships AS `v1.1.0-rc.1`. (completed 2026-04-18; rc.1 tag cut + verified 2026-04-19)
-- [ ] **Phase 12.1: GHCR Tag Hygiene** _(INSERTED)_ — OPS-09..10. Fix `:latest` divergence from the v1.0.1 retag; add `:main` floating tag for main builds; lock in semantic that `:latest` only moves on stable release tags (not rc tags, not main builds). Must land before Phase 13's rc.2 cut.
+- [x] **Phase 12.1: GHCR Tag Hygiene** _(INSERTED)_ — OPS-09..10. Fix `:latest` divergence from the v1.0.1 retag; add `:main` floating tag for main builds; lock in semantic that `:latest` only moves on stable release tags (not rc tags, not main builds). Must land before Phase 13's rc.2 cut. (completed 2026-04-20)
 - [ ] **Phase 13: Observability Polish (rc.2)** — OBS-01..05. Timeline page + sparkline/success-rate + duration p50/p95. Ships AS `v1.1.0-rc.2`.
 - [ ] **Phase 14: Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship** — ERG-01..04 + DB-14. `enabled_override` tri-state, CSRF-gated bulk API, final milestone ship. Ships AS `v1.1.0-rc.3` then promoted to `v1.1.0`.
 
@@ -212,7 +212,11 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
   3. Pushing a `-rc.N` tag (rc.2, rc.3) does NOT move `:latest`, `:1`, `:1.1`, or `:main` — verified by the compose-smoke-equivalent assertion in CI or a dry-run of the release workflow.
   4. README / docs surface the five-tag contract (`:X.Y.Z`, `:X.Y`, `:X`, `:latest`, `:rc`, `:main`) so operators know which tag to pin.
 
-**Plans**: [not yet planned — run `/gsd-plan-phase 12.1` to decompose]
+**Plans**: 4 plans
+- [x] `12.1-01-PLAN.md` — `ci.yml` cleanup: delete L112-131 (the three GHCR-push steps that overwrite `:latest` and publish `:sha-*` on every main-push) + replacement comment pointing at `main-build.yml` (OPS-09)
+- [x] `12.1-02-PLAN.md` — new `.github/workflows/main-build.yml`: multi-arch (amd64+arm64) build + push of `:main` on every push to main; hard-coded `type=raw,value=main` tag contract; post-push multi-arch assertion; `cancel-in-progress` concurrency (OPS-10)
+- [x] `12.1-03-PLAN.md` — README.md `## Docker image tags` section: six-row tag contract table + mermaid workflow-ownership diagram + "Picking a tag" guidance + "What's NOT published" negative-space list (OPS-09, OPS-10, success criterion #4)
+- [x] `12.1-04-PLAN.md` — `scripts/verify-latest-retag.sh` per-platform digest-diff script + maintainer-action checkpoint for the one-shot `docker buildx imagetools create -t :latest :1.0.1` retag against live GHCR (OPS-09; `autonomous: false`; Wave 2, depends on Plan 01 merging first)
 
 **UI hint**: no
 
