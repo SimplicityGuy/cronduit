@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: phase_shipped
-stopped_at: Phase 12 shipped — PR #29 awaiting review + merge
-last_updated: "2026-04-18T03:30:00Z"
-last_activity: 2026-04-18 -- Phase 12 shipped as PR #29; maintainer rc.1 tag cut pending PR merge + compose-smoke GHA confirmation
+status: phase_inserted
+stopped_at: Phase 12.1 (GHCR tag hygiene) inserted after rc.1 verification surfaced :latest divergence
+last_updated: "2026-04-20T00:00:00Z"
+last_activity: 2026-04-19 -- v1.1.0-rc.1 cut + verified; Phase 12 UAT closed 3/3; Phase 12.1 inserted (OPS-09..10)
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 3
   total_plans: 32
   completed_plans: 32
-  percent: 100
+  percent: 50
 ---
 
 # Project State
@@ -27,12 +27,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 12
-Plan: All 7 plans complete (12-01..12-07)
-Status: Phase complete (human_needed: maintainer rc.1 tag cut + GHCR verification + compose-smoke GHA green)
-Last activity: 2026-04-18 -- Phase 12 execution complete; 2 code-review mediums resolved (MD-01 DATABASE_URL, MD-02 CRONDUIT_BIND)
+Phase: 12.1 (inserted) — next up
+Plan: Phase 12 complete (rc.1 cut + verified 2026-04-19); Phase 12.1 not yet planned (run `/gsd-plan-phase 12.1`)
+Status: Phase 12 UAT closed 3/3 pass; Phase 12.1 inserted as urgent prerequisite for Phase 13 rc.2 cut
+Last activity: 2026-04-19 -- v1.1.0-rc.1 tag cut + verified on GHCR; Phase 12 UAT closed; Phase 12.1 (GHCR tag hygiene) inserted
 
-Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12)
+Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12; 12.1 inserted)
 
 ## v1.1 Phase Shape
 
@@ -41,20 +41,23 @@ flowchart LR
     P10["Phase 10<br/>Stop + Hygiene"] --> P11["Phase 11<br/>Run Numbers<br/>+ Log UX"]
     P11 --> P12["Phase 12<br/>Healthcheck<br/>+ rc.1 cut"]
     P12 --> RC1(["v1.1.0-rc.1"])
-    RC1 --> P13["Phase 13<br/>Observability<br/>+ rc.2 cut"]
+    RC1 --> P121["Phase 12.1<br/>GHCR tag hygiene<br/>(INSERTED)"]
+    P121 --> P13["Phase 13<br/>Observability<br/>+ rc.2 cut"]
     P13 --> RC2(["v1.1.0-rc.2"])
     RC2 --> P14["Phase 14<br/>Bulk Toggle<br/>+ rc.3 + final"]
     P14 --> SHIP(["v1.1.0<br/>FINAL SHIP"])
 
     classDef phase fill:#1a1a1a,stroke:#7fbfff,stroke-width:2px,color:#e0e0ff
+    classDef inserted fill:#3d2a1a,stroke:#ffbf7f,stroke-width:2px,color:#ffe0c0
     classDef rc fill:#2a1a3d,stroke:#bf7fff,stroke-width:2px,color:#f0e0ff
     classDef ship fill:#00ff7f,stroke:#00ff7f,stroke-width:3px,color:#0a1a0a
     class P10,P11,P12,P13,P14 phase
+    class P121 inserted
     class RC1,RC2 rc
     class SHIP ship
 ```
 
-Phase 10 is the first active phase. No phase is currently in-flight.
+Phases 10–12 complete (rc.1 cut + verified 2026-04-19). Phase 12.1 inserted as urgent prerequisite for rc.2.
 
 ## v1.0 Recap (archived)
 
@@ -79,6 +82,10 @@ flowchart LR
 Full v1.0 archive: `.planning/milestones/v1.0-ROADMAP.md`, `.planning/milestones/v1.0-REQUIREMENTS.md`, `.planning/milestones/v1.0-MILESTONE-AUDIT.md`.
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- **2026-04-19:** Phase 12.1 inserted after Phase 12 (URGENT): GHCR tag hygiene — pin `:latest` to released versions only, add `:main` floating tag for main builds, fix pre-existing `:latest` divergence from the v1.0.1 retag. Discovered during Phase 12 post-push verification; must land before Phase 13's rc.2 cut. See `.planning/phases/12.1-ghcr-tag-hygiene/`.
 
 ### Decisions
 
