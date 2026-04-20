@@ -77,7 +77,8 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 
 - [x] **Phase 10: Stop-a-Running-Job + Hygiene Preamble** — SCHED-09..14 + FOUND-12..13. Highest-risk spike; new `stopped` status wired through all three executors. Ships as part of rc.1. (completed 2026-04-15)
 - [x] **Phase 11: Per-Job Run Numbers + Log UX Fixes** — DB-09..13 + UI-16..20. Three-step migration + log pipeline inversion. Ships as part of rc.1. (completed 2026-04-17)
-- [x] **Phase 12: Docker Healthcheck + rc.1 Cut** — OPS-06..08. New `cronduit health` CLI + Dockerfile HEALTHCHECK. Ships AS `v1.1.0-rc.1`. (completed 2026-04-18; maintainer rc.1 tag cut pending PR merge)
+- [x] **Phase 12: Docker Healthcheck + rc.1 Cut** — OPS-06..08. New `cronduit health` CLI + Dockerfile HEALTHCHECK. Ships AS `v1.1.0-rc.1`. (completed 2026-04-18; rc.1 tag cut + verified 2026-04-19)
+- [ ] **Phase 12.1: GHCR Tag Hygiene** _(INSERTED)_ — OPS-09..10. Fix `:latest` divergence from the v1.0.1 retag; add `:main` floating tag for main builds; lock in semantic that `:latest` only moves on stable release tags (not rc tags, not main builds). Must land before Phase 13's rc.2 cut.
 - [ ] **Phase 13: Observability Polish (rc.2)** — OBS-01..05. Timeline page + sparkline/success-rate + duration p50/p95. Ships AS `v1.1.0-rc.2`.
 - [ ] **Phase 14: Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship** — ERG-01..04 + DB-14. `enabled_override` tri-state, CSRF-gated bulk API, final milestone ship. Ships AS `v1.1.0-rc.3` then promoted to `v1.1.0`.
 
@@ -190,6 +191,29 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 - [x] `12-05-PLAN.md` — release.yml metadata-action D-10 patch (5 line edits in tags: block) (OPS-07)
 - [x] `12-06-PLAN.md` — docs/release-rc.md maintainer runbook (mermaid diagram, GPG branching, post-push verification table)
 - [x] `12-07-PLAN.md` — Close-out: REQUIREMENTS.md OPS-06/07/08 checkbox flips + maintainer-action checkpoint to cut v1.1.0-rc.1 (OPS-06, OPS-07, OPS-08) [human-action — tag cut deferred to post-PR-merge]
+**UI hint**: no
+
+---
+
+### Phase 12.1: GHCR Tag Hygiene _(INSERTED)_
+**Goal**: `:latest` tracks the latest released stable version (never rc tags, never main builds); a new `:main` floating tag tracks HEAD of `main` for operators who want bleeding-edge builds without waiting for rc cuts; the pre-existing `:latest` divergence from the v1.0.1 retag is corrected.
+**Depends on**: Phase 12 (rc.1 release.yml D-10 gating; :main workflow reuses release.yml's multi-arch build plumbing)
+**Requirements**: OPS-09, OPS-10
+**rc target**: Must land before Phase 13 cuts `v1.1.0-rc.2` so rc.2 ships into a healthy tag ecosystem.
+
+**Key design decisions locked** (from planning conversation on 2026-04-19):
+- **`:latest` semantics (lock in D-10 + retroactive fix):** `:latest` ONLY moves on non-rc stable tag pushes (`vX.Y.Z` with no `-rc.N` suffix). release.yml's D-10 gating already enforces this going forward. The pre-existing divergence (`:latest` points at a pre-v1.0.1 digest, not the v1.0.1 retag digest) is corrected by a one-shot maintainer-run `docker buildx imagetools create -t :latest :1.0.1`. Documented as a maintainer-action checkpoint in the plan.
+- **`:main` floating tag (new):** New GHA workflow (or extension of release.yml) that builds + pushes a multi-arch image tagged `:main` on every push to `main`. Same cargo-zigbuild plumbing as release.yml for parity with actual releases. User decision: multi-arch on every main push (accepts ~10-15 min CI burn per push for release parity).
+- **Not in scope for v1.1:** No `:edge`, `:nightly`, `:dev`, or per-branch tags. Operators track either a versioned stable tag (`:1.0.1`, `:1.1.0`), a pre-release (`:1.1.0-rc.1`), a rolling rc (`:rc`), latest released (`:latest`), or bleeding-edge (`:main`). Five tag families, all with documented semantics.
+
+**Success Criteria** (what must be TRUE):
+  1. Every push to `main` triggers a multi-arch (amd64+arm64) build + push to `ghcr.io/simplicityguy/cronduit:main`; `:main` digest equals the digest a fresh release-build off the same HEAD would produce.
+  2. `:latest` digest equals the digest of the most recent non-rc stable tag at any moment. As of this phase's close, that's `v1.0.1`. After Phase 14 ships `v1.1.0`, `:latest` will auto-advance (no manual action needed).
+  3. Pushing a `-rc.N` tag (rc.2, rc.3) does NOT move `:latest`, `:1`, `:1.1`, or `:main` — verified by the compose-smoke-equivalent assertion in CI or a dry-run of the release workflow.
+  4. README / docs surface the five-tag contract (`:X.Y.Z`, `:X.Y`, `:X`, `:latest`, `:rc`, `:main`) so operators know which tag to pin.
+
+**Plans**: [not yet planned — run `/gsd-plan-phase 12.1` to decompose]
+
 **UI hint**: no
 
 ---
