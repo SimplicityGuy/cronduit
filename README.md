@@ -64,6 +64,8 @@ cd cronduit
 open http://localhost:8080
 ```
 
+Pinning a specific image tag in production? See [Docker image tags](#docker-image-tags) for which tag matches different operator needs (`:X.Y`, `:latest`, `:rc`, `:main`).
+
 You should see four example jobs in the dashboard:
 
 - **echo-timestamp** (command) -- every minute, prints `date` output. Instant heartbeat so you know Cronduit is alive.
@@ -74,6 +76,57 @@ You should see four example jobs in the dashboard:
 The echo job fires within 60 seconds, giving you instant feedback that Cronduit is working. The other three demonstrate every execution type Cronduit supports (command, script, and Docker) so you can pattern-match on them when writing your own.
 
 ---
+
+## Docker image tags
+
+Cronduit publishes a small, explicit set of floating and versioned tags to `ghcr.io/simplicityguy/cronduit`. Pick the one that matches your risk tolerance.
+
+| Tag | What it points at | When it moves | Who should pin this |
+|-----|-------------------|---------------|---------------------|
+| `:X.Y.Z` (e.g. `:1.0.1`, `:1.1.0`) | An immutable tagged release | Never -- once published, a specific version tag points at one digest forever | Production deployments that want reproducibility |
+| `:X.Y` (e.g. `:1.0`, `:1.1`) | The most recent `:X.Y.Z` patch release for that minor line | Every time a new patch of that minor ships | Production deployments that want to auto-pick up patch fixes |
+| `:X` (e.g. `:1`) | The most recent `:X.Y.Z` release for that major line | Every time a new minor or patch of that major ships | Production deployments willing to take minor-version upgrades |
+| `:latest` | The most recent stable (non-rc) release -- currently `:1.0.1`, will advance to `:1.1.0` when it ships | Only on stable release tags (`vX.Y.Z` with no `-rc.N` suffix) | Operators who always want the newest stable. Never bleeds rc or main-branch builds in |
+| `:rc` | The most recent release candidate -- currently `:1.1.0-rc.1` | Every rc push (`vX.Y.Z-rc.N`). Never moves on stable releases | Early adopters who want to exercise the next milestone before it ships |
+| `:main` | A CI-built image of whatever commit is currently at the tip of `main` | Every push to `main`, multi-arch, built with the same toolchain as release images | Homelab operators who want the bleeding edge and can accept that `main` may be unstable |
+
+### Which workflow owns which tag
+
+```mermaid
+flowchart LR
+    PUSH_MAIN["push to main"] --> MAINBUILD["main-build.yml"]
+    MAINBUILD --> MAIN[":main"]
+
+    PUSH_RC["push v1.1.0-rc.N tag"] --> RELEASE["release.yml"]
+    RELEASE --> RC[":1.1.0-rc.N<br/>:rc"]
+
+    PUSH_STABLE["push v1.1.0 tag"] --> RELEASE
+    RELEASE --> STABLE[":1.1.0<br/>:1.1<br/>:1<br/>:latest"]
+
+    classDef trigger fill:#0a1f2d,stroke:#00ff7f,color:#e0ffe0
+    classDef workflow fill:#1a1a1a,stroke:#666,color:#ccc
+    classDef tag fill:#0a3d0a,stroke:#00ff7f,color:#e0ffe0
+    class PUSH_MAIN,PUSH_RC,PUSH_STABLE trigger
+    class MAINBUILD,RELEASE workflow
+    class MAIN,RC,STABLE tag
+```
+
+### Picking a tag
+
+- Most operators should pin `:1.1` (or whatever the current minor line is). It picks up patch fixes automatically but never surprises you with a major upgrade.
+- `:latest` is fine for "just try it out" quickstart flows -- which is why `examples/docker-compose.yml` pins it -- but is not recommended for long-running deployments where you want reproducibility.
+- `:rc` lets you validate the next milestone early. If an rc breaks in your environment, file an issue before the final cut.
+- `:main` is for operators who WANT the bleeding edge. It pulls unreviewed code from the tip of `main`; treat it the same way you would treat pulling from a branch of any open-source project. It is not recommended for any environment that values uptime.
+
+### What's NOT published
+
+The following tags are intentionally NOT published -- they are not footguns we plan to add later, they are footguns we have deliberately declined:
+
+- No `:edge`, `:nightly`, or `:dev` tags. If you want bleeding-edge, pin `:main`.
+- No per-branch tags (e.g. no `:feature-foo` for branches other than `main`).
+- No per-commit tags (e.g. no `:sha-abc1234`). Cronduit previously published these and they cluttered the package page without a clear use case.
+
+If you need to pin to a specific commit, use an `:X.Y.Z` release tag; if no release tag exists for your target commit, that commit is not a supported deployment target.
 
 ## Architecture
 
