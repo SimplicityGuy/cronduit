@@ -212,7 +212,11 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
   3. Pushing a `-rc.N` tag (rc.2, rc.3) does NOT move `:latest`, `:1`, `:1.1`, or `:main` — verified by the compose-smoke-equivalent assertion in CI or a dry-run of the release workflow.
   4. README / docs surface the five-tag contract (`:X.Y.Z`, `:X.Y`, `:X`, `:latest`, `:rc`, `:main`) so operators know which tag to pin.
 
-**Plans**: [not yet planned — run `/gsd-plan-phase 12.1` to decompose]
+**Plans**: 4 plans
+- [ ] `12.1-01-PLAN.md` — `ci.yml` cleanup: delete L112-131 (the three GHCR-push steps that overwrite `:latest` and publish `:sha-*` on every main-push) + replacement comment pointing at `main-build.yml` (OPS-09)
+- [ ] `12.1-02-PLAN.md` — new `.github/workflows/main-build.yml`: multi-arch (amd64+arm64) build + push of `:main` on every push to main; hard-coded `type=raw,value=main` tag contract; post-push multi-arch assertion; `cancel-in-progress` concurrency (OPS-10)
+- [ ] `12.1-03-PLAN.md` — README.md `## Docker image tags` section: six-row tag contract table + mermaid workflow-ownership diagram + "Picking a tag" guidance + "What's NOT published" negative-space list (OPS-09, OPS-10, success criterion #4)
+- [ ] `12.1-04-PLAN.md` — `scripts/verify-latest-retag.sh` per-platform digest-diff script + maintainer-action checkpoint for the one-shot `docker buildx imagetools create -t :latest :1.0.1` retag against live GHCR (OPS-09; `autonomous: false`; Wave 2, depends on Plan 01 merging first)
 
 **UI hint**: no
 
