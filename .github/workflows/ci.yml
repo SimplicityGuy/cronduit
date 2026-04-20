@@ -109,26 +109,12 @@ jobs:
         if: github.event_name == 'pull_request'
         run: just image
 
-      # main path: build and push to GHCR
-      - name: docker login (main only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: just image-push (main -- latest)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        env:
-          REPO_OWNER: ${{ github.repository_owner }}
-        run: just image-push "$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')/cronduit:latest"
-
-      - name: just image-push (main -- sha)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        env:
-          REPO_OWNER: ${{ github.repository_owner }}
-        run: just image-push "$(echo "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')/cronduit:sha-${GITHUB_SHA:0:7}"
+      # main path: :main floating tag is owned by main-build.yml (OPS-10).
+      # ci.yml's image job stays PR-only — verifies multi-arch BUILD works
+      # without pushing. On push-to-main this job becomes a no-op because the
+      # only remaining step (`just image (PR -- build only)` above) is gated on
+      # `github.event_name == 'pull_request'`. DO NOT re-add a main-push step
+      # here — that is what caused the pre-Phase-12.1 :latest divergence.
 
   compose-smoke:
     name: quickstart compose smoke (${{ matrix.compose }})
