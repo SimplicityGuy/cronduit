@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: ready_to_plan
-stopped_at: Phase 12 execution complete — awaiting maintainer rc.1 tag cut + PR merge
-last_updated: "2026-04-20T17:06:51.360Z"
-last_activity: 2026-04-20 -- Phase 12.1 execution started
+status: planning
+stopped_at: Phase 13 context gathered
+last_updated: "2026-04-20T23:45:57.907Z"
+last_activity: 2026-04-20
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 36
-  completed_plans: 33
-  percent: 67
+  completed_plans: 37
+  percent: 100
 ---
 
 # Project State
@@ -122,8 +122,8 @@ _(None during v1.1 so far. v1.0 quick task `260414-gbf` is archived in `.plannin
 
 ## Session Continuity
 
-Last session: 2026-04-18T03:20:00Z
-Stopped at: Phase 12 execution complete — awaiting maintainer rc.1 tag cut + PR merge
+Last session: --stopped-at
+Stopped at: Phase 13 context gathered
 Resume command: after PR merges, run `/gsd-verify-work 12` once the rc.1 tag is pushed and GHCR state is confirmed. Then `/gsd-discuss-phase 13` or `/gsd-plan-phase 13` to start Phase 13 (observability polish + rc.2).
 
 Last activity: 2026-04-18 — Phase 12 executed (7/7 plans complete; MD-01 + MD-02 code review fixes applied inline; HUMAN-UAT.md persisted for 3 pending maintainer-action items)
