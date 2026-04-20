@@ -90,9 +90,9 @@ Continuation from v1.0 OPS-01..05.
 
 - [x] **OPS-08**: The root cause of the reported `(unhealthy)` symptom (busybox `wget --spider` in alpine:3 misparses axum's chunked responses) is reproduced in a test environment before the fix is declared complete. If the reproduction shows a different root cause, this requirement is re-scoped; the `cronduit health` subcommand fix path is correct regardless because it removes the entire busybox wget dependency from the healthcheck path.
 
-- [ ] **OPS-09** (Phase 12.1): GHCR `:latest` tag ONLY tracks the latest released non-rc stable version (e.g. `v1.0.1`, later `v1.1.0`). rc tag pushes (`vX.Y.Z-rc.N`) MUST NOT move `:latest`. Main-branch builds MUST NOT move `:latest`. The pre-existing `:latest` divergence from the v1.0.1 retag is corrected by a one-shot maintainer-run `docker buildx imagetools create` so `:latest` digest == `:1.0.1` digest as of the phase close.
+- [x] **OPS-09** (Phase 12.1): GHCR `:latest` tag ONLY tracks the latest released non-rc stable version (e.g. `v1.0.1`, later `v1.1.0`). rc tag pushes (`vX.Y.Z-rc.N`) MUST NOT move `:latest`. Main-branch builds MUST NOT move `:latest`. The pre-existing `:latest` divergence from the v1.0.1 retag is corrected by a one-shot maintainer-run `docker buildx imagetools create` so `:latest` digest == `:1.0.1` digest as of the phase close.
 
-- [ ] **OPS-10** (Phase 12.1): Every push to `main` triggers a multi-arch (amd64+arm64) build and publishes `ghcr.io/simplicityguy/cronduit:main` pointing at the freshly-built image. Operators who want bleeding-edge main builds pin `:main`; operators who want latest-released pin `:latest`. Documented in README.
+- [x] **OPS-10** (Phase 12.1): Every push to `main` triggers a multi-arch (amd64+arm64) build and publishes `ghcr.io/simplicityguy/cronduit:main` pointing at the freshly-built image. Operators who want bleeding-edge main builds pin `:main`; operators who want latest-released pin `:latest`. Documented in README.
 
 ### Foundation (FOUND) — hygiene
 
@@ -174,8 +174,8 @@ Explicit boundaries; NOT in v1.1 or v1.2. Duplicated from PROJECT.md § Out of S
 | OPS-06   | Phase 12   | Done    |
 | OPS-07   | Phase 12   | Done    |
 | OPS-08   | Phase 12   | Done    |
-| OPS-09   | Phase 12.1 | Pending |
-| OPS-10   | Phase 12.1 | Pending |
+| OPS-09   | Phase 12.1 | Complete |
+| OPS-10   | Phase 12.1 | Complete |
 | FOUND-12 | Phase 10   | Pending |
 | FOUND-13 | Phase 10   | Pending |
 

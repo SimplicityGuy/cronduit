@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: executing
+status: ready_to_plan
 stopped_at: Phase 12 execution complete — awaiting maintainer rc.1 tag cut + PR merge
 last_updated: "2026-04-20T17:06:51.360Z"
 last_activity: 2026-04-20 -- Phase 12.1 execution started
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 36
   completed_plans: 33
-  percent: 92
+  percent: 67
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 12.1 (ghcr-tag-hygiene) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 12.1
-Last activity: 2026-04-20 -- Phase 12.1 execution started
+Phase: 13
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-04-20
 
 Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12; 12.1 inserted)
 
