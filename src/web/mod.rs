@@ -2,6 +2,7 @@ pub mod ansi;
 pub mod assets;
 pub mod csrf;
 pub mod format;
+pub mod stats;
 pub mod handlers;
 
 use axum::{
