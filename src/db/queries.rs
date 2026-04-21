@@ -726,6 +726,61 @@ pub async fn get_dashboard_job_sparks(
     }
 }
 
+/// Fetch the last N successful durations for a job, newest first (Phase 13 OBS-04, OBS-05).
+///
+/// Returns ONLY rows where `status = 'success'` AND `duration_ms IS NOT NULL`
+/// (D-20: strict-success only — mixing failure/timeout durations skews p95).
+///
+/// Returns raw `Vec<u64>` samples — aggregation happens in Rust via
+/// `src/web/stats.rs::percentile`. The return type (`Vec<u64>`, not `f64` or
+/// `Option<u64>`) is the type-level enforcement of OBS-05 structural parity:
+/// no SQL-native percentile (`percentile_cont`, `percentile_disc`) is used on
+/// either backend.
+pub async fn get_recent_successful_durations(
+    pool: &DbPool,
+    job_id: i64,
+    limit: i64,
+) -> anyhow::Result<Vec<u64>> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let rows = sqlx::query(
+                "SELECT duration_ms FROM job_runs
+                 WHERE job_id = ?1
+                   AND status = 'success'
+                   AND duration_ms IS NOT NULL
+                 ORDER BY id DESC
+                 LIMIT ?2",
+            )
+            .bind(job_id)
+            .bind(limit)
+            .fetch_all(p)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| r.get::<i64, _>("duration_ms") as u64)
+                .collect())
+        }
+        PoolRef::Postgres(p) => {
+            let rows = sqlx::query(
+                "SELECT duration_ms FROM job_runs
+                 WHERE job_id = $1
+                   AND status = 'success'
+                   AND duration_ms IS NOT NULL
+                 ORDER BY id DESC
+                 LIMIT $2",
+            )
+            .bind(job_id)
+            .bind(limit)
+            .fetch_all(p)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| r.get::<i64, _>("duration_ms") as u64)
+                .collect())
+        }
+    }
+}
+
 /// Fetch a single job by id.
 pub async fn get_job_by_id(pool: &DbPool, id: i64) -> anyhow::Result<Option<DbJob>> {
     match pool.reader() {
