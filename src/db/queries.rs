@@ -849,6 +849,13 @@ pub async fn get_timeline_runs(
                 .collect())
         }
         PoolRef::Postgres(p) => {
+            // `jobs.enabled` is BIGINT on Postgres (see migrations/postgres; the
+            // schema_parity test normalizes BIGINT ↔ INTEGER to a shared INT64
+            // token). Compare to the integer literal `1`, NOT `true` —
+            // Postgres will raise `operator does not exist: bigint = boolean`
+            // on the latter, and EXPLAIN will surface the same error.
+            // (Plan 13-06 Task 1 Rule-1 auto-fix: discovered by the Postgres
+            // EXPLAIN harness added in tests/v13_timeline_explain.rs.)
             let rows = sqlx::query(
                 r#"SELECT jr.id AS run_id,
                           jr.job_id,
@@ -860,7 +867,7 @@ pub async fn get_timeline_runs(
                           jr.duration_ms
                    FROM job_runs jr
                    JOIN jobs j ON j.id = jr.job_id
-                   WHERE j.enabled = true
+                   WHERE j.enabled = 1
                      AND jr.start_time >= $1
                    ORDER BY j.name ASC, jr.start_time ASC
                    LIMIT 10000"#,
