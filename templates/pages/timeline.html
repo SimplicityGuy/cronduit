@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Timeline - Cronduit{% endblock %}
+{% block nav_timeline_active %}border-b-2 border-(--cd-text-accent) text-(--cd-text-primary){% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+  <h1 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em">Timeline</h1>
+  <nav class="cd-pill-group" aria-label="Timeline window">
+    <a href="/timeline?window=24h"
+       class="cd-pill{% if window == "24h" %} cd-pill--active{% endif %}"
+       {% if window == "24h" %}aria-current="page"{% endif %}>24h</a>
+    <a href="/timeline?window=7d"
+       class="cd-pill{% if window == "7d" %} cd-pill--active{% endif %}"
+       {% if window == "7d" %}aria-current="page"{% endif %}>7d</a>
+  </nav>
+</div>
+
+<input type="hidden" name="window" value="{{ window }}">
+
+{% if truncated %}
+<p style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-bottom:var(--cd-space-2)">
+  Showing first 10000 of many runs — narrow the window for a complete view.
+</p>
+{% endif %}
+
+<div id="timeline-body"
+     hx-get="/timeline"
+     hx-trigger="every 30s"
+     hx-swap="outerHTML"
+     hx-include="[name='window']">
+  {% include "partials/timeline_body.html" %}
+</div>
+
+{% endblock %}

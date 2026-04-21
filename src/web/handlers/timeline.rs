@@ -19,7 +19,7 @@ use chrono_tz::Tz;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-use crate::db::queries::{self, TimelineRun};
+use crate::db::queries;
 use crate::web::AppState;
 use crate::web::format::format_duration_ms_floor_seconds;
 
@@ -104,12 +104,7 @@ pub async fn timeline(
         usize,
         bool,
     ) = match window {
-        "7d" => (
-            ChronoDuration::days(7),
-            ChronoDuration::days(1),
-            7,
-            true,
-        ),
+        "7d" => (ChronoDuration::days(7), ChronoDuration::days(1), 7, true),
         _ => (
             ChronoDuration::hours(24),
             ChronoDuration::hours(2),
