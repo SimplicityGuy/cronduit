@@ -38,6 +38,12 @@ jobs:
       # native + amd64-musl + arm64-musl in a single run. One lint-job invocation
       # covers every target CI ships (Pitfall 14 -- 01-RESEARCH.md S14).
       - run: just openssl-check
+      # Phase 13 OBS-05 structural parity guard — p50/p95 percentile is computed
+      # in Rust via src/web/stats.rs::percentile, never via SQL-native
+      # percentile_cont / percentile_disc / median() (even on Postgres). This
+      # step permanently prevents any future PR from introducing SQL-native
+      # percentile into src/. See justfile recipe for the grep pattern + rationale.
+      - run: just grep-no-percentile-cont
 
   # Test matrix: arch dimension only.
   # Both SQLite and Postgres backends are exercised in every cell via

@@ -184,6 +184,36 @@ openssl-check: install-targets
     done
     echo "OK: no openssl-sys in dep tree (native + arm64-musl + amd64-musl)"
 
+# Phase 13 OBS-05 structural parity guard — p50/p95 percentile is computed
+# in Rust via src/web/stats.rs::percentile, NEVER via SQL-native percentile
+# functions (even on Postgres). This CI gate permanently prevents any future
+# PR from introducing `percentile_cont` / `percentile_disc` / `median(` /
+# `PERCENTILE_` into src/.
+#
+# Rationale (OBS-05): structural parity requires the same code path on both
+# SQLite and Postgres. SQLite lacks percentile_cont entirely; adopting the
+# Postgres native function would fork the query layer. Rust-side computation
+# is the only path, and this grep locks it.
+[group('quality')]
+[doc('OBS-05 guard — fail if any Rust file under src/ contains SQL-native percentile')]
+grep-no-percentile-cont:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Match percentile SQL usage patterns but ignore comment lines (// or ///)
+    # — doc comments that explicitly state "not used" are a legitimate
+    # invariant declaration and must not trip the guard.
+    pattern='\b(percentile_cont|percentile_disc|PERCENTILE_|median\()\b'
+    # Use ripgrep-style: filter out lines whose first non-whitespace is `//`.
+    matches=$(grep -rnE "$pattern" src/ 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)
+    if [ -n "$matches" ]; then
+        echo "$matches"
+        echo ""
+        echo "ERROR: OBS-05 structural parity violated — SQL-native percentile found above."
+        echo "Phase 13 locked: p50/p95 is computed in Rust via src/web/stats.rs::percentile."
+        exit 1
+    fi
+    echo "OK: no percentile_cont / percentile_disc / median( / PERCENTILE_ in src/ (comments ignored)"
+
 # -------------------- DB / schema --------------------
 
 # Delete the dev SQLite database (WAL + SHM included)
