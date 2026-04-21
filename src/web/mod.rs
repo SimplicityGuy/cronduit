@@ -3,6 +3,7 @@ pub mod assets;
 pub mod csrf;
 pub mod format;
 pub mod handlers;
+pub mod stats;
 
 use axum::{
     Router, middleware,
@@ -70,6 +71,7 @@ pub fn router(state: AppState) -> Router {
             get(handlers::run_detail::static_log_partial),
         )
         .route("/settings", get(handlers::settings::settings))
+        .route("/timeline", get(handlers::timeline::timeline))
         .route("/health", get(handlers::health::health))
         .route("/api/jobs", get(handlers::api::list_jobs))
         .route("/api/jobs/{id}/runs", get(handlers::api::list_job_runs))

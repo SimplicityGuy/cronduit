@@ -1,0 +1,48 @@
+<div class="cd-timeline">
+  <div class="cd-timeline-axis">
+    {% for tick in axis_ticks %}
+    <span class="cd-timeline-tick" style="left:{{ tick.left_pct }}%">{{ tick.label }}</span>
+    {% endfor %}
+  </div>
+
+  {% if jobs.is_empty() %}
+  <div class="cd-timeline-empty">
+    <p>No runs in the last {{ window }}.</p>
+    <p>
+      {% if window == "24h" %}Try widening the window to 7d.{% else %}Configure a job and run it to populate the timeline.{% endif %}
+    </p>
+  </div>
+  {% else %}
+  {% for job in jobs %}
+  <div class="cd-timeline-row">
+    <a href="/jobs/{{ job.id }}" class="cd-timeline-row-label" title="{{ job.name }}">{{ job.name }}</a>
+    <div class="cd-timeline-row-stripe">
+      {% for bar in job.bars %}
+      <a class="cd-timeline-bar cd-timeline-bar--{{ bar.status }}{% if bar.status == "running" %} cd-timeline-bar--pulsing{% endif %}"
+         href="/jobs/{{ bar.job_id }}/runs/{{ bar.run_id }}"
+         style="left:{{ bar.left_pct }}%;width:{{ bar.width_pct }}%"
+         title="#{{ bar.job_run_number }} {{ bar.status_upper }} {{ bar.duration_display }} {{ bar.start_time_str }} → {{ bar.end_time_str }}">
+        <span class="cd-tooltip" role="tooltip">
+          <span class="cd-tooltip-row cd-tooltip-row--header">
+            <span style="font-weight:700;color:var(--cd-text-primary)">{{ job.name }}</span>
+            <span style="color:var(--cd-text-secondary);margin-left:var(--cd-space-2)">#{{ bar.job_run_number }}</span>
+          </span>
+          <span class="cd-tooltip-row">
+            <span class="cd-tooltip-dot" style="background:var(--cd-status-{{ bar.status }})"></span>
+            <span style="color:var(--cd-status-{{ bar.status }});text-transform:uppercase;letter-spacing:0.1em;font-size:var(--cd-text-xs);font-weight:700">{{ bar.status }}</span>
+          </span>
+          <span class="cd-tooltip-row">
+            <span style="color:var(--cd-text-secondary)">Duration:&nbsp;</span>
+            <span style="color:var(--cd-text-primary)">{{ bar.duration_display }}</span>
+          </span>
+          <span class="cd-tooltip-row" style="color:var(--cd-text-secondary);font-size:var(--cd-text-sm)">
+            {{ bar.start_time_str }}&nbsp;→&nbsp;{{ bar.end_time_str }}
+          </span>
+        </span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>

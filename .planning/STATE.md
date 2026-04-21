@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: ready_to_plan
-stopped_at: Phase 12 execution complete — awaiting maintainer rc.1 tag cut + PR merge
-last_updated: "2026-04-20T17:06:51.360Z"
-last_activity: 2026-04-20 -- Phase 12.1 execution started
+status: shipped
+stopped_at: Phase 13 shipped — PR #35
+last_updated: "2026-04-21T21:55:00.000Z"
+last_activity: 2026-04-21 -- Phase 13 shipped (PR #35, awaiting merge + rc.2 tag cut)
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 36
-  completed_plans: 33
-  percent: 67
+  total_plans: 42
+  completed_plans: 43
+  percent: 98
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 12.1 — ghcr-tag-hygiene
+**Current focus:** Phase 13 — observability-polish-rc-2
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 13
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-04-20
+Phase: 13 (observability-polish-rc-2) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 13
+Last activity: 2026-04-21 -- Phase 13 execution started
 
 Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12; 12.1 inserted)
 
@@ -122,8 +122,10 @@ _(None during v1.1 so far. v1.0 quick task `260414-gbf` is archived in `.plannin
 
 ## Session Continuity
 
-Last session: 2026-04-18T03:20:00Z
-Stopped at: Phase 12 execution complete — awaiting maintainer rc.1 tag cut + PR merge
+Last session: --stopped-at
+Stopped at: Phase 13 UI-SPEC approved
 Resume command: after PR merges, run `/gsd-verify-work 12` once the rc.1 tag is pushed and GHCR state is confirmed. Then `/gsd-discuss-phase 13` or `/gsd-plan-phase 13` to start Phase 13 (observability polish + rc.2).
 
 Last activity: 2026-04-18 — Phase 12 executed (7/7 plans complete; MD-01 + MD-02 code review fixes applied inline; HUMAN-UAT.md persisted for 3 pending maintainer-action items)
+
+**Planned Phase:** 13 (Observability Polish (rc.2)) — 6 plans — 2026-04-21T16:37:01.010Z

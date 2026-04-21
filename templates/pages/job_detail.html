@@ -67,6 +67,32 @@
   </div>
 </div>
 
+<!-- Duration (OBS-04) -->
+<div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)" class="mb-6">
+  <h2 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em;margin-bottom:var(--cd-space-4)">Duration</h2>
+
+  <div style="display:flex;gap:var(--cd-space-6);align-items:baseline">
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em;font-weight:700">p50</span>
+      <div style="font-size:var(--cd-text-xl);color:var(--cd-text-primary);font-weight:700;letter-spacing:-0.02em;margin-top:2px"
+           {% if !job.duration.has_min_samples %}title="insufficient samples: need 20 successful runs, currently have {{ job.duration.sample_count }}"{% endif %}>
+        {{ job.duration.p50_display }}
+      </div>
+    </div>
+    <div>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em;font-weight:700">p95</span>
+      <div style="font-size:var(--cd-text-xl);color:var(--cd-text-primary);font-weight:700;letter-spacing:-0.02em;margin-top:2px"
+           {% if !job.duration.has_min_samples %}title="insufficient samples: need 20 successful runs, currently have {{ job.duration.sample_count }}"{% endif %}>
+        {{ job.duration.p95_display }}
+      </div>
+    </div>
+  </div>
+
+  <div style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:var(--cd-space-2)">
+    {{ job.duration.sample_count_display }}
+  </div>
+</div>
+
 <!-- Run History -->
 <div class="mb-6">
   <h2 style="font-size:var(--cd-text-lg);font-weight:700;margin-bottom:var(--cd-space-4)">Run History</h2>

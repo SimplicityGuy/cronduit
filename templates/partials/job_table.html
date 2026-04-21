@@ -14,6 +14,15 @@
   </td>
   <td class="py-2 px-4 text-(--cd-text-secondary)" style="font-size:var(--cd-text-base)">{{ job.last_run_relative }}</td>
   <td class="py-2 px-4">
+    <div class="cd-sparkline" role="img"
+         aria-label="Last {{ job.spark_total }} runs for {{ job.name }}: {{ job.spark_numerator }} succeeded of {{ job.spark_denominator }} non-stopped">
+      {% for cell in job.spark_cells %}
+      <span class="cd-sparkline-cell cd-sparkline-cell--{{ cell.kind }}"{% if !cell.title.is_empty() %} title="{{ cell.title }}"{% endif %}></span>
+      {% endfor %}
+    </div>
+    <span class="cd-sparkline-badge"{% if job.spark_denominator > 0 %} title="{{ job.spark_numerator }} of {{ job.spark_denominator }} non-stopped runs"{% endif %}>{{ job.spark_badge }}</span>
+  </td>
+  <td class="py-2 px-4">
     <form hx-post="/api/jobs/{{ job.id }}/run" hx-swap="none">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="cd-btn-primary text-sm py-1 px-3" style="min-height:36px">Run Now</button>

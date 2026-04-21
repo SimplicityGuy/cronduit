@@ -60,15 +60,15 @@ Continuation from v1.0 UI-01..15.
 
 ### Observability (OBS) — new category
 
-- [ ] **OBS-01**: A new `/timeline` page shows a cross-job gantt-style run timeline for the last 24h (default) or 7d (toggle). Each run renders as a horizontal bar color-coded by terminal status (`success`/`failed`/`timeout`/`cancelled`/`stopped`/`running`), using the existing `--cd-status-*` CSS variables from the v1.0 design system. No JS framework, no canvas, no WASM — inline server-rendered HTML + CSS grid only. Hidden/disabled jobs do not appear in the timeline.
+- [x] **OBS-01**: A new `/timeline` page shows a cross-job gantt-style run timeline for the last 24h (default) or 7d (toggle). Each run renders as a horizontal bar color-coded by terminal status (`success`/`failed`/`timeout`/`cancelled`/`stopped`/`running`), using the existing `--cd-status-*` CSS variables from the v1.0 design system. No JS framework, no canvas, no WASM — inline server-rendered HTML + CSS grid only. Hidden/disabled jobs do not appear in the timeline.
 
-- [ ] **OBS-02**: The timeline handler executes a single SQL query (not N+1) to fetch the window's runs, bounded by a hard `LIMIT 10000` to protect against pathological windows. `EXPLAIN QUERY PLAN` confirms the existing `idx_job_runs_start_time` index is used on both SQLite and Postgres. `T-V11-TIME-01`, `T-V11-TIME-02`. Timestamps are rendered in the operator's configured server timezone (from `[server].timezone`) to match the rest of the UI; `T-V11-TIME-04`.
+- [x] **OBS-02**: The timeline handler executes a single SQL query (not N+1) to fetch the window's runs, bounded by a hard `LIMIT 10000` to protect against pathological windows. `EXPLAIN QUERY PLAN` confirms the existing `idx_job_runs_start_time` index is used on both SQLite and Postgres. `T-V11-TIME-01`, `T-V11-TIME-02`. Timestamps are rendered in the operator's configured server timezone (from `[server].timezone`) to match the rest of the UI; `T-V11-TIME-04`.
 
-- [ ] **OBS-03**: Each dashboard job card shows a success-rate badge and a 20-run column sparkline. Below a minimum sample threshold of N=5 terminal runs, the rate is rendered as `—` (dash), not a fake number. `stopped` runs are excluded from the denominator so operator-initiated stops do not skew the success rate. Zero-run jobs never crash the view. `T-V11-SPARK-01`, `T-V11-SPARK-02`, `T-V11-SPARK-03`, `T-V11-SPARK-04`.
+- [x] **OBS-03**: Each dashboard job card shows a success-rate badge and a 20-run column sparkline. Below a minimum sample threshold of N=5 terminal runs, the rate is rendered as `—` (dash), not a fake number. `stopped` runs are excluded from the denominator so operator-initiated stops do not skew the success rate. Zero-run jobs never crash the view. `T-V11-SPARK-01`, `T-V11-SPARK-02`, `T-V11-SPARK-03`, `T-V11-SPARK-04`.
 
-- [ ] **OBS-04**: The job detail page shows duration trend as `p50: Xs` and `p95: Ys` computed over the last 100 successful runs. Percentile computation happens in Rust via a `src/web/stats.rs::percentile(samples, q)` helper with tests covering empty / single-element / minimum-sample-size edge cases. Below a minimum threshold of N=20 samples the values render as `—` instead of meaningless numbers. `T-V11-DUR-01`, `T-V11-DUR-02`, `T-V11-DUR-03`, `T-V11-DUR-04`.
+- [x] **OBS-04**: The job detail page shows duration trend as `p50: Xs` and `p95: Ys` computed over the last 100 successful runs. Percentile computation happens in Rust via a `src/web/stats.rs::percentile(samples, q)` helper with tests covering empty / single-element / minimum-sample-size edge cases. Below a minimum threshold of N=20 samples the values render as `—` instead of meaningless numbers. `T-V11-DUR-01`, `T-V11-DUR-02`, `T-V11-DUR-03`, `T-V11-DUR-04`.
 
-- [ ] **OBS-05**: SQL-native percentile functions (`percentile_cont`) are NOT used even on Postgres. The structural-parity constraint from v1.0 requires the same code path to work on both SQLite and Postgres, and Rust-side computation satisfies this cleanly.
+- [x] **OBS-05**: SQL-native percentile functions (`percentile_cont`) are NOT used even on Postgres. The structural-parity constraint from v1.0 requires the same code path to work on both SQLite and Postgres, and Rust-side computation satisfies this cleanly.
 
 ### Ergonomics (ERG) — new category
 
@@ -162,11 +162,11 @@ Explicit boundaries; NOT in v1.1 or v1.2. Duplicated from PROJECT.md § Out of S
 | UI-18    | Phase 11 | Pending |
 | UI-19    | Phase 11 | Pending |
 | UI-20    | Phase 11 | Pending |
-| OBS-01   | Phase 13 | Pending |
-| OBS-02   | Phase 13 | Pending |
-| OBS-03   | Phase 13 | Pending |
-| OBS-04   | Phase 13 | Pending |
-| OBS-05   | Phase 13 | Pending |
+| OBS-01   | Phase 13 | Complete |
+| OBS-02   | Phase 13 | Complete |
+| OBS-03   | Phase 13 | Complete |
+| OBS-04   | Phase 13 | Complete |
+| OBS-05   | Phase 13 | Complete |
 | ERG-01   | Phase 14 | Pending |
 | ERG-02   | Phase 14 | Pending |
 | ERG-03   | Phase 14 | Pending |
