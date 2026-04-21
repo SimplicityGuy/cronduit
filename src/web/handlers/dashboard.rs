@@ -8,11 +8,13 @@ use axum_htmx::HxRequest;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::db::queries::{self, DashboardJob};
+use crate::db::queries::{self, DashboardJob, DashboardSparkRow};
 use crate::web::AppState;
 use crate::web::csrf;
+use crate::web::format::format_duration_ms_floor_seconds;
 
 // ---------------------------------------------------------------------------
 // Query params
@@ -71,7 +73,39 @@ pub struct DashboardJobView {
     pub last_status: String,
     pub last_status_label: String,
     pub last_run_relative: String,
+    /// Exactly 20 cells, oldest-to-newest left-to-right. Fewer-than-20
+    /// terminal runs pad with `kind: "empty"`. Phase 13 OBS-03.
+    pub spark_cells: Vec<SparkCell>,
+    /// "95%" when denominator >= `MIN_SAMPLES_FOR_RATE`, else "—".
+    pub spark_badge: String,
+    /// Count of non-empty sparkline cells (for aria-label).
+    pub spark_total: usize,
+    /// Success count (for badge tooltip).
+    pub spark_numerator: usize,
+    /// `terminal_count - stopped_count` (for badge tooltip + threshold gate).
+    pub spark_denominator: usize,
 }
+
+/// A single cell in the dashboard sparkline (Phase 13 OBS-03).
+///
+/// `kind` is one of: `success`, `failed`, `timeout`, `cancelled`, `stopped`,
+/// `empty`. `title` carries the per-cell tooltip (`#42 SUCCESS 1m 34s 2h ago`)
+/// for filled cells, or is empty for `empty` padding cells.
+pub struct SparkCell {
+    /// One of: `success` | `failed` | `timeout` | `cancelled` | `stopped` | `empty`
+    pub kind: String,
+    /// Per-cell tooltip; empty string when `kind == "empty"`.
+    pub title: String,
+}
+
+/// Minimum non-stopped terminal runs required before the success-rate badge
+/// renders as an integer percent. Below this threshold, the badge renders as
+/// `—` (U+2014 em dash). Phase 13 D-03.
+const MIN_SAMPLES_FOR_RATE: usize = 5;
+
+/// Exact number of sparkline cells rendered per job row. Shorter histories pad
+/// with `empty` kind cells on the left so the newest run is always rightmost.
+const SPARKLINE_SIZE: usize = 20;
 
 fn to_view(job: DashboardJob, tz: Tz) -> DashboardJobView {
     let now = Utc::now();
@@ -128,6 +162,12 @@ fn to_view(job: DashboardJob, tz: Tz) -> DashboardJobView {
         last_status,
         last_status_label,
         last_run_relative,
+        // Filled by the sparkline hydration loop in `dashboard()`.
+        spark_cells: Vec::new(),
+        spark_badge: "—".to_string(),
+        spark_total: 0,
+        spark_numerator: 0,
+        spark_denominator: 0,
     }
 }
 
@@ -193,7 +233,89 @@ pub async fn dashboard(
         .unwrap_or_default();
 
     let tz: Tz = state.tz;
-    let job_views: Vec<DashboardJobView> = jobs.into_iter().map(|j| to_view(j, tz)).collect();
+    let mut job_views: Vec<DashboardJobView> = jobs.into_iter().map(|j| to_view(j, tz)).collect();
+
+    // Phase 13 OBS-03: hydrate 20-cell sparkline + success-rate badge. Single
+    // query covers every job; bucket rows by job_id, reverse per-job (rn=1 is
+    // newest → we need oldest-first for display), pad with empty cells on the
+    // left so the newest run is always rightmost, and compute the denominator
+    // EXCLUDING stopped runs (D-05).
+    let spark_rows = queries::get_dashboard_job_sparks(&state.pool)
+        .await
+        .unwrap_or_default();
+
+    let mut spark_by_job: HashMap<i64, Vec<DashboardSparkRow>> = HashMap::new();
+    for row in spark_rows {
+        spark_by_job.entry(row.job_id).or_default().push(row);
+    }
+
+    let now = Utc::now();
+    for job_view in &mut job_views {
+        // Query returns `rn ASC` where rn=1 is the newest run. Reverse so the
+        // oldest run is at index 0 and the newest is last.
+        let mut rows = spark_by_job.remove(&job_view.id).unwrap_or_default();
+        rows.reverse();
+
+        let filled = rows.len();
+        let mut success_count: usize = 0;
+        let mut stopped_count: usize = 0;
+        let mut cells: Vec<SparkCell> = Vec::with_capacity(SPARKLINE_SIZE);
+
+        // Leading empty cells so the newest filled cell is always rightmost.
+        for _ in 0..SPARKLINE_SIZE.saturating_sub(filled) {
+            cells.push(SparkCell {
+                kind: "empty".to_string(),
+                title: String::new(),
+            });
+        }
+
+        for r in &rows {
+            let status_lower = r.status.to_lowercase();
+            if status_lower == "success" {
+                success_count += 1;
+            }
+            if status_lower == "stopped" {
+                stopped_count += 1;
+            }
+
+            let duration_display = format_duration_ms_floor_seconds(r.duration_ms);
+            let relative = match DateTime::parse_from_rfc3339(&r.start_time) {
+                Ok(dt) => format_relative_past(dt.with_timezone(&Utc), now),
+                Err(_) => {
+                    match chrono::NaiveDateTime::parse_from_str(&r.start_time, "%Y-%m-%d %H:%M:%S")
+                    {
+                        Ok(ndt) => format_relative_past(ndt.and_utc(), now),
+                        Err(_) => r.start_time.clone(),
+                    }
+                }
+            };
+
+            cells.push(SparkCell {
+                kind: status_lower.clone(),
+                title: format!(
+                    "#{} {} {} {}",
+                    r.job_run_number,
+                    status_lower.to_uppercase(),
+                    duration_display,
+                    relative,
+                ),
+            });
+        }
+
+        let denominator = filled.saturating_sub(stopped_count);
+        let badge = if denominator < MIN_SAMPLES_FOR_RATE {
+            "—".to_string()
+        } else {
+            let pct = ((success_count as f64 / denominator as f64) * 100.0).round() as i64;
+            format!("{pct}%")
+        };
+
+        job_view.spark_cells = cells;
+        job_view.spark_badge = badge;
+        job_view.spark_total = filled;
+        job_view.spark_numerator = success_count;
+        job_view.spark_denominator = denominator;
+    }
 
     let csrf_token = csrf::get_token_from_cookies(&cookies);
 
