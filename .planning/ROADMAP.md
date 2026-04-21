@@ -79,7 +79,7 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
 - [x] **Phase 11: Per-Job Run Numbers + Log UX Fixes** — DB-09..13 + UI-16..20. Three-step migration + log pipeline inversion. Ships as part of rc.1. (completed 2026-04-17)
 - [x] **Phase 12: Docker Healthcheck + rc.1 Cut** — OPS-06..08. New `cronduit health` CLI + Dockerfile HEALTHCHECK. Ships AS `v1.1.0-rc.1`. (completed 2026-04-18; rc.1 tag cut + verified 2026-04-19)
 - [x] **Phase 12.1: GHCR Tag Hygiene** _(INSERTED)_ — OPS-09..10. Fix `:latest` divergence from the v1.0.1 retag; add `:main` floating tag for main builds; lock in semantic that `:latest` only moves on stable release tags (not rc tags, not main builds). Must land before Phase 13's rc.2 cut. (completed 2026-04-20)
-- [ ] **Phase 13: Observability Polish (rc.2)** — OBS-01..05. Timeline page + sparkline/success-rate + duration p50/p95. Ships AS `v1.1.0-rc.2`.
+- [x] **Phase 13: Observability Polish (rc.2)** — OBS-01..05. Timeline page + sparkline/success-rate + duration p50/p95. Ships AS `v1.1.0-rc.2`. (completed 2026-04-21)
 - [ ] **Phase 14: Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship** — ERG-01..04 + DB-14. `enabled_override` tri-state, CSRF-gated bulk API, final milestone ship. Ships AS `v1.1.0-rc.3` then promoted to `v1.1.0`.
 
 ## Phase Details
@@ -315,7 +315,7 @@ Full REQ-ID → phase traceability lives in [`REQUIREMENTS.md`](REQUIREMENTS.md#
 | 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/10           | 10/10 | Complete   | 2026-04-15 |
 | 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | 16/15 | Complete    | 2026-04-17 |
 | 12. Docker Healthcheck + rc.1 Cut                          | 0/?            | Not started | `v1.1.0-rc.1` ◀  | —         |
-| 13. Observability Polish (rc.2)                            | 0/6            | 5/6 | In Progress|  |
+| 13. Observability Polish (rc.2)                            | 0/6            | 6/6 | Complete   | 2026-04-21 |
 | 14. Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship         | 0/?            | Not started | `v1.1.0-rc.3` ◀ / `v1.1.0` | — |
 
 Plan counts (`?`) are intentionally unspecified here; they get filled in by `/gsd-plan-phase` when each phase is decomposed. The `◀` marker indicates the phase at which the rc tag is actually cut.
