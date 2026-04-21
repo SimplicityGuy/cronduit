@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: planning
+status: executing
 stopped_at: Phase 13 UI-SPEC approved
-last_updated: "2026-04-21T16:37:01.016Z"
-last_activity: 2026-04-20
+last_updated: "2026-04-21T17:33:11.816Z"
+last_activity: 2026-04-21 -- Phase 13 execution started
 progress:
   total_phases: 6
   completed_phases: 4
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 12.1 — ghcr-tag-hygiene
+**Current focus:** Phase 13 — observability-polish-rc-2
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 13
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-04-20
+Phase: 13 (observability-polish-rc-2) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 13
+Last activity: 2026-04-21 -- Phase 13 execution started
 
 Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12; 12.1 inserted)
 
