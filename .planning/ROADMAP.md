@@ -244,7 +244,13 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
   4. Timeline handler executes a single SQL query (verified via SQL logs) and `EXPLAIN QUERY PLAN` shows `idx_job_runs_start_time` in use on both SQLite and Postgres.
   5. `v1.1.0-rc.2` tag exists on GHCR, multi-arch image is pushed, release notes are published, and `:latest` remains pinned to `v1.0.1`.
 
-**Plans**: TBD
+**Plans**: 6 plans
+- [ ] `13-01-PLAN.md` — Foundation: percentile() + format_duration_ms_floor_seconds + Phase 13 CSS tokens/selectors (OBS-04, OBS-05)
+- [ ] `13-02-PLAN.md` — Three new read-only SQL queries: get_dashboard_job_sparks, get_recent_successful_durations, get_timeline_runs (OBS-02, OBS-03, OBS-04, OBS-05)
+- [ ] `13-03-PLAN.md` — Duration card on job detail page (OBS-04, OBS-05)
+- [ ] `13-04-PLAN.md` — Dashboard Recent column: 20-cell sparkline + success-rate badge (OBS-03)
+- [ ] `13-05-PLAN.md` — /timeline page: new handler + two templates + base.html nav + render tests (OBS-01)
+- [ ] `13-06-PLAN.md` — EXPLAIN QUERY PLAN (SQLite+Postgres) + timezone test + OBS-05 CI grep guard + REQUIREMENTS.md checkbox flips + maintainer-action tag cut for v1.1.0-rc.2 (OBS-02, OBS-05)
 **UI hint**: yes
 
 ---
@@ -309,7 +315,7 @@ Full REQ-ID → phase traceability lives in [`REQUIREMENTS.md`](REQUIREMENTS.md#
 | 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/10           | 10/10 | Complete   | 2026-04-15 |
 | 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | 16/15 | Complete    | 2026-04-17 |
 | 12. Docker Healthcheck + rc.1 Cut                          | 0/?            | Not started | `v1.1.0-rc.1` ◀  | —         |
-| 13. Observability Polish (rc.2)                            | 0/?            | Not started | `v1.1.0-rc.2` ◀  | —         |
+| 13. Observability Polish (rc.2)                            | 0/6            | Planned     | `v1.1.0-rc.2` ◀  | —         |
 | 14. Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship         | 0/?            | Not started | `v1.1.0-rc.3` ◀ / `v1.1.0` | — |
 
 Plan counts (`?`) are intentionally unspecified here; they get filled in by `/gsd-plan-phase` when each phase is decomposed. The `◀` marker indicates the phase at which the rc tag is actually cut.
