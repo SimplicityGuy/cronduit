@@ -13,6 +13,8 @@ use crate::db::queries;
 use crate::web::AppState;
 use crate::web::csrf;
 use crate::web::format::format_duration_ms;
+use crate::web::format::format_duration_ms_floor_seconds;
+use crate::web::stats;
 
 // ---------------------------------------------------------------------------
 // Query params
@@ -79,6 +81,31 @@ pub struct JobDetailView {
     pub config_json: String,
     pub cron_description: String,
     pub timeout_display: String,
+    pub duration: DurationView,
+}
+
+/// View model for the Duration card on the Job Detail page (Phase 13 OBS-04).
+///
+/// Populated from `queries::get_recent_successful_durations` (last 100 runs
+/// with `status = 'success'` only, per D-20) and folded through
+/// `crate::web::stats::percentile` + `format_duration_ms_floor_seconds`.
+///
+/// Sample-size gating lives here per D-21: when `sample_count < 20`, both
+/// p50/p95 display values are `"—"` (em dash, U+2014) and `has_min_samples`
+/// is `false`; the template renders the `title="insufficient samples ..."`
+/// hover copy only when `has_min_samples` is false. The subtitle matrix
+/// (D-18) is pre-formatted into `sample_count_display` so the template holds
+/// no logic beyond substitution.
+pub struct DurationView {
+    /// "1m 34s" when has_min_samples=true, else "—" (em dash, U+2014).
+    pub p50_display: String,
+    pub p95_display: String,
+    /// True iff sample_count >= MIN_SAMPLES_FOR_PERCENTILE (20).
+    pub has_min_samples: bool,
+    /// Raw count of successful runs considered (0..=100).
+    pub sample_count: usize,
+    /// Subtitle text per UI-SPEC § Duration card subtitle matrix.
+    pub sample_count_display: String,
 }
 
 pub struct RunHistoryView {
@@ -204,6 +231,53 @@ pub async fn job_detail(
 
         let has_random_schedule = job.schedule.split_whitespace().any(|f| f == "@random");
 
+        // Duration card hydration (Phase 13 OBS-04) --------------------------
+        //
+        // Per D-19/D-20/D-21 the consumer enforces the N<20 threshold BEFORE
+        // calling `percentile()`; the helper itself has no threshold logic.
+        // Query caps at 100 rows (D-18 subtitle cap), only `status='success'`
+        // contributes (D-20), durations are formatted via
+        // `format_duration_ms_floor_seconds` so the Duration card emits `42s`
+        // (not `42.0s`) per the UI-SPEC copywriting contract.
+        const MIN_SAMPLES_FOR_PERCENTILE: usize = 20;
+        const PERCENTILE_SAMPLE_LIMIT: i64 = 100;
+
+        let durations =
+            queries::get_recent_successful_durations(&state.pool, job_id, PERCENTILE_SAMPLE_LIMIT)
+                .await
+                .unwrap_or_default();
+
+        let sample_count = durations.len();
+        let has_min = sample_count >= MIN_SAMPLES_FOR_PERCENTILE;
+
+        let (p50_display, p95_display) = if has_min {
+            let p50 = stats::percentile(&durations, 0.5)
+                .expect("non-empty when sample_count >= MIN_SAMPLES_FOR_PERCENTILE (D-21)");
+            let p95 = stats::percentile(&durations, 0.95)
+                .expect("non-empty when sample_count >= MIN_SAMPLES_FOR_PERCENTILE (D-21)");
+            (
+                format_duration_ms_floor_seconds(Some(p50 as i64)),
+                format_duration_ms_floor_seconds(Some(p95 as i64)),
+            )
+        } else {
+            ("—".to_string(), "—".to_string())
+        };
+
+        let sample_count_display = match sample_count {
+            0 => "0 of 20 successful runs required".to_string(),
+            1..=19 => format!("{sample_count} of 20 successful runs required"),
+            20..=99 => format!("last {sample_count} successful runs"),
+            _ => "last 100 successful runs".to_string(),
+        };
+
+        let duration_view = DurationView {
+            p50_display,
+            p95_display,
+            has_min_samples: has_min,
+            sample_count,
+            sample_count_display,
+        };
+
         let job_view = JobDetailView {
             id: job.id,
             name: job.name,
@@ -214,6 +288,7 @@ pub async fn job_detail(
             config_json: pretty_json(&job.config_json),
             cron_description,
             timeout_display: format_timeout(job.timeout_secs),
+            duration: duration_view,
         };
 
         let csrf_token = csrf::get_token_from_cookies(&cookies);
