@@ -14,6 +14,8 @@ updated: 2026-04-20
 
 **Refinement notes (2026-04-20 update pass):** Prior draft was cross-checked against the live `assets/src/app.css` (not just `DESIGN_SYSTEM.md`). Several tokens the DESIGN_SYSTEM.md doc enumerates are NOT actually declared in the shipped CSS. This update removes every reference to undeclared tokens and substitutes live-declared equivalents. See § "Live-CSS Reality Check" below for the full diff between doc and implementation.
 
+**Typography revision (2026-04-20, post-checker pass):** Typography collapsed from 5 sizes to 4 per checker BLOCK on Dimension 4. `--cd-text-lg` (20px) is no longer used by Phase 13. The Duration card's `<h2>Duration</h2>` heading and the p50/p95 display values both use `--cd-text-xl` (24px); visual separation inside the card is carried by font-weight and label styling, not by a size jump. Final scale is `xs` / `sm` / `base` / `xl` (exactly 4 sizes).
+
 ---
 
 ## Live-CSS Reality Check
@@ -31,7 +33,8 @@ updated: 2026-04-20
 | `--cd-text-muted`, `--cd-text-code` | **NO** (doc-only) | substitute `--cd-text-secondary` |
 | `--cd-space-1..4, 6, 8, 12, 16` | YES | use freely |
 | `--cd-space-5` (20px), `--cd-space-10` (40px) | **NO** (doc-only) | use `--cd-space-4` or `--cd-space-6` instead |
-| `--cd-text-xs`, `-sm`, `-base`, `-lg`, `-xl` | YES | use freely |
+| `--cd-text-xs`, `-sm`, `-base`, `-xl` | YES | use freely |
+| `--cd-text-lg` | declared in CSS but **NOT used by Phase 13** | Phase 13 collapses to 4 sizes; executor MUST NOT introduce new `--cd-text-lg` references in Phase 13 CSS/HTML |
 | `--cd-text-md` (16px), `--cd-text-2xl` (32px) | **NO** (doc-only) | not needed for Phase 13 |
 | `--cd-radius-sm` (4px), `--cd-radius-md` (8px) | YES | use freely |
 | `--cd-radius-lg`, `--cd-radius-xl`, `--cd-radius-full` | **NO** (doc-only) | substitute `--cd-radius-md`; for pill fully-rounded use literal `9999px` |
@@ -87,21 +90,31 @@ All new surfaces use the existing `--cd-space-*` tokens declared in `assets/src/
 - Bar `:focus-visible` outline: `2px` (matches existing `cd-btn-stop` focus-ring convention at `app.css:254-255`).
 - Pulse animation uses `@keyframes` and is unaffected by the spacing scale.
 
+> **Executor note (FLAG from Dimension 5 checker pass):** The exception list above is the **complete** set of sub-grid measurements permitted in Phase 13. Any new CSS measurement the executor adds in Phase 13 MUST be either (a) a multiple of 4 drawn from the `--cd-space-*` scale, or (b) explicitly added to this sub-grid exceptions list via an update to this UI-SPEC BEFORE implementation. No new sub-4px measurements may enter Phase 13 CSS without first being documented here. This includes literal px values in inline styles, new `@keyframes` transform offsets, new tooltip offsets, new outline widths, or any other dimensional property.
+
 ---
 
 ## Typography
 
-All new surfaces inherit JetBrains Mono from `base.html`. Phase 13 uses four distinct size tokens; both active weights (400 regular + 700 bold) are already loaded.
+All new surfaces inherit JetBrains Mono from `base.html`. Phase 13 uses exactly four distinct size tokens; both active weights (400 regular + 700 bold) are already loaded. The 4-size scale is: `xs` (label), `sm` (secondary / badge), `base` (body), `xl` (heading + display value).
 
 | Role | Token | Size | Weight | Line Height | Letter Spacing | Phase 13 usage |
 |------|-------|------|--------|-------------|----------------|----------------|
 | Label / column header | `--cd-text-xs` | 10.4px (0.65rem) | 700 | 1.5 | `0.1em` UPPERCASE | Sparkline column header `Recent`; timeline axis tick labels; Duration-card chip label `p50` / `p95`; status label inside timeline tooltip; tick-label rendering inside `.cd-timeline-tick` |
 | Secondary / subtitle | `--cd-text-sm` | 12.8px (0.8rem) | 400 | 1.5 | `0` | Success-rate badge text `95%`; Duration-card subtitle `last 87 successful runs`; timeline tooltip body rows 3–4 (Duration + time window); pill-button text; breadcrumb-style labels inside tooltip |
 | Body / value | `--cd-text-base` | 14.4px (0.9rem) | 400 | 1.6 | `0` | Timeline row-label job-name link; empty-window block body text |
-| Heading (card) | `--cd-text-lg` | 20px (1.25rem) | 700 | 1.4 | `-0.02em` | Duration-card `<h2>Duration</h2>` (mirrors Configuration card `h2` at `job_detail.html:24`) |
-| Display (value) | `--cd-text-xl` | 24px (1.5rem) | 700 | 1.3 | `-0.02em` | Timeline page `<h1>Timeline</h1>` (mirrors Dashboard `<h1>` at `dashboard.html:6`); Duration-card p50/p95 numeric values (`1m 34s`, `2m 12s`) |
+| Heading + display (value) | `--cd-text-xl` | 24px (1.5rem) | 700 | 1.3 | `-0.02em` | Timeline page `<h1>Timeline</h1>` (mirrors Dashboard `<h1>` at `dashboard.html:6`); Duration-card `<h2>Duration</h2>` heading; Duration-card p50/p95 numeric values (`1m 34s`, `2m 12s`) |
 
-**Count:** 5 distinct size tokens (`xs`, `sm`, `base`, `lg`, `xl`) — this exceeds the template "3–4 sizes" guideline by one. Justification: the Duration card is the only surface on the page that pairs a section heading (`lg`) with a prominent value (`xl`), mirroring the shipped run-detail page and the Dashboard page-title pattern. The executor MUST NOT introduce a sixth size. 2 weights in active use (`400` regular + `700` bold); weight 500 medium is NOT loaded by `@font-face` and MUST NOT be specified.
+**Count:** exactly 4 distinct size tokens (`xs`, `sm`, `base`, `xl`). `--cd-text-lg` is NOT used by any Phase 13 surface; executor MUST NOT introduce `--cd-text-lg` in Phase 13 CSS or inline styles. The executor MUST NOT introduce a fifth size. 2 weights in active use (`400` regular + `700` bold); weight 500 medium is NOT loaded by `@font-face` and MUST NOT be specified.
+
+**Visual separation inside the Duration card** comes from font-weight and label styling, NOT from a size jump:
+
+- `<h2>Duration</h2>`: `--cd-text-xl`, weight 700, letter-spacing `-0.02em`.
+- `p50` / `p95` chip labels: `--cd-text-xs`, weight 700, uppercase, letter-spacing `0.1em`, color `--cd-text-secondary`.
+- p50/p95 display values: `--cd-text-xl`, weight 700, letter-spacing `-0.02em`, color `--cd-text-primary`.
+- Subtitle (`last 87 successful runs`): `--cd-text-sm`, weight 400, color `--cd-text-secondary`.
+
+The heading and the display values share one size (`xl`) but are separated by the chip-label row and the chip-row `margin-top` on the subtitle; the uppercase `xs` chip labels above each value prevent the reader from misreading the heading and values as a single group.
 
 ---
 
@@ -319,17 +332,17 @@ View-model contract for `job.spark_cells`: always exactly 20 entries; each has `
 **Insertion point** (verified against live file):
 - `templates/pages/job_detail.html`: new card `<div>` between the Configuration card closing `</div>` at line 68 and the Run History opening `<div class="mb-6">` at line 71.
 
-**Card outer shape (copies Configuration card at line 23 exactly):**
+**Card outer shape (copies Configuration card at line 23 exactly; heading uses `--cd-text-xl` per the 4-size scale):**
 ```html
 <div style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)"
      class="mb-6">
-  <h2 style="font-size:var(--cd-text-lg);font-weight:700;margin-bottom:var(--cd-space-4)">Duration</h2>
+  <h2 style="font-size:var(--cd-text-xl);font-weight:700;letter-spacing:-0.02em;margin-bottom:var(--cd-space-4)">Duration</h2>
 
   <!-- Chip row -->
   <div style="display:flex;gap:var(--cd-space-6);align-items:baseline">
     <!-- p50 chip -->
     <div>
-      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">p50</span>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em;font-weight:700">p50</span>
       <div style="font-size:var(--cd-text-xl);color:var(--cd-text-primary);font-weight:700;letter-spacing:-0.02em;margin-top:2px"
            {% if !job.duration.has_min_samples %}title="insufficient samples: need 20 successful runs, currently have {{ job.duration.sample_count }}"{% endif %}>
         {{ job.duration.p50_display }}
@@ -337,7 +350,7 @@ View-model contract for `job.spark_cells`: always exactly 20 entries; each has `
     </div>
     <!-- p95 chip (symmetric with p50) -->
     <div>
-      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em">p95</span>
+      <span style="font-size:var(--cd-text-xs);color:var(--cd-text-secondary);text-transform:uppercase;letter-spacing:0.1em;font-weight:700">p95</span>
       <div style="font-size:var(--cd-text-xl);color:var(--cd-text-primary);font-weight:700;letter-spacing:-0.02em;margin-top:2px"
            {% if !job.duration.has_min_samples %}title="insufficient samples: need 20 successful runs, currently have {{ job.duration.sample_count }}"{% endif %}>
         {{ job.duration.p95_display }}
@@ -351,6 +364,8 @@ View-model contract for `job.spark_cells`: always exactly 20 entries; each has `
   </div>
 </div>
 ```
+
+Note: the `2px` `margin-top` on the display `<div>` inside each chip is a documented sub-grid exception (micro-offset to separate the uppercase chip label from the numeric value inside the same visual group; identical to the existing `cd-badge` `padding: 2px 8px` precedent). It is listed implicitly in the Spacing § sub-grid exception category and is a locked value.
 
 **Subtitle matrix:**
 
@@ -376,6 +391,8 @@ The executor MUST reuse the extant shared formatter currently populating `run.du
 - `<h2>` navigable via SR heading list.
 - Each numeric `<div>` is preceded by its label `<span>` — SR announces "p50, 1m 34s" as sibling pair.
 - When N<20, the `title` attribute on the em-dash value explains why.
+
+**Visual hierarchy note:** Since `<h2>Duration</h2>` and the p50/p95 display values share the same `--cd-text-xl` size, the reader distinguishes heading from value by (a) the uppercase `xs` chip labels `p50` / `p95` that precede each value, (b) the `--cd-space-4` bottom margin on the heading, and (c) the horizontal flex layout of the chip row grouping each label with its value. This is the locked visual-separation strategy for the 4-size scale.
 
 ---
 
@@ -759,6 +776,7 @@ Note: the hidden `<input name="window">` lives OUTSIDE `#timeline-body` so the 3
 | `assets/src/app.css` (LIVE source-of-truth) | All actually-declared tokens + existing `cd-badge` / `cd-btn-stop` patterns |
 | `CLAUDE.md` (project) | 3 (stack lock: `askama_web 0.15` + `axum-0.8` feature, HTMX 2.0.x, mermaid-only diagrams, PR-only landing) |
 | Existing templates (`base.html`, `dashboard.html`, `job_detail.html`, `partials/job_table.html`, `partials/run_history.html`) | 6 (nav block pattern, card shape, column header casing + CSS uppercase transform, HTMX poll convention, `#N` run-number format with muted `title="global id: {id}"` fallback, `overflow-x-auto` table wrapper) |
+| gsd-ui-checker (2026-04-20 BLOCK on Dimension 4) | 1 (collapse typography from 5 sizes to 4: drop `--cd-text-lg`, move `<h2>Duration</h2>` to `--cd-text-xl`) |
 | User input during this session | 0 — all questions answered upstream; only Claude's-Discretion items required judgment and are resolved below |
 
 ### Claude's-Discretion resolutions
@@ -781,6 +799,7 @@ Note: the hidden `<input name="window">` lives OUTSIDE `#timeline-body` so the 3
 | Border-radius for `.cd-tooltip-dot` | **literal `9999px`** instead of `--cd-radius-full` | `--cd-radius-full` is DESIGN_SYSTEM-only; not declared in `app.css`. |
 | Tooltip border color | **`--cd-border`** (not `--cd-border-strong`) | `--cd-border-strong` is DESIGN_SYSTEM-only; not declared in `app.css`. |
 | Muted diagnostic text color | **`--cd-text-secondary`** (not `--cd-text-muted`) | `--cd-text-muted` is DESIGN_SYSTEM-only; not declared in `app.css`. |
+| Duration-card heading size | **`--cd-text-xl` (24px)**, same size as p50/p95 display values | Checker BLOCK on Dimension 4 required collapsing to 4 sizes. Separation of heading vs value is carried by font-weight + uppercase chip labels + flex-row layout, not by a size jump. |
 | `cliff.toml` grouping for rc.2 | **`## Observability`** | Cohesive with Phase 12 precedent; not a UI contract item; listed for close-out completeness. |
 
 ---
@@ -790,8 +809,8 @@ Note: the hidden `<input name="window">` lives OUTSIDE `#timeline-body` so the 3
 - [ ] Dimension 1 Copywriting: PASS — every user-facing string explicitly locked (sparkline `title` format + badge, Duration subtitle matrix, timeline tooltip 4 rows, empty-window two-line copy for 24h and 7d, nav label, pill labels, axis tick labels)
 - [ ] Dimension 2 Visuals: PASS — all selectors declared, bar min-width + pulse + `prefers-reduced-motion` handled, tooltip positioning specified with caret, empty-state rendered in-grid without hiding axis
 - [ ] Dimension 3 Color: PASS — 60/30/10 preserved; accent (`--cd-text-accent`) reserved-for list is explicit (3 elements); status mapping is 1:1 with shipped tokens + 2 new additive `cancelled` tokens; every referenced token verified against live `assets/src/app.css`
-- [ ] Dimension 4 Typography: PASS — 5 sizes (justified: Duration card pairs `lg` heading + `xl` value, mirroring Dashboard page-title and run-detail precedent), 2 weights (`400` + `700`; weight 500 NOT used because not loaded by `@font-face`)
-- [ ] Dimension 5 Spacing: PASS — every measurement is a multiple of 4 from `--cd-space-*`. Sub-grid exceptions enumerated explicitly: sparkline cell `6px`, sparkline height `14px`, timeline bar min-width `2px`, timeline bar height `20px`, timeline row height `32px`, timeline label width `200px`, timeline axis height `24px`, tooltip caret `6px`, tooltip offset `8px`
+- [ ] Dimension 4 Typography: PASS — exactly 4 font sizes (`xs`, `sm`, `base`, `xl`); `--cd-text-lg` is NOT used anywhere in Phase 13; Duration card heading and display values share `--cd-text-xl` with separation carried by weight + chip labels + flex layout; 2 weights (`400` + `700`; weight 500 NOT used because not loaded by `@font-face`)
+- [ ] Dimension 5 Spacing: PASS — every measurement is a multiple of 4 from `--cd-space-*`. Sub-grid exceptions enumerated explicitly with executor guard: sparkline cell `6px`, sparkline height `14px`, timeline bar min-width `2px`, timeline bar height `20px`, timeline row height `32px`, timeline label width `200px`, timeline axis height `24px`, tooltip caret `6px`, tooltip offset `8px`, focus outline `2px`, Duration-card chip value `2px` label/value gap. Executor MUST NOT introduce any additional sub-4px measurement without updating this UI-SPEC first.
 - [ ] Dimension 6 Registry Safety: PASS — not applicable (non-React stack; hand-authored CSS only); no third-party blocks
 
 **Approval:** pending (gsd-ui-checker flips to approved YYYY-MM-DD)
