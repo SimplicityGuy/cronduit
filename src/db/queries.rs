@@ -653,6 +653,79 @@ pub async fn get_dashboard_jobs(
     }
 }
 
+/// Sparkline cell for one terminal job run (Phase 13 OBS-03).
+///
+/// Returned by [`get_dashboard_job_sparks`] — the handler buckets these by
+/// `job_id` and folds the last 20 per job into status-colored cells + a
+/// success-rate badge on the dashboard's Recent column.
+#[derive(Debug, Clone)]
+pub struct DashboardSparkRow {
+    pub job_id: i64,
+    pub id: i64,
+    pub job_run_number: i64,
+    pub status: String,
+    pub duration_ms: Option<i64>,
+    pub start_time: String,
+    pub rn: i64,
+}
+
+/// Fetch the last 20 terminal runs per job in a single SQL query (OBS-03).
+///
+/// "Terminal" excludes `'running'` — only runs with status in
+/// `(success, failed, timeout, cancelled, stopped)` are returned. Rows are
+/// ordered by `job_id ASC, rn ASC` so the handler can bucket and reverse once
+/// for oldest-to-newest cell rendering.
+///
+/// No N+1 — one query covers every job; the caller buckets by `job_id`.
+pub async fn get_dashboard_job_sparks(
+    pool: &DbPool,
+) -> anyhow::Result<Vec<DashboardSparkRow>> {
+    let sql = r#"
+        SELECT job_id, id, job_run_number, status, duration_ms, start_time, rn
+        FROM (
+            SELECT job_id, id, job_run_number, status, duration_ms, start_time,
+                   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id DESC) AS rn
+            FROM job_runs
+            WHERE status IN ('success','failed','timeout','cancelled','stopped')
+        ) t
+        WHERE rn <= 20
+        ORDER BY job_id ASC, rn ASC
+    "#;
+
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let rows = sqlx::query(sql).fetch_all(p).await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| DashboardSparkRow {
+                    job_id: r.get("job_id"),
+                    id: r.get("id"),
+                    job_run_number: r.get("job_run_number"),
+                    status: r.get("status"),
+                    duration_ms: r.get("duration_ms"),
+                    start_time: r.get("start_time"),
+                    rn: r.get("rn"),
+                })
+                .collect())
+        }
+        PoolRef::Postgres(p) => {
+            let rows = sqlx::query(sql).fetch_all(p).await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| DashboardSparkRow {
+                    job_id: r.get("job_id"),
+                    id: r.get("id"),
+                    job_run_number: r.get("job_run_number"),
+                    status: r.get("status"),
+                    duration_ms: r.get("duration_ms"),
+                    start_time: r.get("start_time"),
+                    rn: r.get("rn"),
+                })
+                .collect())
+        }
+    }
+}
+
 /// Fetch a single job by id.
 pub async fn get_job_by_id(pool: &DbPool, id: i64) -> anyhow::Result<Option<DbJob>> {
     match pool.reader() {
