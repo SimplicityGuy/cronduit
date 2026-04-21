@@ -1,11 +1,12 @@
 ---
 phase: 13
 slug: observability-polish-rc-2
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-04-20
-updated: 2026-04-20
+updated: 2026-04-21
+reviewed_at: 2026-04-21
 ---
 
 # Phase 13 — UI Design Contract (Observability Polish, rc.2)
