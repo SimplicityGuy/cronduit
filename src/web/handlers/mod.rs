@@ -6,3 +6,4 @@ pub mod metrics;
 pub mod run_detail;
 pub mod settings;
 pub mod sse;
+pub mod timeline;
