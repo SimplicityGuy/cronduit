@@ -917,37 +917,43 @@ These CLAUDE.md directives bind Phase 13 work:
 
 **Planner action on [ASSUMED]:** A2 and A3 should be confirmed during planning before being written into task descriptions.
 
-## Open Questions for Planner
+## Open Questions for Planner (RESOLVED)
 
 1. **Timeline filter on `start_time` vs `end_time`.**
    - What we know: `idx_job_runs_start_time` is on `start_time`. PITFALLS.md sketch used `end_time >= ?1 OR status = 'running'`.
    - What's unclear: whether "last 24h" should include runs that started BEFORE the window but ended INSIDE it.
    - Recommendation: Filter on `start_time >= window_start` (Option 1 in § Implementation Approach → OBS-01/02). Simpler, uses the index cleanly, matches "runs that fired in the last 24h" intuition. Confirm with user if they disagree.
+   - RESOLVED: Filter on `start_time >= window_start`. Implemented via `queries::get_timeline_runs` shipped in plan 02 (WHERE `jr.start_time >= ?1`) and consumed by `timeline` handler in 13-05-PLAN.md Task 1 (`window_start_utc = now_utc - window_duration`).
 
 2. **Duration formatter: extend shared or add Phase-13-only variant.**
    - What we know: `src/web/format.rs::format_duration_ms` emits `"1.2s"` (decimal). UI-SPEC copywriting wants `"42s"` (floor int) for 1s..59s.
    - What's unclear: whether to mutate the shared formatter (touches Run History column across all pages — visible regression) or add `format_duration_ms_display_floor` used only in Phase 13.
    - Recommendation: Add a new helper `format_duration_ms_floor_seconds` in `src/web/format.rs` used by Duration card + timeline tooltip + sparkline cell tooltip (three new surfaces). Leaves shipped `run_history.html` behavior unchanged. Alternative: change the shared formatter — small user-visible change, matches UI-SPEC more cleanly. Planner to decide.
+   - RESOLVED: Add new helper, do not mutate shared formatter. Implemented in 13-01-PLAN.md Task 2 as `format_duration_ms_floor_seconds` (shipped formatter `format_duration_ms` left byte-identical). Consumed by plans 03 (Duration card), 04 (sparkline cell tooltip), and 05 (timeline tooltip).
 
 3. **`stats.rs::percentile` test location: inline in `src/web/stats.rs` vs external `tests/v13_stats_percentile.rs`.**
    - What we know: UI-SPEC says "`src/web/stats.rs` ~40 LOC with tests" — inline. Codebase precedent (`src/web/format.rs:23-34`) has inline unit tests.
    - What's unclear: whether external integration tests add value.
    - Recommendation: Inline `#[cfg(test)] mod tests`. No external test file. Reduces task count by one.
+   - RESOLVED: Inline `#[cfg(test)] mod tests` in `src/web/stats.rs`. Implemented in 13-01-PLAN.md Task 1 (8 `#[test]` fns covering T-V11-DUR-01..04 + edge cases). No external test file added.
 
 4. **Integration test for OBS-05 static guard: CI-only grep or also a Rust test?**
    - What we know: OBS-05 is a policy invariant, not a runtime behavior.
    - What's unclear: whether to encode it as a `#[test]` in a module like `tests/v13_obs05_guard.rs` that uses `include_dir!` to scan `src/` strings, or as a CI step in `justfile` / GitHub Actions.
    - Recommendation: CI grep step (`just grep-no-percentile-cont`) invoked from `ci.yml`. Lower cognitive load than a reflection-style Rust test. Record as plan.
+   - RESOLVED: CI grep guard only. Implemented in 13-06-PLAN.md Task 3 as `just grep-no-percentile-cont` recipe invoked from the lint job in `.github/workflows/ci.yml`. No Rust-side guard added.
 
 5. **rc.2 close-out commit shape.**
    - What we know: D-22 mandates no workflow file edits. Flipping OBS-01..OBS-05 checkboxes in `.planning/REQUIREMENTS.md` happens in the same commit as the final feature PR.
    - What's unclear: whether REQUIREMENTS.md gets its own commit on the feature branch or rolls into one of the feature commits.
    - Recommendation: Separate `docs(13): mark OBS-01..OBS-05 complete` commit on the feature branch, landing with the final Phase 13 PR merge. Keeps commit history clean for `git-cliff` release notes.
+   - RESOLVED: Separate commit. Implemented in 13-06-PLAN.md Task 4 with commit message `docs(13): mark OBS-01..OBS-05 complete` on the feature branch (distinct from ci/test commits for clean git-cliff grouping).
 
 6. **Timeline query: apply `MAX_WINDOW_RUNS` cap via ORDER BY + LIMIT, or OFFSET pagination?**
    - What we know: `LIMIT 10000` is the hard cap (OBS-02 lock).
    - What's unclear: if the query returns 10000 rows, does the UI show a "truncated — showing first 10000" banner?
    - Recommendation: show the banner. Pragmatic. One extra `<p>` in the template when `runs.len() == 10000`. Add to plan.
+   - RESOLVED: Show the banner. Implemented in 13-05-PLAN.md Task 1 (handler sets `truncated = runs.len() == 10_000`) and Task 3 (`{% if truncated %}<p>Showing first 10000 of many runs — narrow the window for a complete view.</p>{% endif %}` rendered above `#timeline-body` swap target).
 
 ## Sources
 
