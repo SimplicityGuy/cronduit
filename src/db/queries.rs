@@ -653,6 +653,238 @@ pub async fn get_dashboard_jobs(
     }
 }
 
+/// Sparkline cell for one terminal job run (Phase 13 OBS-03).
+///
+/// Returned by [`get_dashboard_job_sparks`] — the handler buckets these by
+/// `job_id` and folds the last 20 per job into status-colored cells + a
+/// success-rate badge on the dashboard's Recent column.
+#[derive(Debug, Clone)]
+pub struct DashboardSparkRow {
+    pub job_id: i64,
+    pub id: i64,
+    pub job_run_number: i64,
+    pub status: String,
+    pub duration_ms: Option<i64>,
+    pub start_time: String,
+    pub rn: i64,
+}
+
+/// Fetch the last 20 terminal runs per job in a single SQL query (OBS-03).
+///
+/// "Terminal" excludes `'running'` — only runs with status in
+/// `(success, failed, timeout, cancelled, stopped)` are returned. Rows are
+/// ordered by `job_id ASC, rn ASC` so the handler can bucket and reverse once
+/// for oldest-to-newest cell rendering.
+///
+/// No N+1 — one query covers every job; the caller buckets by `job_id`.
+pub async fn get_dashboard_job_sparks(pool: &DbPool) -> anyhow::Result<Vec<DashboardSparkRow>> {
+    let sql = r#"
+        SELECT job_id, id, job_run_number, status, duration_ms, start_time, rn
+        FROM (
+            SELECT job_id, id, job_run_number, status, duration_ms, start_time,
+                   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id DESC) AS rn
+            FROM job_runs
+            WHERE status IN ('success','failed','timeout','cancelled','stopped')
+        ) t
+        WHERE rn <= 20
+        ORDER BY job_id ASC, rn ASC
+    "#;
+
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let rows = sqlx::query(sql).fetch_all(p).await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| DashboardSparkRow {
+                    job_id: r.get("job_id"),
+                    id: r.get("id"),
+                    job_run_number: r.get("job_run_number"),
+                    status: r.get("status"),
+                    duration_ms: r.get("duration_ms"),
+                    start_time: r.get("start_time"),
+                    rn: r.get("rn"),
+                })
+                .collect())
+        }
+        PoolRef::Postgres(p) => {
+            let rows = sqlx::query(sql).fetch_all(p).await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| DashboardSparkRow {
+                    job_id: r.get("job_id"),
+                    id: r.get("id"),
+                    job_run_number: r.get("job_run_number"),
+                    status: r.get("status"),
+                    duration_ms: r.get("duration_ms"),
+                    start_time: r.get("start_time"),
+                    rn: r.get("rn"),
+                })
+                .collect())
+        }
+    }
+}
+
+/// Fetch the last N successful durations for a job, newest first (Phase 13 OBS-04, OBS-05).
+///
+/// Returns ONLY rows where `status = 'success'` AND `duration_ms IS NOT NULL`
+/// (D-20: strict-success only — mixing failure/timeout durations skews p95).
+///
+/// Returns raw `Vec<u64>` samples — aggregation happens in Rust via
+/// `src/web/stats.rs::percentile`. The return type (`Vec<u64>`, not `f64` or
+/// `Option<u64>`) is the type-level enforcement of OBS-05 structural parity:
+/// no SQL-native percentile (`percentile_cont`, `percentile_disc`) is used on
+/// either backend.
+pub async fn get_recent_successful_durations(
+    pool: &DbPool,
+    job_id: i64,
+    limit: i64,
+) -> anyhow::Result<Vec<u64>> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let rows = sqlx::query(
+                "SELECT duration_ms FROM job_runs
+                 WHERE job_id = ?1
+                   AND status = 'success'
+                   AND duration_ms IS NOT NULL
+                 ORDER BY id DESC
+                 LIMIT ?2",
+            )
+            .bind(job_id)
+            .bind(limit)
+            .fetch_all(p)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| r.get::<i64, _>("duration_ms") as u64)
+                .collect())
+        }
+        PoolRef::Postgres(p) => {
+            let rows = sqlx::query(
+                "SELECT duration_ms FROM job_runs
+                 WHERE job_id = $1
+                   AND status = 'success'
+                   AND duration_ms IS NOT NULL
+                 ORDER BY id DESC
+                 LIMIT $2",
+            )
+            .bind(job_id)
+            .bind(limit)
+            .fetch_all(p)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| r.get::<i64, _>("duration_ms") as u64)
+                .collect())
+        }
+    }
+}
+
+/// A terminal or in-flight run for the `/timeline` gantt view (Phase 13 OBS-01, OBS-02).
+///
+/// Rendered as one bar; `end_time` is `None` iff `status == "running"`.
+/// `start_time` and `end_time` are stored as `TEXT` on both backends (RFC3339
+/// or `"YYYY-MM-DD HH:MM:SS"` fallback — see `format_relative_past` parser).
+#[derive(Debug, Clone)]
+pub struct TimelineRun {
+    pub run_id: i64,
+    pub job_id: i64,
+    pub job_name: String,
+    pub job_run_number: i64,
+    pub status: String,
+    pub start_time: String,
+    pub end_time: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
+/// Fetch up to 10 000 runs from enabled jobs whose `start_time >= window_start`
+/// (Phase 13 OBS-01, OBS-02).
+///
+/// Filter is locked on `start_time` (not `end_time`) so SQLite / Postgres can
+/// use `idx_job_runs_start_time` (Research Open Question #1 resolution per
+/// Plan Task 3 Assumption A2). Semantics: "runs that started in the last
+/// 24h/7d." Runs that started before the window but ended inside it are
+/// intentionally excluded — homelab-scale 24h+ runs are an edge case, and the
+/// `start_time` filter lets the query planner use the shipped index.
+///
+/// `LIMIT 10000` is a hard SQL literal (never parameterized) per OBS-02.
+/// `ORDER BY j.name ASC, jr.start_time ASC` yields deterministic per-job row
+/// order on the timeline (alphabetical lanes, chronological bars within lane).
+pub async fn get_timeline_runs(
+    pool: &DbPool,
+    window_start_rfc3339: &str,
+) -> anyhow::Result<Vec<TimelineRun>> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let rows = sqlx::query(
+                r#"SELECT jr.id AS run_id,
+                          jr.job_id,
+                          j.name AS job_name,
+                          jr.job_run_number,
+                          jr.status,
+                          jr.start_time,
+                          jr.end_time,
+                          jr.duration_ms
+                   FROM job_runs jr
+                   JOIN jobs j ON j.id = jr.job_id
+                   WHERE j.enabled = 1
+                     AND jr.start_time >= ?1
+                   ORDER BY j.name ASC, jr.start_time ASC
+                   LIMIT 10000"#,
+            )
+            .bind(window_start_rfc3339)
+            .fetch_all(p)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| TimelineRun {
+                    run_id: r.get("run_id"),
+                    job_id: r.get("job_id"),
+                    job_name: r.get("job_name"),
+                    job_run_number: r.get("job_run_number"),
+                    status: r.get("status"),
+                    start_time: r.get("start_time"),
+                    end_time: r.get("end_time"),
+                    duration_ms: r.get("duration_ms"),
+                })
+                .collect())
+        }
+        PoolRef::Postgres(p) => {
+            let rows = sqlx::query(
+                r#"SELECT jr.id AS run_id,
+                          jr.job_id,
+                          j.name AS job_name,
+                          jr.job_run_number,
+                          jr.status,
+                          jr.start_time,
+                          jr.end_time,
+                          jr.duration_ms
+                   FROM job_runs jr
+                   JOIN jobs j ON j.id = jr.job_id
+                   WHERE j.enabled = true
+                     AND jr.start_time >= $1
+                   ORDER BY j.name ASC, jr.start_time ASC
+                   LIMIT 10000"#,
+            )
+            .bind(window_start_rfc3339)
+            .fetch_all(p)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| TimelineRun {
+                    run_id: r.get("run_id"),
+                    job_id: r.get("job_id"),
+                    job_name: r.get("job_name"),
+                    job_run_number: r.get("job_run_number"),
+                    status: r.get("status"),
+                    start_time: r.get("start_time"),
+                    end_time: r.get("end_time"),
+                    duration_ms: r.get("duration_ms"),
+                })
+                .collect())
+        }
+    }
+}
+
 /// Fetch a single job by id.
 pub async fn get_job_by_id(pool: &DbPool, id: i64) -> anyhow::Result<Option<DbJob>> {
     match pool.reader() {
