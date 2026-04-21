@@ -315,7 +315,7 @@ Full REQ-ID → phase traceability lives in [`REQUIREMENTS.md`](REQUIREMENTS.md#
 | 10. Stop-a-Running-Job + Hygiene Preamble                  | 0/10           | 10/10 | Complete   | 2026-04-15 |
 | 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | 16/15 | Complete    | 2026-04-17 |
 | 12. Docker Healthcheck + rc.1 Cut                          | 0/?            | Not started | `v1.1.0-rc.1` ◀  | —         |
-| 13. Observability Polish (rc.2)                            | 0/6            | 2/6 | In Progress|  |
+| 13. Observability Polish (rc.2)                            | 0/6            | 4/6 | In Progress|  |
 | 14. Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship         | 0/?            | Not started | `v1.1.0-rc.3` ◀ / `v1.1.0` | — |
 
 Plan counts (`?`) are intentionally unspecified here; they get filled in by `/gsd-plan-phase` when each phase is decomposed. The `◀` marker indicates the phase at which the rc tag is actually cut.
