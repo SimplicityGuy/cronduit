@@ -46,6 +46,11 @@ pub struct DbJob {
     pub config_json: String,
     pub config_hash: String,
     pub enabled: bool,
+    /// Phase 14 DB-14 tri-state override:
+    /// - `None` = follow config `enabled` flag (no override)
+    /// - `Some(0)` = force disabled (written by POST /api/jobs/bulk-toggle action=disable)
+    /// - `Some(1)` = force enabled (reserved; v1.1 UI never writes this — defensive only)
+    pub enabled_override: Option<i64>,
     pub timeout_secs: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -173,7 +178,7 @@ pub async fn get_enabled_jobs(pool: &DbPool) -> anyhow::Result<Vec<DbJob>> {
     match pool.reader() {
         PoolRef::Sqlite(p) => {
             let rows = sqlx::query_as::<_, SqliteDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1",
             )
             .fetch_all(p)
             .await?;
@@ -181,7 +186,7 @@ pub async fn get_enabled_jobs(pool: &DbPool) -> anyhow::Result<Vec<DbJob>> {
         }
         PoolRef::Postgres(p) => {
             let rows = sqlx::query_as::<_, PgDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1",
             )
             .fetch_all(p)
             .await?;
@@ -195,7 +200,7 @@ pub async fn get_job_by_name(pool: &DbPool, name: &str) -> anyhow::Result<Option
     match pool.reader() {
         PoolRef::Sqlite(p) => {
             let row = sqlx::query_as::<_, SqliteDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at FROM jobs WHERE name = ?1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE name = ?1",
             )
             .bind(name)
             .fetch_optional(p)
@@ -204,7 +209,7 @@ pub async fn get_job_by_name(pool: &DbPool, name: &str) -> anyhow::Result<Option
         }
         PoolRef::Postgres(p) => {
             let row = sqlx::query_as::<_, PgDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at FROM jobs WHERE name = $1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE name = $1",
             )
             .bind(name)
             .fetch_optional(p)
@@ -226,6 +231,7 @@ struct SqliteDbJobRow {
     config_json: String,
     config_hash: String,
     enabled: i32,
+    enabled_override: Option<i32>,
     timeout_secs: i64,
     created_at: String,
     updated_at: String,
@@ -242,6 +248,7 @@ impl From<SqliteDbJobRow> for DbJob {
             config_json: r.config_json,
             config_hash: r.config_hash,
             enabled: r.enabled != 0,
+            enabled_override: r.enabled_override.map(|v| v as i64),
             timeout_secs: r.timeout_secs,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -259,6 +266,7 @@ struct PgDbJobRow {
     config_json: String,
     config_hash: String,
     enabled: bool,
+    enabled_override: Option<i64>,
     timeout_secs: i64,
     created_at: String,
     updated_at: String,
@@ -275,6 +283,7 @@ impl From<PgDbJobRow> for DbJob {
             config_json: r.config_json,
             config_hash: r.config_hash,
             enabled: r.enabled,
+            enabled_override: r.enabled_override,
             timeout_secs: r.timeout_secs,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -473,6 +482,10 @@ pub struct DashboardJob {
     pub last_status: Option<String>,
     pub last_run_time: Option<String>,
     pub last_trigger: Option<String>,
+    /// Phase 14 DB-14 tri-state override (None = config-only; Some(0) = forced disabled;
+    /// Some(1) = forced enabled — defensive only). Carried for downstream view rendering
+    /// (Plan 05 surfaces this on the dashboard chrome).
+    pub enabled_override: Option<i64>,
 }
 
 /// A row from job_runs for the run history view.
@@ -551,7 +564,7 @@ pub async fn get_dashboard_jobs(
 
     let base_sql = if has_filter {
         format!(
-            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
                       lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                FROM jobs j
                LEFT JOIN (
@@ -564,7 +577,7 @@ pub async fn get_dashboard_jobs(
         )
     } else {
         format!(
-            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
                       lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                FROM jobs j
                LEFT JOIN (
@@ -597,6 +610,7 @@ pub async fn get_dashboard_jobs(
                     last_status: r.get("last_status"),
                     last_run_time: r.get("last_run_time"),
                     last_trigger: r.get("last_trigger"),
+                    enabled_override: r.try_get("enabled_override").ok().flatten(),
                 })
                 .collect())
         }
@@ -604,7 +618,7 @@ pub async fn get_dashboard_jobs(
             // Postgres uses $1 instead of ?1
             let pg_sql = if has_filter {
                 format!(
-                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
                               lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                        FROM jobs j
                        LEFT JOIN (
@@ -617,7 +631,7 @@ pub async fn get_dashboard_jobs(
                 )
             } else {
                 format!(
-                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
                               lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                        FROM jobs j
                        LEFT JOIN (
@@ -647,6 +661,7 @@ pub async fn get_dashboard_jobs(
                     last_status: r.get("last_status"),
                     last_run_time: r.get("last_run_time"),
                     last_trigger: r.get("last_trigger"),
+                    enabled_override: r.try_get("enabled_override").ok().flatten(),
                 })
                 .collect())
         }
@@ -897,7 +912,7 @@ pub async fn get_job_by_id(pool: &DbPool, id: i64) -> anyhow::Result<Option<DbJo
     match pool.reader() {
         PoolRef::Sqlite(p) => {
             let row = sqlx::query_as::<_, SqliteDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at FROM jobs WHERE id = ?1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE id = ?1",
             )
             .bind(id)
             .fetch_optional(p)
@@ -906,7 +921,7 @@ pub async fn get_job_by_id(pool: &DbPool, id: i64) -> anyhow::Result<Option<DbJo
         }
         PoolRef::Postgres(p) => {
             let row = sqlx::query_as::<_, PgDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at FROM jobs WHERE id = $1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE id = $1",
             )
             .bind(id)
             .fetch_optional(p)
