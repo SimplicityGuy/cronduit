@@ -279,7 +279,16 @@ Derived from `research/SUMMARY.md` § Architecture Integration Map. These are lo
   4. Settings page shows a "Currently overridden" list enumerating every job whose `enabled_override` is non-null, so an operator can audit manually-disabled jobs at a glance (ERG-03).
   5. `v1.1.0-rc.3` tag exists on GHCR, multi-arch image is pushed, release notes published, operator validates the bulk-toggle UX end-to-end, then `v1.1.0` is tagged, `:latest` is advanced from `v1.0.1` to `v1.1.0`, and `MILESTONES.md` is updated with the v1.1 archive entry.
 
-**Plans**: TBD
+**Plans**: 9 plans
+- [ ] `14-01-PLAN.md` — Wave 0 test harness (tests/v11_bulk_toggle.rs + _pg.rs, 19 red-bar cases) (T-V11-BULK-01, DB-14, ERG-01..04)
+- [ ] `14-02-PLAN.md` — Migrations + DbJob/row extensions; freeze upsert_job L57-125 (DB-14)
+- [ ] `14-03-PLAN.md` — DB queries: filter mod + bulk_set_override + get_overridden_jobs (DB-14, ERG-03, ERG-04)
+- [ ] `14-04-PLAN.md` — bulk_toggle handler + route (axum_extra::Form correction) (ERG-01, ERG-02)
+- [ ] `14-05-PLAN.md` — Dashboard UI: checkbox column + sticky bulk bar + inline JS + CSS (ERG-01, ERG-02)
+- [ ] `14-06-PLAN.md` — Settings 'Currently Overridden' audit section (ERG-03)
+- [ ] `14-07-PLAN.md` — THREAT_MODEL.md D-21 bullet + justfile compose-up-rc3 + reload recipes + compose env-var
+- [ ] `14-08-PLAN.md` — HUMAN-UAT.md (8 steps, all just-recipe-anchored) [human-action]
+- [ ] `14-09-PLAN.md` — REQUIREMENTS flips + MILESTONES.md v1.1 entry + README bump [human-verify checkpoint]
 **UI hint**: yes
 
 ---
@@ -316,7 +325,7 @@ Full REQ-ID → phase traceability lives in [`REQUIREMENTS.md`](REQUIREMENTS.md#
 | 11. Per-Job Run Numbers + Log UX Fixes                     | 0/?            | 16/15 | Complete    | 2026-04-17 |
 | 12. Docker Healthcheck + rc.1 Cut                          | 0/?            | Not started | `v1.1.0-rc.1` ◀  | —         |
 | 13. Observability Polish (rc.2)                            | 0/6            | 6/6 | Complete   | 2026-04-21 |
-| 14. Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship         | 0/?            | Not started | `v1.1.0-rc.3` ◀ / `v1.1.0` | — |
+| 14. Bulk Enable/Disable + rc.3 + Final v1.1.0 Ship         | 0/9            | Planned     | `v1.1.0-rc.3` ◀ / `v1.1.0` | — |
 
 Plan counts (`?`) are intentionally unspecified here; they get filled in by `/gsd-plan-phase` when each phase is decomposed. The `◀` marker indicates the phase at which the rc tag is actually cut.
 
