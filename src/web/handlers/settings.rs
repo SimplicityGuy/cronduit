@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use chrono::Utc;
 
-use crate::db::queries::PoolRef;
+use crate::db::queries::{self, PoolRef};
 use crate::web::AppState;
 use crate::web::csrf;
 
@@ -16,16 +16,29 @@ use crate::web::csrf;
 
 #[derive(Template)]
 #[template(path = "pages/settings.html")]
-struct SettingsPage {
-    uptime: String,
-    db_status: String,
-    config_path: String,
-    last_reload_time: String,
-    last_reload_status: String,
-    last_reload_summary: String,
-    watch_config: bool,
-    version: String,
-    csrf_token: String,
+pub struct SettingsPage {
+    pub uptime: String,
+    pub db_status: String,
+    pub config_path: String,
+    pub last_reload_time: String,
+    pub last_reload_status: String,
+    pub last_reload_summary: String,
+    pub watch_config: bool,
+    pub version: String,
+    pub csrf_token: String,
+    pub overridden_jobs: Vec<OverriddenJobView>,
+}
+
+/// Minimal view of a job whose `enabled_override` is non-null, for the
+/// settings "Currently Overridden" audit section (ERG-03).
+///
+/// Hydrated from [`queries::get_overridden_jobs`] which already filters out
+/// rows with NULL overrides; the `enabled_override` field below is the
+/// **non-null** value (`0` = DISABLED, `1` = FORCED ON — defensive).
+pub struct OverriddenJobView {
+    pub id: i64,
+    pub name: String,
+    pub enabled_override: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +102,30 @@ pub async fn settings(
 
     let csrf_token = csrf::get_token_from_cookies(&cookies);
 
+    // ERG-03: hydrate the "Currently Overridden" audit section from the DB.
+    // Non-fatal degradation per T-14-06-05: if the read query fails, log and
+    // render the settings page with an empty overridden list so the rest of
+    // the page (uptime, DB status, last reload, etc.) remains usable.
+    let overridden_jobs: Vec<OverriddenJobView> = queries::get_overridden_jobs(&state.pool)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(
+                target: "cronduit.web",
+                error = %err,
+                "settings: get_overridden_jobs failed"
+            );
+            Vec::new()
+        })
+        .into_iter()
+        .filter_map(|j| {
+            j.enabled_override.map(|ov| OverriddenJobView {
+                id: j.id,
+                name: j.name,
+                enabled_override: ov,
+            })
+        })
+        .collect();
+
     SettingsPage {
         uptime,
         db_status,
@@ -99,6 +136,7 @@ pub async fn settings(
         watch_config: state.watch_config,
         version: state.version.to_string(),
         csrf_token,
+        overridden_jobs,
     }
     .into_web_template()
     .into_response()
