@@ -49,6 +49,7 @@ created: 2026-04-22
 | **ERG-01** | `bulk_toggle` handler: `action=disable` sets override=0 for all `job_ids` | integration | `cargo nextest run --test v11_bulk_toggle::handler_disable` | ❌ Wave 0 | ⬜ pending |
 | **ERG-01** | `bulk_toggle` handler: `action=enable` sets override=NULL for all `job_ids` | integration | `cargo nextest run --test v11_bulk_toggle::handler_enable` | ❌ Wave 0 | ⬜ pending |
 | **D-12** | Partial-invalid IDs: handler applies to valid, returns 200, toast carries `(K not found)` suffix | integration | `cargo nextest run --test v11_bulk_toggle::handler_partial_invalid` | ❌ Wave 0 | ⬜ pending |
+| **UI-SPEC primary-count** | Partial-invalid toast primary count == `rows_affected` (not `selection_size`); locks `"2 jobs disabled. (1 not found)"` exact-string for selection=[1,2,9999] | integration (exact-string on HX-Trigger) | `cargo nextest run --test v11_bulk_toggle::handler_partial_invalid_toast_uses_rows_affected` | ❌ Wave 0 | ⬜ pending |
 | **D-12a** | Dedupe `job_ids` before UPDATE (duplicate IDs do NOT cause duplicate UPDATEs) | unit | `cargo nextest run --test v11_bulk_toggle::handler_dedupes_ids` | ❌ Wave 0 | ⬜ pending |
 | **Claude's Discretion** | Empty `job_ids` → 400 + error toast | integration | `cargo nextest run --test v11_bulk_toggle::handler_rejects_empty` | ❌ Wave 0 | ⬜ pending |
 | **ERG-01** | `bulk_toggle` dispatches `SchedulerCmd::Reload` AFTER DB commit (heap-rebuild order) | integration (asserts mpsc message + DB state) | `cargo nextest run --test v11_bulk_toggle::handler_fires_reload_after_update` | ❌ Wave 0 | ⬜ pending |
@@ -63,7 +64,7 @@ created: 2026-04-22
 
 ## Wave 0 Requirements
 
-- [ ] `tests/v11_bulk_toggle.rs` — new file covering T-V11-BULK-01 invariants + ERG-01..04 handler/query behaviors (13+ test cases enumerated above)
+- [ ] `tests/v11_bulk_toggle.rs` — new file covering T-V11-BULK-01 invariants + ERG-01..04 handler/query behaviors (15+ test cases enumerated above)
 - [ ] `tests/v11_bulk_toggle_pg.rs` — OR cfg-feature-gated Postgres parity tests within the same file (precedent: `tests/dashboard_jobs_pg.rs`)
 - [ ] `tests/schema_parity.rs` — verify the new `enabled_override` column is picked up automatically via schema introspection (normalized INT64); no code change expected, but explicit re-run required
 - [ ] `tests/migrations_idempotent.rs` — add assertion that the new migration runs cleanly on a DB at the prior migration head AND runs idempotently on re-invocation

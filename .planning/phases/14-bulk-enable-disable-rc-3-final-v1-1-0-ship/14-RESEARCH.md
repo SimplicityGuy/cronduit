@@ -952,27 +952,36 @@ Phase 14 D-21 adds a parallel bullet. Suggested wording (planner refines):
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All four questions are RESOLVED as of the 14-UI-SPEC / 14-CONTEXT approval. The
+> recommendations below are LOCKED-IN decisions, not open items. Dimension 11
+> (Open-Question resolution) tag: every item is marked **RESOLVED:** with the
+> chosen path.
 
 1. **Should the dashboard sparkline row visually flag override-disabled jobs?**
+   - **RESOLVED: NO — do not surface override state on the dashboard in v1.1.**
    - What we know: D-10b/D-10 defensively handle FORCED ON at the settings audit; CONTEXT.md line 177 notes "optional flag for the planner" for the dashboard
    - What's unclear: operators may want at-a-glance "this row is bulk-disabled" — e.g., dim the row or show a small "OVERRIDE" pill
-   - Recommendation: **do not surface on the dashboard in v1.1**. The settings audit surface (ERG-03) is the canonical place; duplicating on the dashboard adds template surface with no REQ-lock mandate. Revisit in v1.2 if operators request.
+   - Recommendation (LOCKED): **do not surface on the dashboard in v1.1**. The settings audit surface (ERG-03) is the canonical place; duplicating on the dashboard adds template surface with no REQ-lock mandate. Revisit in v1.2 if operators request.
 
 2. **Should the count of running-jobs in the toast be computed via a dedicated query or inferred from `active_runs` in AppState?**
+   - **RESOLVED: use `active_runs` in-memory read — no new DB query.**
    - What we know: `state.active_runs` holds a `Arc<RwLock<HashMap<i64, RunEntry>>>` (Phase 10 SCHED-14 artifact)
    - What's unclear: whether reading from `active_runs` (a process-local in-memory map) is more accurate for ERG-02's toast than a DB query (`SELECT COUNT(*) FROM job_runs WHERE status = 'running' AND job_id IN (...)`)
-   - Recommendation: **use `active_runs`**. It is the single source of truth for "currently running" (the DB row is the persistence layer but lag can occur between cancel fire and row finalize). Read-lock the map, count selected job_ids present, release the lock. Sub-millisecond. No new DB query needed. Pitfall §10 becomes "no new helper; use existing AppState".
+   - Recommendation (LOCKED): **use `active_runs`**. It is the single source of truth for "currently running" (the DB row is the persistence layer but lag can occur between cancel fire and row finalize). Read-lock the map, count selected job_ids present, release the lock. Sub-millisecond. No new DB query needed. Pitfall §10 becomes "no new helper; use existing AppState".
 
 3. **Should `bulk_set_override` share a transaction with `count_running_runs_for_jobs` for atomicity?**
+   - **RESOLVED: NO — no transaction wrap; tolerate the benign race.**
    - What we know: `count_running_runs_for_jobs` reads `job_runs.status`; `bulk_set_override` writes `jobs.enabled_override`. Two different tables; toast-reporting doesn't require atomicity.
    - What's unclear: edge case where a run finalizes between the count and the UPDATE → toast reports M=1 but M is really M=0
-   - Recommendation: **no transaction**. The ERG-02 "will complete naturally" wording is fuzzy by design — the race is semantically tolerable. Homelab tool; not a financial ledger.
+   - Recommendation (LOCKED): **no transaction**. The ERG-02 "will complete naturally" wording is fuzzy by design — the race is semantically tolerable. Homelab tool; not a financial ledger.
 
 4. **Should migrations reference Phase 11's `job_run_number` three-step pattern for rollback safety?**
+   - **RESOLVED: NO — forward-only migration; no `.down.sql` pair for v1.1.**
    - What we know: Phase 11 used 3 files for ADD NULLABLE → BACKFILL → NOT NULL because the column was NOT NULL. Phase 14's `enabled_override` is NULLABLE end-to-end; no backfill required.
    - What's unclear: whether the planner should preemptively add a `.down.sql` pair for symmetry
-   - Recommendation: **no down migration** for v1.1. Cronduit's migration convention is forward-only (matches Phase 11 + Phase 10 artifacts). Rollback via `DROP COLUMN` would lose bulk-disable state; if needed, operators downgrade by restoring a pre-v1.1.0 backup. Document this non-rollbackability in MILESTONES.md v1.1 entry if it matters.
+   - Recommendation (LOCKED): **no down migration** for v1.1. Cronduit's migration convention is forward-only (matches Phase 11 + Phase 10 artifacts). Rollback via `DROP COLUMN` would lose bulk-disable state; if needed, operators downgrade by restoring a pre-v1.1.0 backup. Document this non-rollbackability in MILESTONES.md v1.1 entry if it matters.
 
 ---
 

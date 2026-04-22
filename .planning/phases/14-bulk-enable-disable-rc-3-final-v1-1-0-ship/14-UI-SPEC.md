@@ -192,13 +192,15 @@ Honors D-04 + D-06 + D-12 verbatim. Existing toast system at `base.html:66-118` 
 | Bulk enable, N ticked | `{N} jobs: override cleared.` | `info` | default `3000` |
 | Bulk enable, N == 1 | `1 job: override cleared.` (singular) | `info` | default `3000` |
 | Bulk enable, K invalid | `{N - K} jobs: override cleared. ({K} not found)` | `info` | default `3000` |
-| Per-row Clear (from settings, N always == 1) | `Override cleared.` (no count — single-row context is unambiguous) | `info` | default `3000` |
+| Per-row Clear (from settings, N always == 1) | `1 job: override cleared.` (uses the same multi-row formatter — single unconditional handler path; operators see consistent wording everywhere) | `info` | default `3000` |
 | CSRF mismatch | `Session expired — refresh and try again.` | `error` | `0` (sticky — error toast per `base.html:95-107` stays until dismissed) |
 | Invalid `action` (neither `disable` nor `enable`) | `Invalid bulk action.` | `error` | `0` |
 | Empty `job_ids` (operator managed to POST zero) | `No jobs selected.` | `error` | `0` (see Claude's-Discretion resolution below — locks 400 + error toast over silent 200) |
 | Scheduler unavailable (mpsc closed, 503) | `Scheduler is shutting down — try again shortly.` | `error` | `0` |
 
 **Singular/plural rule:** `N == 1 && K == 0` → `job` (singular); otherwise → `jobs` (plural). `M == 1` → `currently-running job will complete naturally`; otherwise → `currently-running jobs will complete naturally`. Implemented via askama conditional in the toast-trigger payload (executor's call whether to branch in the handler or use a helper).
+
+**Primary-count semantics (locked):** The leading count in every disable/enable toast is `rows_affected` (DB UPDATE return), NOT `selection_size`. Partial-invalid IDs are surfaced via the trailing `({K} not found)` suffix. Example: selection=[1,2,9999] with id 9999 missing → toast reads `"2 jobs disabled. (1 not found)"` (not `"3 jobs disabled..."`). This is the behavior asserted by `tests/v11_bulk_toggle::handler_partial_invalid_toast_uses_rows_affected`. Per-row Clear from settings uses the SAME formatter with rows_affected=1, yielding `"1 job: override cleared."` (no conditional handler branching).
 
 ### Settings "Currently Overridden" section (ERG-03)
 
