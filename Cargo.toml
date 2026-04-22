@@ -98,8 +98,11 @@ rust-embed = "8.11"
 # HTMX helpers (D-10)
 axum-htmx = { version = "0.8", features = ["serde"] }
 
-# Extra extractors — cookies for CSRF, query for filter/sort (D-11, D-02)
-axum-extra = { version = "0.12", features = ["cookie", "query"] }
+# Extra extractors — cookies for CSRF, query for filter/sort (D-11, D-02);
+# `form` enables `axum_extra::extract::Form` (serde_html_form-backed) so
+# `Vec<T>` deserializes from repeated form keys (Phase 14 bulk-toggle —
+# Landmine §1: stock `axum::Form` uses serde_urlencoded which does NOT).
+axum-extra = { version = "0.12", features = ["cookie", "form", "query"] }
 
 # ANSI to HTML (D-06)
 ansi-to-html = "0.2"
