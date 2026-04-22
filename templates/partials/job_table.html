@@ -1,5 +1,15 @@
 {% for job in jobs %}
 <tr class="hover:bg-(--cd-bg-hover) border-b border-(--cd-border-subtle)">
+  <td class="py-2 px-4" style="width:44px">
+    <input type="checkbox"
+           id="cd-row-cb-{{ job.id }}"
+           class="cd-row-checkbox"
+           name="job_ids"
+           value="{{ job.id }}"
+           aria-label="Select {{ job.name }}"
+           hx-preserve="true"
+           onclick="__cdBulkOnRowChange()">
+  </td>
   <td class="py-2 px-4">
     <a href="/jobs/{{ job.id }}" class="text-(--cd-text-accent) hover:underline font-bold">{{ job.name }}</a>
   </td>

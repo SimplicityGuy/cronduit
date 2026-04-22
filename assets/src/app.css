@@ -490,4 +490,59 @@
     font-size: var(--cd-text-base);
   }
   .cd-timeline-empty p + p { margin-top: var(--cd-space-2); }
+
+  /* Phase 14: bulk-select chrome (ERG-01, ERG-02). Additive only. */
+
+  .cd-row-checkbox {
+    accent-color: var(--cd-text-accent);
+    cursor: pointer;
+  }
+  .cd-row-checkbox:focus-visible {
+    outline: 2px solid var(--cd-border-focus);
+    outline-offset: 2px;
+  }
+
+  .cd-bulk-bar {
+    position: sticky;
+    top: var(--cd-space-2);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: var(--cd-space-2);
+    background: var(--cd-bg-surface-raised);
+    border: 1px solid var(--cd-border);
+    border-radius: var(--cd-radius-md);
+    padding: var(--cd-space-3) var(--cd-space-4);
+    margin-bottom: var(--cd-space-2);
+  }
+  .cd-bulk-bar[hidden] {
+    display: none;
+  }
+  .cd-bulk-bar-count {
+    color: var(--cd-text-secondary);
+    font-size: var(--cd-text-base);
+  }
+  .cd-bulk-bar-count strong {
+    color: var(--cd-text-primary);
+    font-weight: 700;
+  }
+
+  .cd-btn-secondary.cd-btn-disable-hint:hover {
+    background: var(--cd-status-disabled-bg);
+    border-color: var(--cd-status-disabled);
+    color: var(--cd-status-disabled);
+  }
+  .cd-btn-secondary.cd-btn-disable-hint:active {
+    background: var(--cd-status-disabled-bg);
+    border-color: var(--cd-status-disabled);
+    color: var(--cd-status-disabled);
+    transform: translateY(1px);
+  }
+
+  /* Defensive FORCED ON badge — v1.1 UI never writes override=1; renders only if
+     someone UPDATEs the DB directly. Aliased to --cd-status-running (blue) per D-10. */
+  .cd-badge--forced {
+    color: var(--cd-status-running);
+    background: var(--cd-status-running-bg);
+  }
 }
