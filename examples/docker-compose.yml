@@ -69,7 +69,7 @@
 
 services:
   cronduit:
-    image: ghcr.io/simplicityguy/cronduit:latest
+    image: ${CRONDUIT_IMAGE:-ghcr.io/simplicityguy/cronduit:latest}
     # Join the host docker group so UID 1000 inside the container can
     # read /var/run/docker.sock. Override DOCKER_GID via .env or shell
     # env to match `stat -c %g /var/run/docker.sock` on your host.

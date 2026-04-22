@@ -296,3 +296,50 @@ update-hooks:
         exit 0
     fi
     pre-commit autoupdate
+
+# -------------------- release candidate smoke --------------------
+# DO NOT EDIT — paste recipes VERBATIM. just escapes the Docker `{{.Names}}`
+# format string as `{{ "{{.Names}}" }}` because bare `{{...}}` is reserved for
+# just's own interpolation. Removing the outer `{{ "..." }}` wrapper will make
+# `just reload` fail at parse time with "Unknown identifier `.Names`".
+
+# Bring up the compose stack pinned to v1.1.0-rc.3 for HUMAN-UAT.
+# Phase 14 D-17 / feedback_uat_use_just_commands.
+[group('release')]
+[doc('Bring up the compose stack pinned to v1.1.0-rc.3 for HUMAN-UAT')]
+compose-up-rc3:
+    CRONDUIT_IMAGE=ghcr.io/simplicityguy/cronduit:1.1.0-rc.3 \
+    docker compose -f examples/docker-compose.yml up -d
+
+# Trigger a config reload of the running cronduit by SIGHUP.
+# HUMAN-UAT steps 4 + 7 per D-17.
+[group('release')]
+[doc('Send SIGHUP to the running cronduit process (config reload)')]
+reload:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # NOTE: `{{ "{{.Names}}" }}` is the just-escaped form of Docker's
+    # `{{ "{{.Names}}" }}` (the literal Docker --format token). DO NOT remove
+    # the outer `{{ "..." }}` wrapper — see top-of-group comment.
+    if docker ps --format '{{ "{{.Names}}" }}' | grep -q '^cronduit$'; then
+        docker kill -s HUP cronduit
+        echo "SIGHUP sent to cronduit container"
+    else
+        pkill -HUP cronduit && echo "SIGHUP sent to cronduit process" \
+            || { echo "no running cronduit found"; exit 1; }
+    fi
+
+# Probe the running cronduit /health endpoint and print the status.
+# HUMAN-UAT Step 1 — replaces raw `curl | jq` per Warning #8.
+[group('release')]
+[doc('Curl /health and print .status (expect "healthy")')]
+health:
+    curl -sf http://127.0.0.1:8080/health | jq -r '.status'
+
+# Check key Prometheus metrics. HUMAN-UAT Step 8 — replaces raw curl per Warning #8.
+# Prints scheduler liveness + runs_total series lines only (no noisy full dump).
+[group('release')]
+[doc('Grep /metrics for cronduit_scheduler_up and cronduit_runs_total lines')]
+metrics-check:
+    curl -sf http://127.0.0.1:8080/metrics \
+        | grep -E '^cronduit_scheduler_up\b|^cronduit_runs_total\b'
