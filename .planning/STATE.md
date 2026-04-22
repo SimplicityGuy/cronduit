@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
 status: executing
-stopped_at: Phase 14 UI-SPEC approved
-last_updated: "2026-04-22T19:09:37.688Z"
-last_activity: 2026-04-22 -- Phase 14 planning complete
+stopped_at: Phase 14 Wave 5 complete — paused at HUMAN-UAT gate
+last_updated: "2026-04-22T23:10:00.000Z"
+last_activity: 2026-04-22 -- Phase 14 implementation Waves 0-5 complete; awaiting maintainer UAT before Wave 6 (final flips)
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 51
-  completed_plans: 43
-  percent: 84
+  completed_plans: 50
+  percent: 98
 ---
 
 # Project State
@@ -21,18 +21,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 13 — observability-polish-rc-2
+**Current focus:** Phase 14 — bulk-enable-disable-rc-3-final-v1-1-0-ship
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 13 (observability-polish-rc-2) — EXECUTING
-Plan: 1 of 6
-Status: Ready to execute
-Last activity: 2026-04-22 -- Phase 14 planning complete
+Phase: 14 (bulk-enable-disable-rc-3-final-v1-1-0-ship) — IMPLEMENTATION COMPLETE; PAUSED AT UAT GATE
+Plan: 8 of 9 complete (14-09 final flips blocked on maintainer UAT pass)
+Status: Awaiting maintainer to run `.planning/phases/14-bulk-enable-disable-rc-3-final-v1-1-0-ship/14-HUMAN-UAT.md`
+Last activity: 2026-04-22 -- Phase 14 Waves 0-5 implemented (15/15 SQLite scoreboard tests green); HUMAN-UAT.md authored
 
-Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12; 12.1 inserted)
+Progress: [████████░░] 80% (4 of 5 v1.1 phases implemented — 10, 11, 12, 14 implemented; 12.1 inserted; 14 awaiting UAT + final flip)
 
 ## v1.1 Phase Shape
 
