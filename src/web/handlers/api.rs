@@ -4,10 +4,13 @@
 //! D-10: Response includes HX-Trigger header for toast notification.
 //! UI-12: Manual runs recorded with trigger='manual'.
 
+use std::collections::BTreeSet;
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum_extra::extract::CookieJar;
+use axum_extra::extract::Form as ExtraForm;
 use axum_htmx::HxEvent;
 use axum_htmx::HxResponseTrigger;
 use serde::Deserialize;
@@ -21,6 +24,26 @@ use crate::web::csrf;
 #[derive(Deserialize)]
 pub struct CsrfForm {
     csrf_token: String,
+}
+
+/// Phase 14 ERG-01 / ERG-02 — POST /api/jobs/bulk-toggle form body.
+///
+/// Use with `axum_extra::extract::Form<BulkToggleForm>` (NOT stock
+/// `axum::Form`). The bulk-toggle UI submits one repeated `job_ids=` key per
+/// ticked row; stock `axum::Form` is `serde_urlencoded`-backed and rejects
+/// repeated keys for `Vec<T>` (Landmine §1). `axum_extra::Form` is backed by
+/// `serde_html_form` which collects them.
+///
+/// `#[serde(default)]` on `job_ids` is load-bearing (Landmine §9): without
+/// it, a POST that submits zero `job_ids` keys produces a serde-side
+/// `MissingField` rejection BEFORE the handler runs, so the operator-
+/// friendly "No jobs selected." toast never fires.
+#[derive(Deserialize)]
+pub struct BulkToggleForm {
+    csrf_token: String,
+    action: String,
+    #[serde(default)]
+    job_ids: Vec<i64>,
 }
 
 pub async fn run_now(
@@ -460,6 +483,203 @@ pub async fn stop_run(
         )
             .into_response(),
     }
+}
+
+/// POST /api/jobs/bulk-toggle — set `enabled_override` for multiple jobs at once.
+///
+/// Phase 14 ERG-01 (bulk disable) + ERG-02 (bulk enable / override clear).
+///
+/// Extractor order is enforced by axum 0.8: every `FromRequestParts` extractor
+/// must come before the body-consuming `FromRequest` extractor (here:
+/// `ExtraForm`). The combined `FromRequestParts` + `FromRequest` bundle
+/// produces hard-to-read trait-bound errors without `#[axum::debug_handler]`
+/// (Landmine §8) — keep the attribute.
+///
+/// Behavior:
+/// 1. CSRF (cookie + form double-submit) — checked BEFORE any DB work
+///    (Landmine §5). Mismatch → 403 + sticky error toast.
+/// 2. Action validation — `disable` → `Some(0)`, `enable` → `None`. Anything
+///    else → 400 + error toast (no implicit default; D-11 / T-14-04-08).
+/// 3. Empty `job_ids` rejection — explicit 400 + error toast (UI-SPEC
+///    Copywriting Contract resolution).
+/// 4. Dedupe via `BTreeSet<i64>` (D-12a) so duplicate keys collapse before
+///    `bulk_set_override` runs and `rows_affected` reflects unique ids.
+/// 5. Running-count snapshot from `state.active_runs` — no extra DB query
+///    (Research Open Question 2 resolution).
+/// 6. DB UPDATE via `queries::bulk_set_override` — single transaction.
+/// 7. `SchedulerCmd::Reload` dispatched AFTER the DB UPDATE commits
+///    (Landmine §6) — reload result is intentionally not awaited; the toast
+///    reports `rows_affected` from the UPDATE, not the reload diff.
+/// 8. Compose toast per UI-SPEC Copywriting Contract (singular/plural rules,
+///    optional running-job clause on disable, optional `(K not found)` suffix
+///    when selection_size > rows_affected).
+#[axum::debug_handler]
+pub async fn bulk_toggle(
+    State(state): State<AppState>,
+    cookies: CookieJar,
+    ExtraForm(form): ExtraForm<BulkToggleForm>,
+) -> impl IntoResponse {
+    // 1. CSRF — BEFORE any DB work (Landmine §5 / T-14-04-01).
+    let cookie_token = cookies
+        .get(csrf::CSRF_COOKIE_NAME)
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
+    if !csrf::validate_csrf(&cookie_token, &form.csrf_token) {
+        return error_bulk_toast(
+            StatusCode::FORBIDDEN,
+            "Session expired — refresh and try again.",
+        );
+    }
+
+    // 2. Validate action (D-11 / T-14-04-08 — no default branch).
+    let new_override: Option<i64> = match form.action.as_str() {
+        "disable" => Some(0),
+        "enable" => None,
+        _ => {
+            return error_bulk_toast(StatusCode::BAD_REQUEST, "Invalid bulk action.");
+        }
+    };
+
+    // 3. Reject empty job_ids (UI-SPEC Copywriting; Landmine §9 + #[serde(default)]).
+    if form.job_ids.is_empty() {
+        return error_bulk_toast(StatusCode::BAD_REQUEST, "No jobs selected.");
+    }
+
+    // 4. Dedupe (D-12a) — BTreeSet preserves uniqueness AND yields a sorted
+    //    Vec so the SQL bind list is deterministic.
+    let ids: Vec<i64> = form
+        .job_ids
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    // 5. Running-count snapshot from active_runs (Research Open Q2). The
+    //    RwLock read is cheap and avoids the per-id DB query the planner
+    //    explicitly rejected. Only consulted for the verbose-toast suffix on
+    //    the disable path (UI-SPEC: clause omitted on enable).
+    let running_count = {
+        let runs = state.active_runs.read().await;
+        ids.iter().filter(|id| runs.contains_key(id)).count() as u64
+    };
+
+    // 6. DB UPDATE (awaited) — bulk_set_override is the writer-pool helper
+    //    introduced by Plan 14-03. Empty `ids` is impossible here (Step 3
+    //    rejected above), but the helper itself short-circuits to Ok(0) on
+    //    empty input as a defensive belt-and-suspenders.
+    let updated = match queries::bulk_set_override(&state.pool, &ids, new_override).await {
+        Ok(n) => n,
+        Err(err) => {
+            tracing::error!(
+                target: "cronduit.web",
+                error = %err,
+                action = %form.action,
+                ids_len = ids.len(),
+                "bulk_toggle: UPDATE failed"
+            );
+            return error_bulk_toast(StatusCode::INTERNAL_SERVER_ERROR, "Database error.");
+        }
+    };
+    let not_found = (ids.len() as u64).saturating_sub(updated);
+
+    // 7. Reload AFTER DB commit (Landmine §6 / T-14-04-04). The handler does
+    //    NOT await the reload result — the toast reports rows_affected from
+    //    the UPDATE, not the reload diff. Channel-send failure means the
+    //    scheduler is shutting down → 503 + sticky error toast (T-14-04-05).
+    let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+    if state
+        .cmd_tx
+        .send(SchedulerCmd::Reload {
+            response_tx: resp_tx,
+        })
+        .await
+        .is_err()
+    {
+        return error_bulk_toast(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Scheduler is shutting down — try again shortly.",
+        );
+    }
+    drop(resp_rx); // explicit: we don't await the reload result.
+
+    tracing::info!(
+        target: "cronduit.web",
+        action = %form.action,
+        selection_size = ids.len(),
+        rows_affected = updated,
+        not_found,
+        running_count,
+        "bulk_toggle: UPDATE committed; Reload dispatched"
+    );
+
+    // 8. Compose toast per UI-SPEC Copywriting Contract.
+    let message = build_bulk_toast_message(updated, new_override, running_count, not_found);
+    let event = HxEvent::new_with_data(
+        "showToast",
+        json!({"message": message, "level": "info"}),
+    )
+    .expect("toast event serialization");
+    (HxResponseTrigger::normal([event]), StatusCode::OK).into_response()
+}
+
+/// Build a sticky (`duration: 0`) error-toast response carrying the supplied
+/// status code. Used by every early-return branch of `bulk_toggle` so the
+/// operator sees a recognizable message instead of an opaque axum extractor
+/// rejection or a bare 4xx body.
+fn error_bulk_toast(status: StatusCode, message: &str) -> axum::response::Response {
+    let event = HxEvent::new_with_data(
+        "showToast",
+        json!({"message": message, "level": "error", "duration": 0}),
+    )
+    .expect("toast event serialization");
+    (HxResponseTrigger::normal([event]), status).into_response()
+}
+
+/// Compose the bulk-toggle success toast per UI-SPEC § Copywriting Contract.
+///
+/// Inputs:
+/// - `updated` — rows actually UPDATEd by the SQL (`rows_affected`).
+/// - `new_override` — `Some(0)` for action=disable, `None` for action=enable.
+///   `Some(1)` is reserved (UI never writes it; helper still handles it
+///   defensively for completeness).
+/// - `running_count` — jobs from the selection currently in `active_runs`.
+///   Only surfaces in the toast on the disable path.
+/// - `not_found` — `selection_size - updated`; surfaced as a `(K not found)`
+///   suffix when non-zero (D-12).
+///
+/// Examples (from UI-SPEC):
+/// - `(updated=2, new_override=Some(0), running=0, not_found=0)` → `"2 jobs disabled."`
+/// - `(updated=3, new_override=Some(0), running=1, not_found=0)` → `"3 jobs disabled. 1 currently-running job will complete naturally."`
+/// - `(updated=2, new_override=Some(0), running=0, not_found=1)` → `"2 jobs disabled. (1 not found)"`
+/// - `(updated=1, new_override=Some(0), running=0, not_found=0)` → `"1 job disabled."` (singular)
+/// - `(updated=2, new_override=None,    running=0, not_found=0)` → `"2 jobs: override cleared."`
+fn build_bulk_toast_message(
+    updated: u64,
+    new_override: Option<i64>,
+    running_count: u64,
+    not_found: u64,
+) -> String {
+    let noun_updated = if updated == 1 { "job" } else { "jobs" };
+    let mut msg = match new_override {
+        Some(0) => format!("{} {} disabled.", updated, noun_updated),
+        None => format!("{} {}: override cleared.", updated, noun_updated),
+        Some(_) => format!("{} {}: override set.", updated, noun_updated), // reserved
+    };
+    // Conditional second sentence: running-job note applies only on disable
+    // (UI-SPEC Copywriting Contract — clause omitted on enable).
+    if matches!(new_override, Some(0)) && running_count > 0 {
+        let running_noun = if running_count == 1 { "job" } else { "jobs" };
+        msg.push_str(&format!(
+            " {} currently-running {} will complete naturally.",
+            running_count, running_noun
+        ));
+    }
+    // Not-found suffix (D-12) — appended LAST so it follows the running-job
+    // clause on the disable+running+not_found scenario per UI-SPEC row 4.
+    if not_found > 0 {
+        msg.push_str(&format!(" ({} not found)", not_found));
+    }
+    msg
 }
 
 #[derive(Deserialize)]
