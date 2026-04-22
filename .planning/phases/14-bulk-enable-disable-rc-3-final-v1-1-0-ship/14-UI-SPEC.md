@@ -1,10 +1,11 @@
 ---
 phase: 14
 slug: bulk-enable-disable-rc-3-final-v1-1-0-ship
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-04-22
+reviewed_at: 2026-04-22
 ---
 
 # Phase 14 — UI Design Contract (Bulk Enable/Disable, rc.3 + Final v1.1.0 Ship)
