@@ -35,11 +35,52 @@
   <input type="hidden" name="order" value="{{ order }}">
 </div>
 
+<!-- Bulk-toggle CSRF (shared by the action-bar buttons; per-row forms have their own) -->
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+<!-- Sticky bulk-action bar (ERG-01 D-02); hidden until at least one row checkbox is ticked. -->
+<div id="cd-bulk-action-bar" class="cd-bulk-bar" hidden>
+  <span class="cd-bulk-bar-count"><strong id="cd-bulk-count">0</strong> selected</span>
+  <button type="button"
+          class="cd-btn-secondary cd-btn-disable-hint text-sm py-1 px-3"
+          hx-post="/api/jobs/bulk-toggle"
+          hx-vals='{"action":"disable"}'
+          hx-include=".cd-row-checkbox:checked, [name='csrf_token']"
+          hx-swap="none"
+          hx-on::after-request="__cdBulkUpdateBar()">
+    Disable selected
+  </button>
+  <button type="button"
+          class="cd-btn-secondary text-sm py-1 px-3"
+          hx-post="/api/jobs/bulk-toggle"
+          hx-vals='{"action":"enable"}'
+          hx-include=".cd-row-checkbox:checked, [name='csrf_token']"
+          hx-swap="none"
+          hx-on::after-request="__cdBulkUpdateBar()">
+    Enable selected
+  </button>
+  <button type="button"
+          class="cd-btn-secondary text-sm py-1 px-3"
+          aria-label="Clear selection"
+          onclick="__cdBulkClearSelection()">
+    Clear
+  </button>
+</div>
+
 <!-- Job table -->
 <div class="overflow-x-auto">
   <table style="width:100%;border-collapse:collapse">
     <thead>
       <tr style="background:var(--cd-bg-surface-raised)">
+        <!-- Select all (Phase 14 — ERG-01 / D-01 / D-03) -->
+        <th class="text-left py-2 px-4" style="min-width:44px;width:44px" scope="col">
+          <span class="sr-only">Select row</span>
+          <input type="checkbox"
+                 id="cd-select-all"
+                 class="cd-row-checkbox"
+                 aria-label="Select all visible jobs"
+                 onclick="__cdBulkSelectAll(this.checked)">
+        </th>
         <!-- Name (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "name" %};color:var(--cd-text-accent){% endif %}">
           <a href="?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}"
@@ -98,4 +139,54 @@
   </table>
 </div>
 {% endif %}
+
+<script>
+function __cdBulkOnRowChange() {
+  __cdBulkUpdateBar();
+  __cdBulkUpdateIndeterminate();
+}
+function __cdBulkUpdateBar() {
+  const n = document.querySelectorAll('.cd-row-checkbox:checked:not(#cd-select-all)').length;
+  const bar = document.getElementById('cd-bulk-action-bar');
+  const countEl = document.getElementById('cd-bulk-count');
+  if (!bar || !countEl) return;
+  countEl.textContent = n;
+  if (n === 0) bar.setAttribute('hidden', '');
+  else bar.removeAttribute('hidden');
+}
+function __cdBulkUpdateIndeterminate() {
+  const all = document.querySelectorAll('.cd-row-checkbox:not(#cd-select-all)');
+  const checked = document.querySelectorAll('.cd-row-checkbox:checked:not(#cd-select-all)');
+  const selectAll = document.getElementById('cd-select-all');
+  if (!selectAll) return;
+  if (checked.length === 0) {
+    selectAll.indeterminate = false;
+    selectAll.checked = false;
+  } else if (checked.length === all.length) {
+    selectAll.indeterminate = false;
+    selectAll.checked = true;
+  } else {
+    selectAll.indeterminate = true;
+    selectAll.checked = false;
+  }
+}
+function __cdBulkSelectAll(on) {
+  document.querySelectorAll('.cd-row-checkbox:not(#cd-select-all)').forEach(cb => {
+    cb.checked = on;
+  });
+  __cdBulkUpdateBar();
+  __cdBulkUpdateIndeterminate();
+}
+function __cdBulkClearSelection() {
+  document.querySelectorAll('.cd-row-checkbox:checked').forEach(cb => { cb.checked = false; });
+  __cdBulkUpdateBar();
+  __cdBulkUpdateIndeterminate();
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail && e.detail.target && e.detail.target.id === 'job-table-body') {
+    __cdBulkUpdateBar();
+    __cdBulkUpdateIndeterminate();
+  }
+});
+</script>
 {% endblock %}
