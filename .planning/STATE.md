@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
 status: executing
-stopped_at: Phase 14 Wave 5 complete — paused at HUMAN-UAT gate
-last_updated: "2026-04-22T23:10:00.000Z"
-last_activity: 2026-04-22 -- Phase 14 implementation Waves 0-5 complete; awaiting maintainer UAT before Wave 6 (final flips)
+stopped_at: Phase 14 shipped — PR #38 (stacked on #37); awaiting UAT before Wave 6
+last_updated: "2026-04-22T23:30:00.000Z"
+last_activity: 2026-04-22 -- Phase 14 PR #38 opened (stacked on quick-fix #37); awaiting maintainer UAT before Wave 6 (final flips)
 progress:
   total_phases: 6
   completed_phases: 5
