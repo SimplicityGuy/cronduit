@@ -520,6 +520,7 @@ mod tests {
             config_json: config_json.to_string(),
             config_hash: "testhash".to_string(),
             enabled: true,
+            enabled_override: None,
             timeout_secs: 3600,
             created_at: String::new(),
             updated_at: String::new(),
