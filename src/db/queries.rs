@@ -131,20 +131,26 @@ pub async fn upsert_job(
 
 /// Disable all jobs whose names are NOT in `active_names`.
 /// Returns the count of rows that were disabled.
+///
+/// Phase 14 ERG-04 (symmetric clear): when a job leaves the config the row
+/// loses BOTH the config-side `enabled` flag AND any UI-side `enabled_override`
+/// — otherwise a previously bulk-disabled job could "stick" through reload.
 pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> anyhow::Result<u64> {
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             if active_names.is_empty() {
-                let result = sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1")
-                    .execute(p)
-                    .await?;
+                let result = sqlx::query(
+                    "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1",
+                )
+                .execute(p)
+                .await?;
                 return Ok(result.rows_affected());
             }
             // SQLite doesn't support array binds; build a parameterized IN list.
             let placeholders: Vec<String> =
                 (1..=active_names.len()).map(|i| format!("?{i}")).collect();
             let sql = format!(
-                "UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND name NOT IN ({})",
+                "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1 AND name NOT IN ({})",
                 placeholders.join(", ")
             );
             let mut query = sqlx::query(&sql);
@@ -156,14 +162,16 @@ pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> any
         }
         PoolRef::Postgres(p) => {
             if active_names.is_empty() {
-                let result = sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1")
-                    .execute(p)
-                    .await?;
+                let result = sqlx::query(
+                    "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1",
+                )
+                .execute(p)
+                .await?;
                 return Ok(result.rows_affected());
             }
             // Postgres supports ANY($1) with array bind.
             let result = sqlx::query(
-                "UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND NOT (name = ANY($1))",
+                "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1 AND NOT (name = ANY($1))",
             )
             .bind(active_names)
             .execute(p)
@@ -174,11 +182,15 @@ pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> any
 }
 
 /// Fetch all enabled jobs from the database.
+///
+/// Phase 14 DB-14 (tri-state filter): a row counts as "enabled" only if its
+/// config-side `enabled = 1` AND its UI-side override is not the explicit
+/// disable sentinel (`Some(0)`). NULL or `Some(1)` both pass through.
 pub async fn get_enabled_jobs(pool: &DbPool) -> anyhow::Result<Vec<DbJob>> {
     match pool.reader() {
         PoolRef::Sqlite(p) => {
             let rows = sqlx::query_as::<_, SqliteDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1 AND (enabled_override IS NULL OR enabled_override = 1)",
             )
             .fetch_all(p)
             .await?;
@@ -186,7 +198,7 @@ pub async fn get_enabled_jobs(pool: &DbPool) -> anyhow::Result<Vec<DbJob>> {
         }
         PoolRef::Postgres(p) => {
             let rows = sqlx::query_as::<_, PgDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1 AND (enabled_override IS NULL OR enabled_override = 1)",
             )
             .fetch_all(p)
             .await?;
