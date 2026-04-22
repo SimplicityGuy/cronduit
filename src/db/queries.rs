@@ -131,20 +131,26 @@ pub async fn upsert_job(
 
 /// Disable all jobs whose names are NOT in `active_names`.
 /// Returns the count of rows that were disabled.
+///
+/// Phase 14 ERG-04 (symmetric clear): when a job leaves the config the row
+/// loses BOTH the config-side `enabled` flag AND any UI-side `enabled_override`
+/// — otherwise a previously bulk-disabled job could "stick" through reload.
 pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> anyhow::Result<u64> {
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             if active_names.is_empty() {
-                let result = sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1")
-                    .execute(p)
-                    .await?;
+                let result = sqlx::query(
+                    "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1",
+                )
+                .execute(p)
+                .await?;
                 return Ok(result.rows_affected());
             }
             // SQLite doesn't support array binds; build a parameterized IN list.
             let placeholders: Vec<String> =
                 (1..=active_names.len()).map(|i| format!("?{i}")).collect();
             let sql = format!(
-                "UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND name NOT IN ({})",
+                "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1 AND name NOT IN ({})",
                 placeholders.join(", ")
             );
             let mut query = sqlx::query(&sql);
@@ -156,14 +162,16 @@ pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> any
         }
         PoolRef::Postgres(p) => {
             if active_names.is_empty() {
-                let result = sqlx::query("UPDATE jobs SET enabled = 0 WHERE enabled = 1")
-                    .execute(p)
-                    .await?;
+                let result = sqlx::query(
+                    "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1",
+                )
+                .execute(p)
+                .await?;
                 return Ok(result.rows_affected());
             }
             // Postgres supports ANY($1) with array bind.
             let result = sqlx::query(
-                "UPDATE jobs SET enabled = 0 WHERE enabled = 1 AND NOT (name = ANY($1))",
+                "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1 AND NOT (name = ANY($1))",
             )
             .bind(active_names)
             .execute(p)
@@ -173,12 +181,61 @@ pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> any
     }
 }
 
+/// Set `enabled_override` to a single value for multiple jobs in one UPDATE (Phase 14 DB-14).
+///
+/// `new_override`:
+///   - `Some(0)` → force disabled (written by POST /api/jobs/bulk-toggle with action=disable)
+///   - `Some(1)` → force enabled (reserved — v1.1 UI never writes this)
+///   - `None`    → clear override (written by action=enable and the settings per-row Clear)
+///
+/// Returns the count of rows updated. Caller computes
+/// `(not_found = ids.len() - rows_affected)` for partial-failure toast (D-12).
+pub async fn bulk_set_override(
+    pool: &DbPool,
+    ids: &[i64],
+    new_override: Option<i64>,
+) -> anyhow::Result<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            // SQLite: ?1 binds new_override; ids use ?2..?(N+1).
+            let placeholders: Vec<String> =
+                (2..=ids.len() + 1).map(|i| format!("?{i}")).collect();
+            let sql = format!(
+                "UPDATE jobs SET enabled_override = ?1 WHERE id IN ({})",
+                placeholders.join(", ")
+            );
+            let mut q = sqlx::query(&sql).bind(new_override);
+            for id in ids {
+                q = q.bind(id);
+            }
+            let result = q.execute(p).await?;
+            Ok(result.rows_affected())
+        }
+        PoolRef::Postgres(p) => {
+            let result =
+                sqlx::query("UPDATE jobs SET enabled_override = $1 WHERE id = ANY($2)")
+                    .bind(new_override)
+                    .bind(ids)
+                    .execute(p)
+                    .await?;
+            Ok(result.rows_affected())
+        }
+    }
+}
+
 /// Fetch all enabled jobs from the database.
+///
+/// Phase 14 DB-14 (tri-state filter): a row counts as "enabled" only if its
+/// config-side `enabled = 1` AND its UI-side override is not the explicit
+/// disable sentinel (`Some(0)`). NULL or `Some(1)` both pass through.
 pub async fn get_enabled_jobs(pool: &DbPool) -> anyhow::Result<Vec<DbJob>> {
     match pool.reader() {
         PoolRef::Sqlite(p) => {
             let rows = sqlx::query_as::<_, SqliteDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1 AND (enabled_override IS NULL OR enabled_override = 1)",
             )
             .fetch_all(p)
             .await?;
@@ -186,7 +243,7 @@ pub async fn get_enabled_jobs(pool: &DbPool) -> anyhow::Result<Vec<DbJob>> {
         }
         PoolRef::Postgres(p) => {
             let rows = sqlx::query_as::<_, PgDbJobRow>(
-                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1",
+                "SELECT id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, enabled_override, timeout_secs, created_at, updated_at FROM jobs WHERE enabled = 1 AND (enabled_override IS NULL OR enabled_override = 1)",
             )
             .fetch_all(p)
             .await?;
@@ -265,7 +322,13 @@ struct PgDbJobRow {
     job_type: String,
     config_json: String,
     config_hash: String,
-    enabled: bool,
+    // `jobs.enabled` is BIGINT (not BOOLEAN) on Postgres — see
+    // migrations/postgres/20260410_000000_initial.up.sql L15-17. Decode as i64
+    // and convert in the From impl, mirroring the SQLite (i32) pattern above.
+    // Without this, every PgDbJobRow-backed query (get_enabled_jobs,
+    // get_job_by_name, get_job_by_id, get_overridden_jobs) panics at decode
+    // time with "Rust type `bool` is not compatible with SQL type `INT8`".
+    enabled: i64,
     enabled_override: Option<i64>,
     timeout_secs: i64,
     created_at: String,
@@ -282,7 +345,7 @@ impl From<PgDbJobRow> for DbJob {
             job_type: r.job_type,
             config_json: r.config_json,
             config_hash: r.config_hash,
-            enabled: r.enabled,
+            enabled: r.enabled != 0,
             enabled_override: r.enabled_override,
             timeout_secs: r.timeout_secs,
             created_at: r.created_at,
@@ -927,6 +990,32 @@ pub async fn get_job_by_id(pool: &DbPool, id: i64) -> anyhow::Result<Option<DbJo
             .fetch_optional(p)
             .await?;
             Ok(row.map(|r| r.into()))
+        }
+    }
+}
+
+/// Fetch all jobs whose `enabled_override` is non-NULL, alphabetical by name.
+///
+/// Phase 14 ERG-03 / D-10b: powers the Settings page "Currently Overridden"
+/// section so operators can see (and per-row clear) every job that has been
+/// bulk-toggled away from its config-side `enabled` flag.
+pub async fn get_overridden_jobs(pool: &DbPool) -> anyhow::Result<Vec<DbJob>> {
+    const SELECT: &str = "SELECT id, name, schedule, resolved_schedule, job_type, \
+        config_json, config_hash, enabled, enabled_override, timeout_secs, \
+        created_at, updated_at FROM jobs WHERE enabled_override IS NOT NULL \
+        ORDER BY name ASC";
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let rows = sqlx::query_as::<_, SqliteDbJobRow>(SELECT)
+                .fetch_all(p)
+                .await?;
+            Ok(rows.into_iter().map(|r| r.into()).collect())
+        }
+        PoolRef::Postgres(p) => {
+            let rows = sqlx::query_as::<_, PgDbJobRow>(SELECT)
+                .fetch_all(p)
+                .await?;
+            Ok(rows.into_iter().map(|r| r.into()).collect())
         }
     }
 }

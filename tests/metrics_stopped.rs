@@ -91,6 +91,7 @@ async fn seed_command_job(pool: &DbPool, name: &str, command_str: &str) -> DbJob
         config_json: format!(r#"{{"command":{}}}"#, serde_json::json!(command_str)),
         config_hash: "metrics-stopped-hash".to_string(),
         enabled: true,
+        enabled_override: None,
         timeout_secs: 3600,
         created_at: String::new(),
         updated_at: String::new(),
