@@ -482,6 +482,10 @@ pub struct DashboardJob {
     pub last_status: Option<String>,
     pub last_run_time: Option<String>,
     pub last_trigger: Option<String>,
+    /// Phase 14 DB-14 tri-state override (None = config-only; Some(0) = forced disabled;
+    /// Some(1) = forced enabled — defensive only). Carried for downstream view rendering
+    /// (Plan 05 surfaces this on the dashboard chrome).
+    pub enabled_override: Option<i64>,
 }
 
 /// A row from job_runs for the run history view.
@@ -560,7 +564,7 @@ pub async fn get_dashboard_jobs(
 
     let base_sql = if has_filter {
         format!(
-            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
                       lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                FROM jobs j
                LEFT JOIN (
@@ -573,7 +577,7 @@ pub async fn get_dashboard_jobs(
         )
     } else {
         format!(
-            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
                       lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                FROM jobs j
                LEFT JOIN (
@@ -606,6 +610,7 @@ pub async fn get_dashboard_jobs(
                     last_status: r.get("last_status"),
                     last_run_time: r.get("last_run_time"),
                     last_trigger: r.get("last_trigger"),
+                    enabled_override: r.try_get("enabled_override").ok().flatten(),
                 })
                 .collect())
         }
@@ -613,7 +618,7 @@ pub async fn get_dashboard_jobs(
             // Postgres uses $1 instead of ?1
             let pg_sql = if has_filter {
                 format!(
-                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
                               lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                        FROM jobs j
                        LEFT JOIN (
@@ -626,7 +631,7 @@ pub async fn get_dashboard_jobs(
                 )
             } else {
                 format!(
-                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs,
+                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
                               lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                        FROM jobs j
                        LEFT JOIN (
@@ -656,6 +661,7 @@ pub async fn get_dashboard_jobs(
                     last_status: r.get("last_status"),
                     last_run_time: r.get("last_run_time"),
                     last_trigger: r.get("last_trigger"),
+                    enabled_override: r.try_get("enabled_override").ok().flatten(),
                 })
                 .collect())
         }
