@@ -433,7 +433,14 @@
   }
 
   /* === Phase 13 Rich tooltip (D-09) === */
-  .cd-timeline-bar { position: relative; }
+  /* Tooltip anchors to `.cd-timeline-bar` via its own `position: absolute`
+     (line 402). A redundant `.cd-timeline-bar { position: relative; }` rule
+     used to live here and silently clobbered the earlier absolute
+     positioning — with many accumulated runs, bars flow vertically instead
+     of stacking on the stripe, producing a diagonal cascade (Phase 14 UAT
+     rc.5 gap). `position: absolute` elements already establish a
+     positioning context for their descendants, so the tooltip does not
+     need the bar to be `position: relative`. */
   .cd-tooltip {
     visibility: hidden;
     opacity: 0;
