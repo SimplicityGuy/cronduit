@@ -35,8 +35,12 @@
   <input type="hidden" name="order" value="{{ order }}">
 </div>
 
-<!-- Bulk-toggle CSRF (shared by the action-bar buttons; per-row forms have their own) -->
-<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<!-- Bulk-toggle CSRF (shared by the action-bar buttons; per-row forms have their
+     own). The id is LOAD-BEARING: hx-include targets `#cd-bulk-csrf` and NOT
+     `[name='csrf_token']` because a name-based selector also matches the 6+
+     per-row "Run Now" form CSRFs, making the POST body contain seven
+     `csrf_token` values → 422 from serde_html_form. -->
+<input type="hidden" id="cd-bulk-csrf" name="csrf_token" value="{{ csrf_token }}">
 
 <!-- Sticky bulk-action bar (ERG-01 D-02); hidden until at least one row checkbox is ticked. -->
 <div id="cd-bulk-action-bar" class="cd-bulk-bar" hidden>
@@ -45,7 +49,7 @@
           class="cd-btn-secondary cd-btn-disable-hint text-sm py-1 px-3"
           hx-post="/api/jobs/bulk-toggle"
           hx-vals='{"action":"disable"}'
-          hx-include=".cd-row-checkbox:checked, [name='csrf_token']"
+          hx-include=".cd-row-checkbox:checked, #cd-bulk-csrf"
           hx-swap="none"
           hx-on::after-request="__cdBulkUpdateBar()">
     Disable selected
@@ -54,7 +58,7 @@
           class="cd-btn-secondary text-sm py-1 px-3"
           hx-post="/api/jobs/bulk-toggle"
           hx-vals='{"action":"enable"}'
-          hx-include=".cd-row-checkbox:checked, [name='csrf_token']"
+          hx-include=".cd-row-checkbox:checked, #cd-bulk-csrf"
           hx-swap="none"
           hx-on::after-request="__cdBulkUpdateBar()">
     Enable selected
@@ -72,9 +76,9 @@
   <table style="width:100%;border-collapse:collapse">
     <thead>
       <tr style="background:var(--cd-bg-surface-raised)">
-        <!-- Select all (Phase 14 — ERG-01 / D-01 / D-03) -->
+        <!-- Select all (Phase 14 — ERG-01 / D-01 / D-03).
+             No visible column label; the checkbox's own aria-label handles a11y. -->
         <th class="text-left py-2 px-4" style="min-width:44px;width:44px" scope="col">
-          <span class="sr-only">Select row</span>
           <input type="checkbox"
                  id="cd-select-all"
                  class="cd-row-checkbox"

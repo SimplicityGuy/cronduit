@@ -14,6 +14,7 @@ use askama::Template;
 use askama_web::WebTemplateExt;
 use axum::extract::{Query, State};
 use axum::response::IntoResponse;
+use axum_htmx::HxRequest;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use chrono_tz::Tz;
 use serde::Deserialize;
@@ -83,11 +84,24 @@ struct TimelinePage {
     truncated: bool,
 }
 
+/// Partial rendered for the 30s HTMX poll. Matches the inner contents of
+/// `#timeline-body` only — no outer nav / heading / pills. Without this,
+/// `hx-get="/timeline"` returned the full page and nested the whole layout
+/// inside the timeline region on every poll (Phase 14 UAT rc.3 gap 2).
+#[derive(Template)]
+#[template(path = "partials/timeline_body.html")]
+struct TimelinePartial {
+    window: String,
+    jobs: Vec<TimelineJobRow>,
+    axis_ticks: Vec<TimelineAxisTick>,
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
 pub async fn timeline(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     Query(params): Query<TimelineParams>,
 ) -> impl IntoResponse {
@@ -207,14 +221,29 @@ pub async fn timeline(
         });
     }
 
-    TimelinePage {
-        window: window.to_string(),
-        jobs,
-        axis_ticks,
-        truncated,
+    // HTMX polls (every 30s) must receive the partial only — returning the
+    // full page here nests `<nav>` + `<h1>` + `<div id="timeline-body">`
+    // inside the existing `#timeline-body` div, and each subsequent poll
+    // nests again (Phase 14 UAT rc.3 gap 2). Direct browser navigation still
+    // gets the full page.
+    if is_htmx {
+        TimelinePartial {
+            window: window.to_string(),
+            jobs,
+            axis_ticks,
+        }
+        .into_web_template()
+        .into_response()
+    } else {
+        TimelinePage {
+            window: window.to_string(),
+            jobs,
+            axis_ticks,
+            truncated,
+        }
+        .into_web_template()
+        .into_response()
     }
-    .into_web_template()
-    .into_response()
 }
 
 // ---------------------------------------------------------------------------
