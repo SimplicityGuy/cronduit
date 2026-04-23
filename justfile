@@ -321,9 +321,21 @@ reload:
     # NOTE: `{{ "{{.Names}}" }}` is the just-escaped form of Docker's
     # `{{ "{{.Names}}" }}` (the literal Docker --format token). DO NOT remove
     # the outer `{{ "..." }}` wrapper — see top-of-group comment.
-    if docker ps --format '{{ "{{.Names}}" }}' | grep -q '^cronduit$'; then
-        docker kill -s HUP cronduit
-        echo "SIGHUP sent to cronduit container"
+    #
+    # Resolve the container name. Accept either the literal `cronduit`
+    # (if the operator set `container_name:` explicitly) OR a compose-named
+    # container that carries our project's cronduit service — the stock
+    # `examples/docker-compose.yml` produces `examples-cronduit-1`
+    # (v2 hyphen form) or `examples_cronduit_1` (v1 underscore form).
+    # Anchoring the grep at just `cronduit` caught only the former and
+    # broke HUMAN-UAT Steps 4 + 7 under a default `docker compose up`
+    # (Phase 14 UAT rc.5 gap).
+    CRONDUIT_CID=$(docker ps --format '{{ "{{.Names}}" }}' \
+        | grep -E '^(cronduit|.*[-_]cronduit[-_][0-9]+)$' \
+        | head -1 || true)
+    if [ -n "${CRONDUIT_CID}" ]; then
+        docker kill -s HUP "${CRONDUIT_CID}"
+        echo "SIGHUP sent to cronduit container (${CRONDUIT_CID})"
     else
         pkill -HUP cronduit && echo "SIGHUP sent to cronduit process" \
             || { echo "no running cronduit found"; exit 1; }
