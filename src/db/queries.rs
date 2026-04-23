@@ -612,7 +612,7 @@ pub async fn get_dashboard_jobs(
                                   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                            FROM job_runs
                        ) lr ON lr.job_id = j.id AND lr.rn = 1
-                       WHERE j.enabled = true AND LOWER(j.name) LIKE $1
+                       WHERE j.enabled = 1 AND LOWER(j.name) LIKE $1
                        {order_clause}"#
                 )
             } else {
@@ -625,7 +625,7 @@ pub async fn get_dashboard_jobs(
                                   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                            FROM job_runs
                        ) lr ON lr.job_id = j.id AND lr.rn = 1
-                       WHERE j.enabled = true
+                       WHERE j.enabled = 1
                        {order_clause}"#
                 )
             };

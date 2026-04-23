@@ -118,7 +118,11 @@ Three Phase 9 UAT items from v1.0 are accepted as deferred to natural post-merge
 
 ### Quick Tasks Completed
 
-_(None during v1.1 so far. v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE-AUDIT.md`.)_
+| ID | Date | Description | Commits | Reference |
+|----|------|-------------|---------|-----------|
+| 260421-nn3 | 2026-04-22 | Fix `get_dashboard_jobs` Postgres `j.enabled = true` BIGINT bug (queries.rs lines 615 + 628) + add Postgres regression test `tests/dashboard_jobs_pg.rs` mirroring v13_timeline_explain harness. Closes the deferred item logged in Phase 13 plan 06. | `07d81bb`, `7cb1a10`, `7917502` | `.planning/quick/260421-nn3-fix-get-dashboard-jobs-postgres-j-enable/` |
+
+v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE-AUDIT.md`.
 
 ## Session Continuity
 
