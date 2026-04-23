@@ -201,8 +201,7 @@ pub async fn bulk_set_override(
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             // SQLite: ?1 binds new_override; ids use ?2..?(N+1).
-            let placeholders: Vec<String> =
-                (2..=ids.len() + 1).map(|i| format!("?{i}")).collect();
+            let placeholders: Vec<String> = (2..=ids.len() + 1).map(|i| format!("?{i}")).collect();
             let sql = format!(
                 "UPDATE jobs SET enabled_override = ?1 WHERE id IN ({})",
                 placeholders.join(", ")
@@ -215,12 +214,11 @@ pub async fn bulk_set_override(
             Ok(result.rows_affected())
         }
         PoolRef::Postgres(p) => {
-            let result =
-                sqlx::query("UPDATE jobs SET enabled_override = $1 WHERE id = ANY($2)")
-                    .bind(new_override)
-                    .bind(ids)
-                    .execute(p)
-                    .await?;
+            let result = sqlx::query("UPDATE jobs SET enabled_override = $1 WHERE id = ANY($2)")
+                .bind(new_override)
+                .bind(ids)
+                .execute(p)
+                .await?;
             Ok(result.rows_affected())
         }
     }
@@ -1012,9 +1010,7 @@ pub async fn get_overridden_jobs(pool: &DbPool) -> anyhow::Result<Vec<DbJob>> {
             Ok(rows.into_iter().map(|r| r.into()).collect())
         }
         PoolRef::Postgres(p) => {
-            let rows = sqlx::query_as::<_, PgDbJobRow>(SELECT)
-                .fetch_all(p)
-                .await?;
+            let rows = sqlx::query_as::<_, PgDbJobRow>(SELECT).fetch_all(p).await?;
             Ok(rows.into_iter().map(|r| r.into()).collect())
         }
     }

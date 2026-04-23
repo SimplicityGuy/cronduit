@@ -240,7 +240,11 @@ async fn get_overridden_jobs_alphabetical_pg() {
         .collect();
     assert_eq!(
         names,
-        vec!["alpha".to_string(), "mango".to_string(), "zebra".to_string()],
+        vec![
+            "alpha".to_string(),
+            "mango".to_string(),
+            "zebra".to_string()
+        ],
         "Postgres: get_overridden_jobs MUST return rows in alphabetical order (D-10b)"
     );
 

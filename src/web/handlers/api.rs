@@ -614,11 +614,8 @@ pub async fn bulk_toggle(
 
     // 8. Compose toast per UI-SPEC Copywriting Contract.
     let message = build_bulk_toast_message(updated, new_override, running_count, not_found);
-    let event = HxEvent::new_with_data(
-        "showToast",
-        json!({"message": message, "level": "info"}),
-    )
-    .expect("toast event serialization");
+    let event = HxEvent::new_with_data("showToast", json!({"message": message, "level": "info"}))
+        .expect("toast event serialization");
     (HxResponseTrigger::normal([event]), StatusCode::OK).into_response()
 }
 

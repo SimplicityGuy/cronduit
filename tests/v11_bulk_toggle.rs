@@ -269,7 +269,11 @@ async fn disable_missing_clears_override() {
         .expect("get_job_by_id")
         .expect("keepme exists");
     assert!(kept.enabled, "keepme must stay enabled");
-    assert_eq!(kept.enabled_override, Some(0), "keepme's override is preserved");
+    assert_eq!(
+        kept.enabled_override,
+        Some(0),
+        "keepme's override is preserved"
+    );
 }
 
 #[tokio::test]
@@ -432,8 +436,7 @@ async fn handler_partial_invalid_toast_uses_rows_affected() {
         .expect("HX-Trigger header present");
 
     // Parse the HX-Trigger JSON envelope and extract the toast message.
-    let v: serde_json::Value =
-        serde_json::from_str(hx_trigger).expect("valid JSON envelope");
+    let v: serde_json::Value = serde_json::from_str(hx_trigger).expect("valid JSON envelope");
     let msg = v
         .get("showToast")
         .and_then(|e| e.get("message"))
@@ -461,8 +464,7 @@ async fn handler_dedupes_ids() {
         .get("HX-Trigger")
         .and_then(|v| v.to_str().ok())
         .expect("HX-Trigger header present");
-    let v: serde_json::Value =
-        serde_json::from_str(hx_trigger).expect("valid JSON envelope");
+    let v: serde_json::Value = serde_json::from_str(hx_trigger).expect("valid JSON envelope");
     let msg = v
         .get("showToast")
         .and_then(|e| e.get("message"))
@@ -583,7 +585,11 @@ async fn get_overridden_jobs_alphabetical() {
         .collect();
     assert_eq!(
         names,
-        vec!["alpha".to_string(), "mango".to_string(), "zebra".to_string()],
+        vec![
+            "alpha".to_string(),
+            "mango".to_string(),
+            "zebra".to_string()
+        ],
         "get_overridden_jobs MUST return rows in alphabetical order by name (D-10b)"
     );
 }
