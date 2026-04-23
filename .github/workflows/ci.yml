@@ -165,19 +165,27 @@ jobs:
           cache-from: type=gha,scope=cronduit-ci-smoke
           cache-to: type=gha,mode=max,scope=cronduit-ci-smoke
 
-      - name: Rewrite compose to use locally-built cronduit:ci image
+      - name: Point compose at locally-built cronduit:ci image
         env:
           COMPOSE_FILE: ${{ matrix.compose }}
         run: |
-          # Rewrite the committed compose file in-place in the runner workspace
-          # so the smoke test exercises PR code, not stale ghcr :latest. Never
-          # committed.
-          sed -i "s|ghcr.io/simplicityguy/cronduit:latest|cronduit:ci|g" "examples/${COMPOSE_FILE}"
-          count=$(grep -c 'image: cronduit:ci' "examples/${COMPOSE_FILE}" || true)
-          if [ "$count" -ne 1 ]; then
-            echo "ERROR: expected exactly 1 'image: cronduit:ci' line, found ${count}"
-            cat "examples/${COMPOSE_FILE}"
-            exit 1
+          # Point the smoke test at the just-built cronduit:ci image so it
+          # exercises PR code, not stale ghcr :latest. Two paths:
+          #   (a) Compose file uses ${CRONDUIT_IMAGE:-...} — set CRONDUIT_IMAGE
+          #       env var; docker compose substitution does the rest.
+          #   (b) Compose file uses literal image: ... — sed-rewrite in place.
+          # Never committed either way.
+          if grep -qE '\$\{CRONDUIT_IMAGE(:-[^}]*)?\}' "examples/${COMPOSE_FILE}"; then
+            echo "Compose file uses CRONDUIT_IMAGE env var — exporting CRONDUIT_IMAGE=cronduit:ci"
+            echo "CRONDUIT_IMAGE=cronduit:ci" >> "$GITHUB_ENV"
+          else
+            sed -i "s|ghcr.io/simplicityguy/cronduit:latest|cronduit:ci|g" "examples/${COMPOSE_FILE}"
+            count=$(grep -c 'image: cronduit:ci' "examples/${COMPOSE_FILE}" || true)
+            if [ "$count" -ne 1 ]; then
+              echo "ERROR: expected exactly 1 'image: cronduit:ci' line, found ${count}"
+              cat "examples/${COMPOSE_FILE}"
+              exit 1
+            fi
           fi
 
       - name: Derive DOCKER_GID from runner's docker.sock
