@@ -11,7 +11,7 @@
            onclick="__cdBulkOnRowChange()">
   </td>
   <td class="py-2 px-4">
-    <a href="/jobs/{{ job.id }}" class="text-(--cd-text-accent) hover:underline font-bold">{{ job.name }}</a>
+    <a href="/jobs/{{ job.id }}" class="text-(--cd-text-accent) hover:underline font-bold">{{ job.name }}</a>{% if job.is_disabled %} <span class="cd-badge cd-badge--disabled" title="Job has an enabled_override of 0 — see Settings › Currently Overridden">DISABLED</span>{% endif %}
   </td>
   <td class="py-2 px-4 text-(--cd-text-secondary)" style="font-size:var(--cd-text-base)">
     {{ job.resolved_schedule }}{% if job.has_random_schedule %} <span class="cd-badge cd-badge--random">@random</span>{% endif %}

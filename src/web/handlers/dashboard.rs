@@ -69,6 +69,11 @@ pub struct DashboardJobView {
     pub schedule: String,
     pub resolved_schedule: String,
     pub has_random_schedule: bool,
+    /// Phase 14 — true when `enabled_override == Some(0)`. Drives the inline
+    /// DISABLED badge on the name column and the em-dash in `next_fire` so
+    /// operators see a coherent "this job will NOT fire" signal on the
+    /// dashboard, not only on `/settings` (Phase 14 UAT rc.4 gap).
+    pub is_disabled: bool,
     pub next_fire: String,
     pub last_status: String,
     pub last_status_label: String,
@@ -111,13 +116,26 @@ fn to_view(job: DashboardJob, tz: Tz) -> DashboardJobView {
     let now = Utc::now();
     let now_tz = now.with_timezone(&tz);
 
-    // Compute next fire time using croner
-    let next_fire = match croner::Cron::from_str(&job.resolved_schedule) {
-        Ok(cron) => match cron.find_next_occurrence(&now_tz, false) {
-            Ok(next) => format_relative_future(next.with_timezone(&Utc), now),
-            Err(_) => "unknown".to_string(),
-        },
-        Err(_) => "invalid".to_string(),
+    // Phase 14: a Some(0) override forces the job disabled regardless of the
+    // config-level `enabled` flag. The scheduler already honors this by not
+    // firing; the dashboard must honor it visually — otherwise operators see
+    // a `Next Fire: in 41s` on a job that will never actually fire.
+    let is_disabled = job.enabled_override == Some(0);
+
+    // Compute next fire time. Skip cron evaluation entirely for
+    // override-disabled jobs and render an em-dash: the reality is "never",
+    // and the Settings "Currently Overridden" audit carries the authoritative
+    // DISABLED state per UI-SPEC.
+    let next_fire = if is_disabled {
+        "—".to_string()
+    } else {
+        match croner::Cron::from_str(&job.resolved_schedule) {
+            Ok(cron) => match cron.find_next_occurrence(&now_tz, false) {
+                Ok(next) => format_relative_future(next.with_timezone(&Utc), now),
+                Err(_) => "unknown".to_string(),
+            },
+            Err(_) => "invalid".to_string(),
+        }
     };
 
     // Normalize last_status for CSS class matching (lowercase)
@@ -158,6 +176,7 @@ fn to_view(job: DashboardJob, tz: Tz) -> DashboardJobView {
         schedule: job.schedule,
         resolved_schedule: job.resolved_schedule,
         has_random_schedule,
+        is_disabled,
         next_fire,
         last_status,
         last_status_label,
