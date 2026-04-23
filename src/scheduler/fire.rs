@@ -256,6 +256,7 @@ mod tests {
             config_json: "{}".to_string(),
             config_hash: "test".to_string(),
             enabled: true,
+            enabled_override: None,
             timeout_secs: 3600,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: ready-for-next-phase
-stopped_at: Phase 13 complete — v1.1.0-rc.2 published
-last_updated: "2026-04-21T23:35:00.000Z"
-last_activity: 2026-04-21 -- Phase 13 complete (PR #35 merged, v1.1.0-rc.2 cut + verified; UAT 10/11 passed, 1 skipped Phase-14 scope)
+status: executing
+stopped_at: Phase 14 shipped — PR #38 (stacked on #37); awaiting UAT before Wave 6
+last_updated: "2026-04-22T23:30:00.000Z"
+last_activity: 2026-04-22 -- Phase 14 PR #38 opened (stacked on quick-fix #37); awaiting maintainer UAT before Wave 6 (final flips)
 progress:
   total_phases: 6
   completed_phases: 5
-  total_plans: 42
-  completed_plans: 43
-  percent: 100
+  total_plans: 51
+  completed_plans: 50
+  percent: 98
 ---
 
 # Project State
@@ -21,18 +21,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 13 — observability-polish-rc-2
+**Current focus:** Phase 14 — bulk-enable-disable-rc-3-final-v1-1-0-ship
 
 ## Current Position
 
 Milestone: v1.1 — Operator Quality of Life
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 13 (observability-polish-rc-2) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 13
-Last activity: 2026-04-21 -- Phase 13 execution started
+Phase: 14 (bulk-enable-disable-rc-3-final-v1-1-0-ship) — IMPLEMENTATION COMPLETE; PAUSED AT UAT GATE
+Plan: 8 of 9 complete (14-09 final flips blocked on maintainer UAT pass)
+Status: Awaiting maintainer to run `.planning/phases/14-bulk-enable-disable-rc-3-final-v1-1-0-ship/14-HUMAN-UAT.md`
+Last activity: 2026-04-22 -- Phase 14 Waves 0-5 implemented (15/15 SQLite scoreboard tests green); HUMAN-UAT.md authored
 
-Progress: [██████░░░░] 60% (3 of 5 v1.1 phases complete — 10, 11, 12; 12.1 inserted)
+Progress: [████████░░] 80% (4 of 5 v1.1 phases implemented — 10, 11, 12, 14 implemented; 12.1 inserted; 14 awaiting UAT + final flip)
 
 ## v1.1 Phase Shape
 
@@ -126,8 +126,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 13 UI-SPEC approved
+Last session: 2026-04-22T15:22:09.060Z
+Stopped at: Phase 14 UI-SPEC approved
 Resume command: after PR merges, run `/gsd-verify-work 12` once the rc.1 tag is pushed and GHCR state is confirmed. Then `/gsd-discuss-phase 13` or `/gsd-plan-phase 13` to start Phase 13 (observability polish + rc.2).
 
 Last activity: 2026-04-18 — Phase 12 executed (7/7 plans complete; MD-01 + MD-02 code review fixes applied inline; HUMAN-UAT.md persisted for 3 pending maintainer-action items)

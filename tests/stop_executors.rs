@@ -58,6 +58,7 @@ async fn seed_job(
         config_json: config_json.to_string(),
         config_hash: "stop-exec-hash".to_string(),
         enabled: true,
+        enabled_override: None,
         timeout_secs,
         created_at: String::new(),
         updated_at: String::new(),

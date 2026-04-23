@@ -70,4 +70,61 @@
   </div>
 </div>
 
+{% if !overridden_jobs.is_empty() %}
+<section aria-labelledby="cd-overridden-heading" style="margin-top:var(--cd-space-8)">
+  <h2 id="cd-overridden-heading"
+      style="font-size:var(--cd-text-lg);font-weight:700;letter-spacing:-0.02em;color:var(--cd-text-primary);margin-bottom:var(--cd-space-2)">
+    Currently Overridden
+  </h2>
+  <p style="font-size:var(--cd-text-sm);color:var(--cd-text-secondary);margin-top:var(--cd-space-2);margin-bottom:var(--cd-space-4)">
+    These jobs have an override set; they do NOT follow the <code style="font-family:inherit;color:var(--cd-text-accent)">enabled</code> flag from <code style="font-family:inherit;color:var(--cd-text-accent)">cronduit.toml</code>.
+  </p>
+
+  <div class="overflow-x-auto" style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:var(--cd-radius-md)">
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="background:var(--cd-bg-surface-raised)">
+          <th class="text-left py-2 px-4"
+              style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Name</th>
+          <th class="text-left py-2 px-4"
+              style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Override State</th>
+          <th class="text-left py-2 px-4"
+              style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary);width:120px">Clear</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in overridden_jobs %}
+        <tr class="hover:bg-(--cd-bg-hover) border-b border-(--cd-border-subtle)">
+          <td class="py-2 px-4">
+            <a href="/jobs/{{ job.id }}" class="text-(--cd-text-accent) hover:underline font-bold">{{ job.name }}</a>
+          </td>
+          <td class="py-2 px-4">
+            {% if job.enabled_override == 0 %}
+            <span class="cd-badge cd-badge--disabled">DISABLED</span>
+            {% else if job.enabled_override == 1 %}
+            <span class="cd-badge cd-badge--forced">FORCED ON</span>
+            {% else %}
+            <span class="cd-badge cd-badge--disabled">STATE {{ job.enabled_override }}</span>
+            {% endif %}
+          </td>
+          <td class="py-2 px-4">
+            <form hx-post="/api/jobs/bulk-toggle" hx-swap="none">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="action" value="enable">
+              <input type="hidden" name="job_ids" value="{{ job.id }}">
+              <button type="submit"
+                      class="cd-btn-secondary text-sm py-1 px-3"
+                      aria-label="Clear override for {{ job.name }}">
+                Clear
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
 {% endblock %}
