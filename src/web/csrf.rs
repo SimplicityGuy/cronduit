@@ -4,6 +4,7 @@
 //! Server validates they match. No server-side session store needed.
 
 use axum::extract::Request;
+use axum::http::header;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum_extra::extract::CookieJar;
@@ -49,23 +50,45 @@ pub fn get_token_from_cookies(cookies: &CookieJar) -> String {
 }
 
 /// Axum middleware that ensures the CSRF cookie is set on every response.
+///
+/// On a cold request (no `cronduit_csrf` cookie yet), the middleware generates
+/// a new token AND injects it into the request's `Cookie` header BEFORE the
+/// handler runs, so the downstream `CookieJar` extractor sees the same token
+/// that will be sent back in `Set-Cookie`. Without the request-header
+/// injection the handler's `get_token_from_cookies` fallback rolled an
+/// INDEPENDENT random token, baking that value into rendered forms — the
+/// subsequent submission then failed CSRF validation (cookie held one token,
+/// form held a different one). This was the root cause of Phase 14 UAT rc.3
+/// gap 1: the bulk-action-bar CSRF input rendered on page load would never
+/// agree with the cookie the browser ultimately stored.
 pub async fn ensure_csrf_cookie(
     cookies: CookieJar,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> impl IntoResponse {
-    let has_cookie = cookies.get(CSRF_COOKIE_NAME).is_some();
+    let new_token: Option<String> = if cookies.get(CSRF_COOKIE_NAME).is_none() {
+        let t = generate_csrf_token();
+        let hdr = format!("{}={}", CSRF_COOKIE_NAME, t);
+        // `append` rather than `insert` so we preserve any other cookies the
+        // client already sent (e.g., theme preference, session trackers).
+        request
+            .headers_mut()
+            .append(header::COOKIE, hdr.parse().expect("csrf cookie header"));
+        Some(t)
+    } else {
+        None
+    };
     let mut response = next.run(request).await;
 
-    if !has_cookie {
-        let token = generate_csrf_token();
+    if let Some(token) = new_token {
         let cookie = format!(
             "{}={}; HttpOnly; SameSite=Strict; Path=/; Secure",
             CSRF_COOKIE_NAME, token
         );
-        response
-            .headers_mut()
-            .insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
+        response.headers_mut().insert(
+            header::SET_COOKIE,
+            cookie.parse().expect("csrf set-cookie header"),
+        );
     }
 
     response
