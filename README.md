@@ -86,8 +86,8 @@ Cronduit publishes a small, explicit set of floating and versioned tags to `ghcr
 | `:X.Y.Z` (e.g. `:1.0.1`, `:1.1.0`) | An immutable tagged release | Never -- once published, a specific version tag points at one digest forever | Production deployments that want reproducibility |
 | `:X.Y` (e.g. `:1.0`, `:1.1`) | The most recent `:X.Y.Z` patch release for that minor line | Every time a new patch of that minor ships | Production deployments that want to auto-pick up patch fixes |
 | `:X` (e.g. `:1`) | The most recent `:X.Y.Z` release for that major line | Every time a new minor or patch of that major ships | Production deployments willing to take minor-version upgrades |
-| `:latest` | The most recent stable (non-rc) release -- currently `:1.0.1`, will advance to `:1.1.0` when it ships | Only on stable release tags (`vX.Y.Z` with no `-rc.N` suffix) | Operators who always want the newest stable. Never bleeds rc or main-branch builds in |
-| `:rc` | The most recent release candidate -- currently `:1.1.0-rc.1` | Every rc push (`vX.Y.Z-rc.N`). Never moves on stable releases | Early adopters who want to exercise the next milestone before it ships |
+| `:latest` | The most recent stable (non-rc) release -- currently `:1.1.0` | Only on stable release tags (`vX.Y.Z` with no `-rc.N` suffix) | Operators who always want the newest stable. Never bleeds rc or main-branch builds in |
+| `:rc` | The most recent release candidate -- currently `:1.1.0-rc.6` (last rc before `v1.1.0` shipped; won't move again until the next milestone begins rc cycling) | Every rc push (`vX.Y.Z-rc.N`). Never moves on stable releases | Early adopters who want to exercise the next milestone before it ships |
 | `:main` | A CI-built image of whatever commit is currently at the tip of `main` | Every push to `main`, multi-arch, built with the same toolchain as release images | Homelab operators who want the bleeding edge and can accept that `main` may be unstable |
 
 ### Which workflow owns which tag
