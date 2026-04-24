@@ -16,47 +16,47 @@ Every requirement below is a testable operator-visible behavior. Pitfall test-ca
 
 Continuation from v1.0 SCHED-01..08.
 
-- [ ] **SCHED-09**: Operator can stop a running job from the UI; the run finalizes with a new `stopped` status (distinct from `cancelled`, `failed`, `timeout`, and `success`). Single hard kill — no SIGTERM grace-period escalation. Works identically for command, script, and docker job types. `T-V11-STOP-09`, `T-V11-STOP-10`, `T-V11-STOP-11`.
+- [x] **SCHED-09**: Operator can stop a running job from the UI; the run finalizes with a new `stopped` status (distinct from `cancelled`, `failed`, `timeout`, and `success`). Single hard kill — no SIGTERM grace-period escalation. Works identically for command, script, and docker job types. `T-V11-STOP-09`, `T-V11-STOP-10`, `T-V11-STOP-11`.
 
-- [ ] **SCHED-10**: The scheduler maintains a per-run control handle (`RunControl`) carrying a `CancellationToken` plus a `stop_reason: Arc<AtomicU8>` so the executor can distinguish operator-stop from shutdown-cancel and finalize with the correct status. `T-V11-STOP-01`, `T-V11-STOP-02`, `T-V11-STOP-03`.
+- [x] **SCHED-10**: The scheduler maintains a per-run control handle (`RunControl`) carrying a `CancellationToken` plus a `stop_reason: Arc<AtomicU8>` so the executor can distinguish operator-stop from shutdown-cancel and finalize with the correct status. `T-V11-STOP-01`, `T-V11-STOP-02`, `T-V11-STOP-03`.
 
-- [ ] **SCHED-11**: A stop request for a run that has already completed naturally does NOT overwrite the natural-completion status in the database. The race between `SchedulerCmd::Stop` and `JoinNext` is covered by a deterministic test using `tokio::time::pause`. `T-V11-STOP-04`, `T-V11-STOP-05`, `T-V11-STOP-06`.
+- [x] **SCHED-11**: A stop request for a run that has already completed naturally does NOT overwrite the natural-completion status in the database. The race between `SchedulerCmd::Stop` and `JoinNext` is covered by a deterministic test using `tokio::time::pause`. `T-V11-STOP-04`, `T-V11-STOP-05`, `T-V11-STOP-06`.
 
-- [ ] **SCHED-12**: Command and script executors continue using the shipped `.process_group(0)` + `libc::kill(-pid, SIGKILL)` pattern for kill; `kill_on_drop(true)` is NOT adopted because it would orphan shell-pipeline grandchildren. (Research correction #1; see SUMMARY.md § Research-Phase Corrections.) `T-V11-STOP-07`, `T-V11-STOP-08`.
+- [x] **SCHED-12**: Command and script executors continue using the shipped `.process_group(0)` + `libc::kill(-pid, SIGKILL)` pattern for kill; `kill_on_drop(true)` is NOT adopted because it would orphan shell-pipeline grandchildren. (Research correction #1; see SUMMARY.md § Research-Phase Corrections.) `T-V11-STOP-07`, `T-V11-STOP-08`.
 
-- [ ] **SCHED-13**: `mark_run_orphaned` at restart does NOT overwrite rows already finalized to `stopped` / `success` / `failed` / `timeout`. The existing `WHERE status = 'running'` guard in `docker_orphan.rs` is locked in by test so future refactors cannot drop it. (Research correction #4.) `T-V11-STOP-12`, `T-V11-STOP-13`, `T-V11-STOP-14`.
+- [x] **SCHED-13**: `mark_run_orphaned` at restart does NOT overwrite rows already finalized to `stopped` / `success` / `failed` / `timeout`. The existing `WHERE status = 'running'` guard in `docker_orphan.rs` is locked in by test so future refactors cannot drop it. (Research correction #4.) `T-V11-STOP-12`, `T-V11-STOP-13`, `T-V11-STOP-14`.
 
-- [ ] **SCHED-14**: A "Stop" button appears on the run detail page and in the job-detail run-history partial only when a run is in `status = 'running'`. Clicking sends a CSRF-gated `POST /api/runs/{run_id}/stop`. No confirmation dialog (consistent with "Run Now" which has none).
+- [x] **SCHED-14**: A "Stop" button appears on the run detail page and in the job-detail run-history partial only when a run is in `status = 'running'`. Clicking sends a CSRF-gated `POST /api/runs/{run_id}/stop`. No confirmation dialog (consistent with "Run Now" which has none).
 
 ### Persistence (DB)
 
 Continuation from v1.0 DB-01..08.
 
-- [ ] **DB-09**: Every row in `job_runs` carries a per-job sequential number (`job_run_number`) assigned at insert time. Numbering starts at 1 for each job. Existing rows are backfilled on upgrade via an idempotent migration that runs strictly before the scheduler loop starts. `T-V11-RUNNUM-01`, `T-V11-RUNNUM-02`, `T-V11-RUNNUM-03`.
+- [x] **DB-09**: Every row in `job_runs` carries a per-job sequential number (`job_run_number`) assigned at insert time. Numbering starts at 1 for each job. Existing rows are backfilled on upgrade via an idempotent migration that runs strictly before the scheduler loop starts. `T-V11-RUNNUM-01`, `T-V11-RUNNUM-02`, `T-V11-RUNNUM-03`.
 
-- [ ] **DB-10**: The migration to add `job_run_number` ships as **three** separate migration files (add-column nullable → backfill → add NOT-NULL constraint), never combined, because a partial-failure recovery from a single combined migration is unrecoverable. On SQLite the NOT-NULL step uses the 12-step table-rewrite pattern. Indexes are recreated verbatim. `T-V11-RUNNUM-04`, `T-V11-RUNNUM-05`, `T-V11-RUNNUM-06`.
+- [x] **DB-10**: The migration to add `job_run_number` ships as **three** separate migration files (add-column nullable → backfill → add NOT-NULL constraint), never combined, because a partial-failure recovery from a single combined migration is unrecoverable. On SQLite the NOT-NULL step uses the 12-step table-rewrite pattern. Indexes are recreated verbatim. `T-V11-RUNNUM-04`, `T-V11-RUNNUM-05`, `T-V11-RUNNUM-06`.
 
-- [ ] **DB-11**: Per-job numbering uses a dedicated counter column (`jobs.next_run_number`) incremented in a two-statement transaction on insert, NOT a subquery that computes `MAX(job_run_number) + 1`. This design works identically on SQLite and Postgres without dialect-specific locking. `T-V11-RUNNUM-10`, `T-V11-RUNNUM-11`.
+- [x] **DB-11**: Per-job numbering uses a dedicated counter column (`jobs.next_run_number`) incremented in a two-statement transaction on insert, NOT a subquery that computes `MAX(job_run_number) + 1`. This design works identically on SQLite and Postgres without dialect-specific locking. `T-V11-RUNNUM-10`, `T-V11-RUNNUM-11`.
 
-- [ ] **DB-12**: The backfill migration chunks work into 10k-row batches and logs progress at INFO level so an operator running against a large `job_runs` table (100k+ rows) can see the migration making progress instead of a silent 30+ second stall. Dockerfile `HEALTHCHECK` `--start-period` is tuned to accommodate a reasonable upper bound. `T-V11-RUNNUM-07`, `T-V11-RUNNUM-08`, `T-V11-RUNNUM-09`.
+- [x] **DB-12**: The backfill migration chunks work into 10k-row batches and logs progress at INFO level so an operator running against a large `job_runs` table (100k+ rows) can see the migration making progress instead of a silent 30+ second stall. Dockerfile `HEALTHCHECK` `--start-period` is tuned to accommodate a reasonable upper bound. `T-V11-RUNNUM-07`, `T-V11-RUNNUM-08`, `T-V11-RUNNUM-09`.
 
-- [ ] **DB-13**: `job_runs.id` remains the canonical URL key. The `/jobs/{job_id}/runs/{run_id}` route continues to accept the global `id`; `job_run_number` is display-only and does NOT break existing permalinks. `T-V11-RUNNUM-12`, `T-V11-RUNNUM-13`.
+- [x] **DB-13**: `job_runs.id` remains the canonical URL key. The `/jobs/{job_id}/runs/{run_id}` route continues to accept the global `id`; `job_run_number` is display-only and does NOT break existing permalinks. `T-V11-RUNNUM-12`, `T-V11-RUNNUM-13`.
 
-- [ ] **DB-14**: A new nullable `jobs.enabled_override` column (tri-state: NULL = follow config, 0 = force disabled, 1 = force enabled) supports bulk enable/disable without breaking config-source-of-truth semantics. `upsert_job` does NOT touch this column in its `ON CONFLICT DO UPDATE` SET clause. `disable_missing_jobs` clears the override when removing a job that has left the config file. `T-V11-BULK-01`.
+- [x] **DB-14**: A new nullable `jobs.enabled_override` column (tri-state: NULL = follow config, 0 = force disabled, 1 = force enabled) supports bulk enable/disable without breaking config-source-of-truth semantics. `upsert_job` does NOT touch this column in its `ON CONFLICT DO UPDATE` SET clause. `disable_missing_jobs` clears the override when removing a job that has left the config file. `T-V11-BULK-01`.
 
 ### Web UI (UI)
 
 Continuation from v1.0 UI-01..15.
 
-- [ ] **UI-16**: The job run-history partial and run-detail breadcrumb show the per-job run number (`#42`) as the primary identifier instead of the global `job_runs.id`. Global id remains visible as a secondary hint for troubleshooting.
+- [x] **UI-16**: The job run-history partial and run-detail breadcrumb show the per-job run number (`#42`) as the primary identifier instead of the global `job_runs.id`. Global id remains visible as a secondary hint for troubleshooting.
 
-- [ ] **UI-17**: Navigating back to a running-job detail page renders the log lines already persisted to the database, then attaches to the live SSE stream without losing or duplicating any line across the live-to-static transition. `T-V11-BACK-01`, `T-V11-BACK-02`.
+- [x] **UI-17**: Navigating back to a running-job detail page renders the log lines already persisted to the database, then attaches to the live SSE stream without losing or duplicating any line across the live-to-static transition. `T-V11-BACK-01`, `T-V11-BACK-02`.
 
-- [ ] **UI-18**: Log lines on the run-detail page remain in chronological order (by id, not by wall-clock timestamp) across the live-to-static transition that fires when a run finishes. Buffered SSE frames arriving after the static partial swap are dropped client-side via an id-based dedupe (`data-max-id` + listener check). `T-V11-LOG-03`, `T-V11-LOG-04`.
+- [x] **UI-18**: Log lines on the run-detail page remain in chronological order (by id, not by wall-clock timestamp) across the live-to-static transition that fires when a run finishes. Buffered SSE frames arriving after the static partial swap are dropped client-side via an id-based dedupe (`data-max-id` + listener check). `T-V11-LOG-03`, `T-V11-LOG-04`.
 
-- [ ] **UI-19**: The transient "error getting logs" message that briefly renders on the run-detail page immediately after a Run Now click is eliminated. Root cause: the run row is inserted on the API handler thread (before returning the response to the client) instead of asynchronously in the scheduler loop. `T-V11-LOG-08`, `T-V11-LOG-09`.
+- [x] **UI-19**: The transient "error getting logs" message that briefly renders on the run-detail page immediately after a Run Now click is eliminated. Root cause: the run row is inserted on the API handler thread (before returning the response to the client) instead of asynchronously in the scheduler loop. `T-V11-LOG-08`, `T-V11-LOG-09`.
 
-- [ ] **UI-20**: The `LogLine` broadcast order is fixed so that the `id: Option<i64>` field required by UI-17 and UI-18 is populated before the broadcast is sent. Phase plan picks Option A (insert-then-broadcast with `RETURNING id`) or Option B (monotonic `seq` column) before writing the log-backfill implementation plan; the choice is recorded in the phase's PLAN.md. `T-V11-LOG-01`, `T-V11-LOG-02`.
+- [x] **UI-20**: The `LogLine` broadcast order is fixed so that the `id: Option<i64>` field required by UI-17 and UI-18 is populated before the broadcast is sent. Phase plan picks Option A (insert-then-broadcast with `RETURNING id`) or Option B (monotonic `seq` column) before writing the log-backfill implementation plan; the choice is recorded in the phase's PLAN.md. `T-V11-LOG-01`, `T-V11-LOG-02`.
 
 ### Observability (OBS) — new category
 
@@ -72,13 +72,13 @@ Continuation from v1.0 UI-01..15.
 
 ### Ergonomics (ERG) — new category
 
-- [ ] **ERG-01**: The dashboard supports multi-select of jobs via checkboxes and a "Disable selected" / "Enable selected" action bar. Submitting the action fires a CSRF-gated `POST /api/jobs/bulk-toggle` handler that updates `jobs.enabled_override` for every selected job and then fires `SchedulerCmd::Reload` so the scheduler rebuilds its heap without the newly-disabled jobs.
+- [x] **ERG-01**: The dashboard supports multi-select of jobs via checkboxes and a "Disable selected" / "Enable selected" action bar. Submitting the action fires a CSRF-gated `POST /api/jobs/bulk-toggle` handler that updates `jobs.enabled_override` for every selected job and then fires `SchedulerCmd::Reload` so the scheduler rebuilds its heap without the newly-disabled jobs.
 
-- [ ] **ERG-02**: Bulk disable does NOT terminate running jobs — running instances complete naturally. The success toast communicates this explicitly (e.g. `"3 jobs disabled; 2 currently-running jobs will complete"`). Operators who want to kill a running job use the Stop button from SCHED-14.
+- [x] **ERG-02**: Bulk disable does NOT terminate running jobs — running instances complete naturally. The success toast communicates this explicitly (e.g. `"3 jobs disabled; 2 currently-running jobs will complete"`). Operators who want to kill a running job use the Stop button from SCHED-14.
 
-- [ ] **ERG-03**: The settings page shows a "Currently overridden" section listing every job whose `enabled_override` is non-null, so operators can see at a glance which jobs have been manually disabled vs. which are simply absent from the config file. Without this, a v1.1 operator could bulk-disable five jobs, forget, and have backups silently not run for months.
+- [x] **ERG-03**: The settings page shows a "Currently overridden" section listing every job whose `enabled_override` is non-null, so operators can see at a glance which jobs have been manually disabled vs. which are simply absent from the config file. Without this, a v1.1 operator could bulk-disable five jobs, forget, and have backups silently not run for months.
 
-- [ ] **ERG-04**: A reload (SIGHUP / API / file-watch) does NOT reset `enabled_override`. A job that is present in the config file AND has `enabled_override = 0` stays disabled. A job that is absent from the config (e.g. removed by the operator) has its `enabled_override` cleared at the same time as `enabled` is set to 0, so re-adding it to the config later produces the expected "fresh" behavior. `T-V11-BULK-01` locks this invariant.
+- [x] **ERG-04**: A reload (SIGHUP / API / file-watch) does NOT reset `enabled_override`. A job that is present in the config file AND has `enabled_override = 0` stays disabled. A job that is absent from the config (e.g. removed by the operator) has its `enabled_override` cleared at the same time as `enabled` is set to 0, so re-adding it to the config later produces the expected "fresh" behavior. `T-V11-BULK-01` locks this invariant.
 
 ### Operational (OPS)
 
@@ -98,9 +98,9 @@ Continuation from v1.0 OPS-01..05.
 
 Continuation from v1.0 FOUND-01..11.
 
-- [ ] **FOUND-12**: `rand` crate is bumped from `"0.8"` to `"0.9.x"` (stale by two majors, no CVE, hygiene only). Call sites — the `@random` slot picker and CSRF token generation — are migrated mechanically. `rand 0.10` is NOT adopted in v1.1 to avoid the `gen` → `random` trait rename churn.
+- [x] **FOUND-12**: `rand` crate is bumped from `"0.8"` to `"0.9.x"` (stale by two majors, no CVE, hygiene only). Call sites — the `@random` slot picker and CSRF token generation — are migrated mechanically. `rand 0.10` is NOT adopted in v1.1 to avoid the `gen` → `random` trait rename churn.
 
-- [ ] **FOUND-13**: `Cargo.toml` version is bumped from `1.0.1` to `1.1.0` on the first v1.1 commit. This ensures `cronduit --version` always reports the milestone-in-progress even between rc cuts. rc tags use the semver pre-release format `v1.1.0-rc.1`, `v1.1.0-rc.2`, etc. (dot before `rc.N`). The final ship is `v1.1.0`.
+- [x] **FOUND-13**: `Cargo.toml` version is bumped from `1.0.1` to `1.1.0` on the first v1.1 commit. This ensures `cronduit --version` always reports the milestone-in-progress even between rc cuts. rc tags use the semver pre-release format `v1.1.0-rc.1`, `v1.1.0-rc.2`, etc. (dot before `rc.N`). The final ship is `v1.1.0`.
 
 ## Future Requirements
 
@@ -145,41 +145,41 @@ Explicit boundaries; NOT in v1.1 or v1.2. Duplicated from PROJECT.md § Out of S
 
 | REQ-ID   | Phase    | Status  |
 | -------- | -------- | ------- |
-| SCHED-09 | Phase 10 | Pending |
-| SCHED-10 | Phase 10 | Pending |
-| SCHED-11 | Phase 10 | Pending |
-| SCHED-12 | Phase 10 | Pending |
-| SCHED-13 | Phase 10 | Pending |
-| SCHED-14 | Phase 10 | Pending |
-| DB-09    | Phase 11 | Pending |
-| DB-10    | Phase 11 | Pending |
-| DB-11    | Phase 11 | Pending |
-| DB-12    | Phase 11 | Pending |
-| DB-13    | Phase 11 | Pending |
-| DB-14    | Phase 14 | Pending |
-| UI-16    | Phase 11 | Pending |
-| UI-17    | Phase 11 | Pending |
-| UI-18    | Phase 11 | Pending |
-| UI-19    | Phase 11 | Pending |
-| UI-20    | Phase 11 | Pending |
+| SCHED-09 | Phase 10 | Complete |
+| SCHED-10 | Phase 10 | Complete |
+| SCHED-11 | Phase 10 | Complete |
+| SCHED-12 | Phase 10 | Complete |
+| SCHED-13 | Phase 10 | Complete |
+| SCHED-14 | Phase 10 | Complete |
+| DB-09    | Phase 11 | Complete |
+| DB-10    | Phase 11 | Complete |
+| DB-11    | Phase 11 | Complete |
+| DB-12    | Phase 11 | Complete |
+| DB-13    | Phase 11 | Complete |
+| DB-14    | Phase 14 | Complete |
+| UI-16    | Phase 11 | Complete |
+| UI-17    | Phase 11 | Complete |
+| UI-18    | Phase 11 | Complete |
+| UI-19    | Phase 11 | Complete |
+| UI-20    | Phase 11 | Complete |
 | OBS-01   | Phase 13 | Complete |
 | OBS-02   | Phase 13 | Complete |
 | OBS-03   | Phase 13 | Complete |
 | OBS-04   | Phase 13 | Complete |
 | OBS-05   | Phase 13 | Complete |
-| ERG-01   | Phase 14 | Pending |
-| ERG-02   | Phase 14 | Pending |
-| ERG-03   | Phase 14 | Pending |
-| ERG-04   | Phase 14 | Pending |
+| ERG-01   | Phase 14 | Complete |
+| ERG-02   | Phase 14 | Complete |
+| ERG-03   | Phase 14 | Complete |
+| ERG-04   | Phase 14 | Complete |
 | OPS-06   | Phase 12   | Done    |
 | OPS-07   | Phase 12   | Done    |
 | OPS-08   | Phase 12   | Done    |
 | OPS-09   | Phase 12.1 | Complete |
 | OPS-10   | Phase 12.1 | Complete |
-| FOUND-12 | Phase 10   | Pending |
-| FOUND-13 | Phase 10   | Pending |
+| FOUND-12 | Phase 10   | Complete |
+| FOUND-13 | Phase 10   | Complete |
 
-**Total:** 33 requirements across 7 categories, mapped to 5 phases + 1 inserted phase (10–14 + 12.1). OPS-06..08 complete; rest pending implementation.
+**Total:** 33 requirements across 7 categories, mapped to 5 phases + 1 inserted phase (10–14 + 12.1). **All delivered** — shipped in `v1.1.0` on 2026-04-23.
 
 ### Phase → requirement rollup
 
