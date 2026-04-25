@@ -6,7 +6,7 @@
 
 **Prior:** `v1.0.0` (2026-04-14) + `v1.0.1` patch (2026-04-14) — single-binary Rust cron scheduler with terminal-green HTMX web UI, full Docker-API job execution including `--network container:<name>`, `@random` schedule resolver, hot config reload, Prometheus metrics, SSE log tail, multi-arch (amd64+arm64) GHCR release, and a documented threat model. 86/86 v1 requirements complete; audit verdict `passed`.
 
-**Next milestone:** v1.2 — planning to start via `/gsd-new-milestone`. No scope committed yet. Candidate themes from PROJECT.md § Future Requirements: webhook notifications, job concurrency limits and queuing, failure clustering / "what changed" context, per-job exit-code histogram, cross-run log search, job tagging / grouping.
+**Next milestone:** v1.2 — Operator Integration & Insight (in progress; kicked off 2026-04-25). Goal: make cronduit a participant in the operator's broader infrastructure — push notifications outward via webhooks, expose richer failure context inward, and let operators organize and integrate via tags and Docker labels. Five features in scope: webhook notifications, failure context on run detail, per-job exit-code histogram, job tagging/grouping, custom Docker labels (SEED-001). Cross-run log search and job concurrency/queuing punted to v1.3.
 
 ## What This Is
 
@@ -16,18 +16,31 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 
 **One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.** If everything else is cut, the scheduler must (1) execute jobs on time with full Docker networking support (especially `--network container:<name>` for VPN setups) and (2) let the operator see pass/fail, logs, and timing from a browser.
 
-## Next Milestone: v1.2 — TBD
+## Current Milestone: v1.2 — Operator Integration & Insight
 
-**Status:** Not yet scoped. Start via `/gsd-new-milestone` to define goal, theme, target features, release strategy, and requirements.
+**Goal:** Make cronduit a participant in the operator's broader infrastructure — push notifications outward via webhooks, expose richer failure context inward, and let operators organize and integrate their fleet via tags and Docker labels.
 
-Candidate themes (from § Future Requirements, subject to re-prioritization at kickoff):
+**Theme:** Expand — net-new operator-facing surface (substantially more new capability than v1.1's polish milestone). No scheduler-core refactor; primarily additive on top of the v1.1.0 codebase. Iterative `v1.2.0-rc.N` cadence expected with multiple rc cuts.
 
-- Webhook notifications on job state transitions (failure/success, per-job URL config, secret-aware).
-- Job concurrency limits and queuing (deep scheduler-core change; affects the `tokio::select!` loop + persistence + fairness).
-- Failure clustering / "what changed" context on run detail (first-failure timestamp, config-last-modified, image-pulled-at).
-- Per-job exit-code histogram on job detail page.
-- Cross-run log search across retention window.
-- Job tagging / grouping (`tags = ["backup", "weekly"]`; dashboard filter chips).
+**Target features (5):**
+
+*Outbound integration*
+- Webhook notifications on job state transitions — per-job URL + state-filter list (e.g. `["failed", "timeout", "stopped"]`); optional HMAC signing key per job; 3 attempts with exponential backoff retry. Configurable in `[defaults]` and per `[[jobs]]`; `use_defaults = false` disables defaults fallback (parallels SEED-001 / Docker labels override pattern).
+- Custom Docker labels on spawned containers (SEED-001) — `labels` map in `[defaults]` and per `[[jobs]]`, plumbed through to bollard `Config::labels`. Merge semantics, `cronduit.*` reserved namespace, and type-gating (docker-only) all locked at seed time. Same `[defaults]` + per-job + `use_defaults = false` override pattern as webhooks.
+
+*Insight on existing runs*
+- Failure context on run detail — time-based deltas (first-failure timestamp, consecutive-failure streak, link to last successful run) plus image-digest delta plus config-hash delta. Requires recording image digest at run-start (new column on `job_runs`).
+- Per-job exit-code histogram on job detail page — new card showing exit-code distribution over the last N runs (parallels the v1.1 p50/p95 duration card). Bucketed by exit code; inline server-rendered.
+
+*Organization*
+- Job tagging / grouping — `tags = ["backup", "weekly"]` on jobs; dashboard adds filter chips. UI-only — does NOT affect webhooks, search, or metrics labels (avoids unbounded Prometheus cardinality).
+
+**Release strategy:** Iterative `v1.2.0-rc.1`, `v1.2.0-rc.2`, ... cut at chunky checkpoints (likely after each functional block). `:latest` GHCR tag stays at `v1.1.0` until final `v1.2.0`. Phase numbering continues from v1.1 (which ended at Phase 14, with 12.1 inserted) — v1.2 starts at Phase 15.
+
+**Punted to v1.3 at kickoff:**
+
+- Cross-run log search across retention window — design ambiguity around naive LIKE vs SQLite FTS5 / Postgres tsvector engine choice; let v1.2 ship and observe usage data first.
+- Job concurrency limits and queuing — deep scheduler-core change (`tokio::select!` loop + persistence + fairness); too risky to bundle with v1.2's expand-shape work. Already on the v1.3 candidate list.
 
 ## Requirements
 
@@ -128,21 +141,26 @@ Candidate themes (from § Future Requirements, subject to re-prioritization at k
 
 <!-- Current scope. Building toward these. Hypotheses until shipped. -->
 
-**v1.2 — TBD** — scope not yet committed. Run `/gsd-new-milestone` to define requirements for the next cycle.
+**v1.2 — Operator Integration & Insight** (see `REQUIREMENTS.md` for the full testable list with REQ-IDs once generated)
+
+*Outbound integration*
+- [ ] Webhook notifications on job state transitions — per-job URL + state-filter list; HMAC signing; 3-attempt exponential backoff retry; `[defaults]` fallback with per-job override and `use_defaults = false` disable
+- [ ] Custom Docker labels on spawned containers (SEED-001) — `labels` map in `[defaults]` and per `[[jobs]]`; merge semantics + `cronduit.*` reserved namespace + type-gating locked at seed time
+
+*Insight on existing runs*
+- [ ] Failure context on run detail — time-based deltas (first-failure timestamp, streak, last-success link) + image-digest delta + config-hash delta; new `job_runs.image_digest` column with backfill
+- [ ] Per-job exit-code histogram on job detail page — new card showing distribution over the last N runs
+
+*Organization*
+- [ ] Job tagging / grouping — `tags = ["backup", "weekly"]`; UI-only filter chips on dashboard; does NOT affect webhooks, search, or metrics labels
 
 ### Future Requirements
 
 <!-- Scoped but not in the current milestone. Target versions are intent, not contracts — they may shift when that milestone is actually kicked off. -->
 
-**v1.2 — Feature expansion (tentative)**
-- Webhooks on job state transitions (failure/success, per-job URL config, secret-aware)
+**v1.3 — Search + concurrency + ergonomics deepening (tentative)**
+- Cross-run log search across retention window — engine choice (naive LIKE vs SQLite FTS5 / Postgres tsvector) deferred from v1.2 kickoff for usage-data-driven decision
 - Job concurrency limits and queuing (deep scheduler-core change; affects the `tokio::select!` loop + persistence + fairness)
-- Failure clustering / "what changed" context on run detail (first-failure timestamp, config-last-modified, image-pulled-at)
-- Per-job exit-code histogram on job detail page
-- Cross-run log search across retention window
-- Job tagging / grouping (`tags = ["backup", "weekly"]` in job config; dashboard filter chips)
-
-**v1.3 — Operational ergonomics deepening (tentative)**
 - Snooze a job for a duration (`until tomorrow 8am`, `for 2 hours`) without editing the config; auto-re-enable
 - Run history filters (status, date range, exit code) and sortable columns
 
@@ -287,4 +305,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-24 — v1.1 milestone closed via `/gsd-complete-milestone v1.1`. Six phases (10, 11, 12, 12.1, 13, 14) / 52 plans / 33 requirements / six rc cuts / final `v1.1.0` shipped 2026-04-23. `:latest` promoted from `:1.0.1` to `:1.1.0` on both archs. Next: `/gsd-new-milestone` to scope v1.2. Previous: 2026-04-18 — Phases 10, 11, 12 implementation-complete; rc.1 tag cut queued.*
+*Last updated: 2026-04-25 — v1.2 milestone "Operator Integration & Insight" kicked off via `/gsd-new-milestone`. Five features: webhooks (override pattern), failure context on run detail (time + image-digest + config-hash deltas), per-job exit-code histogram, job tagging (UI-only), custom Docker labels (SEED-001). Cross-run log search and job concurrency/queuing punted to v1.3. Phase numbering continues from v1.1's last (Phase 14) → v1.2 starts at Phase 15. Previous: 2026-04-24 — v1.1 milestone closed.*

@@ -1,38 +1,38 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: — Operator Quality of Life
-status: shipped
-stopped_at: v1.1.0 tagged and :latest advanced; milestone archived via /gsd-complete-milestone v1.1
-last_updated: "2026-04-24T18:00:00.000Z"
-last_activity: 2026-04-24 -- /gsd-complete-milestone v1.1 executed; archives written to .planning/milestones/v1.1-*; PROJECT/ROADMAP/MILESTONES/RETROSPECTIVE evolved; next step /gsd-new-milestone
+milestone: v1.2
+milestone_name: — Operator Integration & Insight
+status: defining
+stopped_at: v1.2 milestone kicked off via /gsd-new-milestone; PROJECT.md updated; awaiting research decision and requirements definition
+last_updated: "2026-04-25T03:30:00.000Z"
+last_activity: 2026-04-25 -- v1.2 milestone scoped (5 features: webhooks, failure context, exit-code histogram, tagging, docker labels); log search + concurrency punted to v1.3; v1.1 phase directories archived to .planning/milestones/v1.1-phases/
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 52
-  completed_plans: 52
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-24 — v1.1 milestone closed)
+See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** v1.2 kickoff — scope not yet defined. Run `/gsd-new-milestone` to begin.
+**Current focus:** v1.2 — Operator Integration & Insight. Defining requirements; phase numbering continues from v1.1 (last phase 14) → v1.2 starts at Phase 15.
 
 ## Current Position
 
-Milestone: v1.1 — Operator Quality of Life — ✅ SHIPPED 2026-04-23 (tag `v1.1.0`; rc tags `v1.1.0-rc.1` … `v1.1.0-rc.6`)
-Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: none active
-Plan: none active
-Status: Between milestones. v1.1 closed; v1.2 not yet started.
-Last activity: 2026-04-24 -- `/gsd-complete-milestone v1.1` ran; archives + retro + PROJECT/ROADMAP evolution complete
+Milestone: v1.2 — Operator Integration & Insight (in progress; kicked off 2026-04-25)
+Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
+Phase: Not started — defining requirements
+Plan: —
+Status: Defining requirements (post-questioning, pre-research-decision)
+Last activity: 2026-04-25 -- v1.2 scope confirmed: 5 features in scope (webhooks, failure context, exit-code histogram, tagging, docker labels); log search + concurrency moved to v1.3 candidate list
 
-Progress: [██████████] 100% (v1.1: 6/6 phases, 52/52 plans, 33/33 requirements Complete)
+Progress: [░░░░░░░░░░] 0% (v1.2: requirements definition not yet started)
 
 ## v1.1 Recap (archived)
 
@@ -92,7 +92,8 @@ None. All phase-plan open questions (Phase 10 `active_runs` merge, Phase 11 log-
 
 ### Pending Todos
 
-- `/gsd-new-milestone` — kick off v1.2. Scope not yet defined.
+- Continue `/gsd-new-milestone` workflow: research decision (Step 8) → requirements definition (Step 9) → roadmap creation (Step 10).
+- After roadmap is approved, run `/gsd-discuss-phase 15` to start the first v1.2 phase.
 
 ### Blockers/Concerns
 
@@ -123,9 +124,11 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-24 — `/gsd-complete-milestone v1.1` executed
-Stopped at: v1.1 milestone archived; STATE/ROADMAP/PROJECT/MILESTONES/RETROSPECTIVE all evolved; awaiting safety commit + REQUIREMENTS.md removal, then next milestone kickoff.
-Resume command: `/gsd-new-milestone` to scope v1.2.
+Last session: 2026-04-25 — `/gsd-new-milestone` v1.2 kickoff in progress
+Stopped at: v1.2 scope confirmed and PROJECT.md updated; STATE.md reset to defining; v1.1 phase directories archived to `.planning/milestones/v1.1-phases/`. Next gates: research decision, then requirements definition, then roadmap creation.
+Resume command: continue `/gsd-new-milestone` (research decision is the next user gate).
+
+**Planned Phase:** 15 (first v1.2 phase) — TBD by roadmapper
 
 Last activity: 2026-04-24 — milestone-close archives written (`.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`), `.planning/MILESTONES.md` v1.1 entry inserted, PROJECT.md current-state advanced to post-v1.1, ROADMAP.md collapsed into milestone groupings, RETROSPECTIVE.md v1.1 section appended with cross-milestone trends.
 
