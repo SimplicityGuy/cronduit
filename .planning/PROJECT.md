@@ -2,11 +2,11 @@
 
 ## Current State
 
-**Shipped:** v1.0.0 (2026-04-14), patched to v1.0.1 (2026-04-14) — single-binary Rust cron scheduler with terminal-green HTMX web UI, full Docker-API job execution including `--network container:<name>`, `@random` schedule resolver, hot config reload, Prometheus metrics, SSE log tail, multi-arch (amd64+arm64) GHCR release, and a documented threat model. 86/86 v1 requirements complete; audit verdict `passed`. v1.0.1 follow-up (PR #22) closed four post-ship gaps: GHCR OCI manifest annotations, `cmd`-on-non-docker validator, `delete = false` honored at cleanup, Debian 13 (trixie) builder, MIT license metadata. See [`MILESTONES.md`](MILESTONES.md) for the full v1.0 summary.
+**Shipped:** `v1.1.0` on 2026-04-23 — Operator Quality of Life polish milestone on top of the v1.0.1 codebase. Six phases (10, 11, 12, 12.1 inserted, 13, 14), 52 plans, 33/33 v1.1 requirements Complete. Adds a new `stopped` status with a per-run stop button wired through all three executors, per-job run numbers (`#1, #2, …`) backfilled via an idempotent three-file migration, zero-gap log backfill on navigate-back with id-based SSE dedupe, a new `/timeline` gantt page, dashboard sparklines + success-rate badges, job-detail p50/p95 duration trends, a CSRF-gated bulk enable/disable UX backed by a tri-state `jobs.enabled_override` column, a working out-of-the-box `docker compose up` healthcheck via a new `cronduit health` CLI + Dockerfile HEALTHCHECK, and a locked six-tag GHCR contract (`:X.Y.Z`, `:X.Y`, `:X`, `:latest`, `:rc`, `:main`). `:latest` promoted from `:1.0.1` to `:1.1.0` on both archs at final tag. No net-new external dependencies (one `rand 0.8 → 0.9` hygiene bump); one new nullable DB column. See [`MILESTONES.md`](../MILESTONES.md) and [`.planning/MILESTONES.md`](MILESTONES.md) for full history.
 
-**Next milestone:** v1.1 — Operator Quality of Life (in progress; 3 of 5 phases complete).
+**Prior:** `v1.0.0` (2026-04-14) + `v1.0.1` patch (2026-04-14) — single-binary Rust cron scheduler with terminal-green HTMX web UI, full Docker-API job execution including `--network container:<name>`, `@random` schedule resolver, hot config reload, Prometheus metrics, SSE log tail, multi-arch (amd64+arm64) GHCR release, and a documented threat model. 86/86 v1 requirements complete; audit verdict `passed`.
 
-**v1.1 rc.1 cut pending (as of 2026-04-18):** Phases 10 (Stop-a-Running-Job + Hygiene), 11 (Per-Job Run Numbers + Log UX), and 12 (Docker Healthcheck) are implementation-complete on branch `gsd/phase-12-context`. Phase 12 landed OPS-06/07/08 (new `cronduit health` CLI, Dockerfile HEALTHCHECK, compose-smoke CI workflow, release.yml rc-tag gating, and the maintainer rc-cut runbook). The `v1.1.0-rc.1` tag cut is a maintainer action (signed key, per Phase 12 D-13) queued for after the Phase 12 PR merges to `main`.
+**Next milestone:** v1.2 — planning to start via `/gsd-new-milestone`. No scope committed yet. Candidate themes from PROJECT.md § Future Requirements: webhook notifications, job concurrency limits and queuing, failure clustering / "what changed" context, per-job exit-code histogram, cross-run log search, job tagging / grouping.
 
 ## What This Is
 
@@ -16,30 +16,18 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 
 **One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.** If everything else is cut, the scheduler must (1) execute jobs on time with full Docker networking support (especially `--network container:<name>` for VPN setups) and (2) let the operator see pass/fail, logs, and timing from a browser.
 
-## Current Milestone: v1.1 — Operator Quality of Life
+## Next Milestone: v1.2 — TBD
 
-**Goal:** Make v1.0's feature surface genuinely pleasant to live with day-to-day, shipped iteratively via `v1.1.0-rc.N` releases as each chunk lands.
+**Status:** Not yet scoped. Start via `/gsd-new-milestone` to define goal, theme, target features, release strategy, and requirements.
 
-**Theme:** Longer-lived, bug-fix-and-polish milestone. No net-new capability surface area — every item either fixes a v1.0 behavior the operator has already hit in practice or makes existing information easier to see and act on. Feature additions (webhooks, queuing) are explicitly deferred to v1.2.
+Candidate themes (from § Future Requirements, subject to re-prioritization at kickoff):
 
-**Target features:**
-
-*Bug fixes (from v1.0.1 post-ship operator experience)*
-- Stop a running job — new `stopped` status, single hard kill, works for command/script/docker
-- Log refresh: lines rendering out of order after job completes
-- Log refresh: transient "error getting logs" that resolves on manual refresh
-- Log backfill on navigation — returning to a running job page should show prior lines from DB then attach to live SSE
-- Per-job run numbers — schema column + idempotent backfill migration on startup
-
-*Observability polish (highest-leverage subset)*
-- Run timeline view (gantt-style, last 24h / 7d, color-coded by status)
-- Per-job success-rate badge / sparkline on dashboard cards
-- Per-job duration trend (p50/p95) on the job detail page
-
-*Ergonomics*
-- Bulk enable/disable from dashboard with checkbox multi-select (design question — where does disabled state live given the read-only config file — resolved at phase-plan time)
-
-**Release strategy:** Iterative `v1.1.0-rc.1`, `v1.1.0-rc.2`, ... cut at chunky checkpoints (after bug-fix block, after observability block, after ergonomics). `:latest` GHCR tag stays at `v1.0.1` until final `v1.1.0`. Each rc gets `:v1.1.0-rc.N` plus a rolling `:rc` tag. Tag format uses semver pre-release notation (dot before `rc.N`).
+- Webhook notifications on job state transitions (failure/success, per-job URL config, secret-aware).
+- Job concurrency limits and queuing (deep scheduler-core change; affects the `tokio::select!` loop + persistence + fairness).
+- Failure clustering / "what changed" context on run detail (first-failure timestamp, config-last-modified, image-pulled-at).
+- Per-job exit-code histogram on job detail page.
+- Cross-run log search across retention window.
+- Job tagging / grouping (`tags = ["backup", "weekly"]`; dashboard filter chips).
 
 ## Requirements
 
@@ -107,31 +95,40 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 - ✓ GitHub Actions CI: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, multi-arch container build — v1.0 (Phase 1/9, just-only enforcement, openssl-check guard, `compose-smoke` job validating both compose examples)
 - ✓ README documentation sufficient for a new user to self-host — v1.0 (Phase 6/8, SECURITY-first README + `THREAT_MODEL.md`, validated by Phase 8 user walkthrough)
 
+**Scheduler / execution — v1.1**
+- ✓ Operator can stop a running job from the UI — `stopped` status distinct from `cancelled`/`failed`/`timeout`, single hard kill, works identically for command/script/docker executors — v1.1 (Phase 10, SCHED-09..14)
+- ✓ Run records carry a per-job sequential number (`job_run_number`) alongside the global ID, backfilled on upgrade via an idempotent three-file migration — v1.1 (Phase 11, DB-09..13)
+
+**Deployment / packaging — v1.1**
+- ✓ `docker compose up` with the shipped quickstart compose file reports the cronduit container as `healthy` out of the box — new `cronduit health` CLI + Dockerfile HEALTHCHECK (removed the busybox `wget --spider` dependency entirely) — v1.1 (Phase 12, OPS-06..08)
+- ✓ GHCR `:latest` tag only tracks released non-rc stable tags; new `:main` floating tag for bleeding-edge main builds; six-tag contract (`:X.Y.Z`, `:X.Y`, `:X`, `:latest`, `:rc`, `:main`) documented in README — v1.1 (Phase 12.1, OPS-09..10)
+
+**Log tail / UX — v1.1**
+- ✓ Navigating back to a running job's page shows prior log lines from DB then attaches to the live SSE stream without a gap (id-based dedupe via `data-max-id`) — v1.1 (Phase 11, UI-17, UI-18)
+- ✓ Log lines remain in chronological order across the live→static transition when a run completes — v1.1 (Phase 11, UI-18)
+- ✓ Transient "error getting logs" race on page load eliminated — sync insert on the API handler thread before returning the response — v1.1 (Phase 11, UI-19)
+- ✓ Per-job run numbers shown as the primary identifier in the run-history partial and run-detail breadcrumb; global id kept as a troubleshooting hint — v1.1 (Phase 11, UI-16, UI-20)
+
+**Observability polish — v1.1**
+- ✓ `/timeline` gantt-style run timeline (24h default, 7d toggle); single SQL query bounded by `LIMIT 10000`; EXPLAIN-verified on both SQLite and Postgres — v1.1 (Phase 13, OBS-01, OBS-02)
+- ✓ Dashboard sparklines + success-rate badges on every job card (`N=5` minimum, `stopped` excluded from denominator) — v1.1 (Phase 13, OBS-03)
+- ✓ Job detail page p50/p95 duration trends over the last 100 successful runs (`N=20` minimum) via Rust-side `stats::percentile` — v1.1 (Phase 13, OBS-04, OBS-05)
+- ✓ SQL-native percentile functions (`percentile_cont`) NOT used — structural parity locked via CI grep guard — v1.1 (Phase 13, OBS-05)
+
+**Ergonomics — v1.1**
+- ✓ Operator can multi-select jobs on the dashboard and bulk enable/disable them via a CSRF-gated `POST /api/jobs/bulk-toggle`; disabled state persists in a tri-state `jobs.enabled_override` column that survives config reloads (Airflow-style override model) — v1.1 (Phase 14, ERG-01, ERG-02, DB-14)
+- ✓ Settings page shows a "Currently overridden" audit section so operators never forget about manually-disabled jobs — v1.1 (Phase 14, ERG-03)
+- ✓ Reload (SIGHUP / API / file-watch) does NOT reset `enabled_override`; `upsert_job` never touches the column; `disable_missing_jobs` clears it at the same time as `enabled=0` — v1.1 (Phase 14, ERG-04)
+
+**Foundation / hygiene — v1.1**
+- ✓ `rand` crate bumped from `0.8` to `0.9` across all call sites (`@random` slot picker, CSRF token gen) — v1.1 (Phase 10, FOUND-12)
+- ✓ `Cargo.toml` version bumped from `1.0.1` to `1.1.0` on the first v1.1 commit; rc tags use semver pre-release format (`v1.1.0-rc.1` etc.) — v1.1 (Phase 10, FOUND-13)
+
 ### Active
 
 <!-- Current scope. Building toward these. Hypotheses until shipped. -->
 
-**v1.1 — Operator Quality of Life** (see `REQUIREMENTS.md` for the full testable list with REQ-IDs once generated)
-
-*Scheduler / execution*
-- [ ] Operator can stop a running job from the UI; run terminates with a new `stopped` status (distinct from `cancelled`/`failed`/`timeout`) — force kill, single hard stop
-- [ ] Run records have a per-job sequential number (`job_run_number`) alongside the existing global ID, backfilled on startup for existing rows via an idempotent migration
-
-*Deployment / packaging*
-- [ ] `docker compose up` with the shipped quickstart compose file reports the cronduit container as `healthy`, not `unhealthy`. Root cause hypothesis: busybox `wget --spider` misparses chunked-encoded responses from axum's `/health` handler even though the endpoint returns 200 + valid JSON. Fix path (TBD at phase-plan time): ship a `cronduit health` CLI subcommand that self-checks the local `/health` endpoint, OR embed a `HEALTHCHECK` directive in the Dockerfile, OR change the wget invocation pattern — whichever gives the smallest image + most reliable signal.
-
-*Log tail / UX*
-- [ ] Navigating back to a running job's page shows prior log lines from DB, then attaches to the live SSE stream without a gap
-- [ ] Log lines remain in chronological order across the live→static transition when a run completes
-- [ ] Transient "error getting logs" race on page load is eliminated (no manual refresh required)
-
-*Observability polish*
-- [ ] Dashboard has a run timeline view (gantt-style, last 24h / 7d, color-coded by status)
-- [ ] Each dashboard job card shows a success-rate badge and a short sparkline (rolling window)
-- [ ] Job detail page shows duration trend (p50/p95) over the last N runs
-
-*Ergonomics*
-- [ ] Operator can multi-select jobs from the dashboard and bulk enable/disable them (design: where "disabled" state lives given read-only config file — resolved at phase-plan time)
+**v1.2 — TBD** — scope not yet committed. Run `/gsd-new-milestone` to define requirements for the next cycle.
 
 ### Future Requirements
 
@@ -170,13 +167,18 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 
 **Who this is for.** First user is Robert's own homelab. v1.0 ships as public OSS at `github.com/SimplicityGuy/cronduit` — the tool is intended for outside adopters from day one, with docs and quality bar to match.
 
+**Codebase state at v1.1.0 (2026-04-23).**
+- ~14,500 lines of Rust in `src/` + expanded integration test suite (new `tests/stop_executors.rs`, `tests/process_group_kill.rs`, `tests/metrics_stopped.rs`, `tests/v11_bulk_toggle.rs` + `_pg.rs`, `tests/v13_timeline_explain.rs`, `tests/v13_timeline_timezone.rs`, `tests/dashboard_jobs_pg.rs` among others)
+- Edition 2024, rust-version 1.94.1
+- Tech stack unchanged from v1.0: tokio, axum 0.8, askama_web 0.15, sqlx 0.8, bollard 0.20, croner 3.0, Tailwind (standalone binary; upgraded v3 → v4 at start of v1.1), HTMX 2.0.4 (vendored). One dependency bump: `rand 0.8 → 0.9`.
+- 101 plans executed across 15 phases to date (v1.0 Phases 1–9: 49 plans; v1.1 Phases 10, 11, 12, 12.1, 13, 14: 52 plans)
+- CI matrix: `linux/{amd64,arm64} × {SQLite, Postgres}` + compose-smoke quickstart regression + OBS-05 `grep-no-percentile-cont` structural-parity gate
+- Release artifacts at v1.1.0: multi-arch image at `ghcr.io/SimplicityGuy/cronduit:v1.1.0` with tag-family expansion to `:X.Y.Z`, `:X.Y`, `:X`, `:latest`, `:rc`, `:main`
+
 **Codebase state at v1.0.0.**
 - ~14,000 lines of Rust (~10k src, ~4k tests)
-- Edition 2024, rust-version 1.94.1
-- Tech stack: tokio, axum 0.8, askama_web 0.15, sqlx 0.8, bollard 0.20, croner 3.0, Tailwind (standalone binary), HTMX 2.0.4 (vendored)
-- 49 plans executed across 9 phases between 2026-04-08 and 2026-04-14 (6 calendar days)
-- CI matrix: `linux/{amd64,arm64} × {SQLite, Postgres}` + compose-smoke quickstart regression
-- Release artifacts: multi-arch image at `ghcr.io/SimplicityGuy/cronduit:v1.0.0` + linux/{amd64,arm64} binaries
+- 49 plans across 9 phases in 6 calendar days (2026-04-08 → 2026-04-14)
+- CI matrix + release artifacts as above (v1.0.0/v1.0.1 tags)
 
 **Why it exists.** Existing schedulers don't cover the homelab Docker-native use case well:
 
@@ -192,6 +194,14 @@ Cronduit collapses those into one tool: define jobs in a config file, get a dash
 - The `metrics` facade + `metrics-exporter-prometheus` decoupling holds up — six cronduit families are eagerly described at boot with bounded-cardinality labels.
 - Hand-rolling the scheduler loop on `tokio::select!` (instead of `tokio-cron-scheduler`) was the right call — needed for `@random` + `random_min_gap` + in-flight survival across reload.
 - The `bollard` `auto_remove=false` + explicit post-drain remove pattern is required to avoid losing exit codes on container teardown (moby#8441 confirmed during Phase 4).
+
+**Validated v1.1 hypotheses.**
+- Polish-and-fix milestones land safely on top of a shipped v1.0 without refactoring the scheduler core — Phase 14's tri-state `enabled_override` avoided any `SchedulerCmd` loop changes, just a `Reload` fire after DB mutation.
+- Option A (insert-then-broadcast with `RETURNING id`) is cheap enough for log dedupe — T-V11-LOG-02 benchmark confirmed p95 insert latency < 50ms for 64-line batches on SQLite.
+- Three-file migrations (add nullable → backfill → add NOT NULL) are the right shape for schema-tightening changes — partial-failure recovery was never tested in anger during v1.1 but the shape remains the defensible default.
+- Rust-side percentile computation (not `percentile_cont`) is acceptable for dashboard-sized windows — performance dominated by the `LIMIT 100` scan, not the percentile math.
+- UAT-driven rc-loop (rc.3 → rc.6 on Phase 14) catches real operator-visible bugs (dashboard reflection, timeline bar CSS, `just` recipes, self-polling partials) that unit + integration tests missed. Worth the four extra rc cuts.
+- Maintainer-action tag cuts (D-13) scale cleanly — rc.1 through v1.1.0 all landed without the maintainer fighting the workflow.
 
 ## Constraints
 
@@ -239,6 +249,25 @@ Cronduit collapses those into one tool: define jobs in a config file, get a dash
 | Distroless → `alpine:3` runtime image (Phase 8) | Quickstart needed busybox for command/script example jobs to work end-to-end on first `docker compose up`; distroless lacks shell utilities the example jobs depend on | ✓ Settled (v1.0, Phase 8) — UID/GID 1000 preserved |
 | Tag and `Cargo.toml` version must match (always full semver) | Operator support / reproducibility — `cronduit --version` must equal the git tag | ✓ Settled (v1.0.0) |
 | Phase 9 has no v1 REQ-IDs ("n/a — operational hygiene phase") | Phase 9 added after v1 requirement set was locked; backfilling synthetic CI-* IDs would distort the traceability table | ✓ Settled (v1.0, Phase 9) — documented in `v1.0-MILESTONE-AUDIT.md` |
+| `RunControl` abstraction for Stop (not `kill_on_drop(true)`) | `kill_on_drop(true)` would orphan shell-pipeline grandchildren; `.process_group(0)` + `libc::kill(-pid, SIGKILL)` is the correct pattern (Research Correction #1) | ✓ Settled (v1.1, Phase 10) — process-group regression lock in `tests/process_group_kill.rs` |
+| `stopped` is a distinct terminal status, not `cancelled` | Operators need to tell "operator killed this" apart from "shutdown drained this" in both UI and metrics | ✓ Settled (v1.1, Phase 10) — metrics eagerly-declared label, CSS token, THREAT_MODEL note |
+| Dedicated `jobs.next_run_number` counter column (not `MAX + 1`) | Identical on SQLite + Postgres, avoids dialect-specific locking, race-free by design | ✓ Settled (v1.1, Phase 11) — DB-11 locked by T-V11-RUNNUM-10..11 |
+| Three-file per-backend migrations for `job_run_number` (add nullable → backfill → NOT NULL) | Partial-failure recovery requires the split; combined migrations are unrecoverable | ✓ Settled (v1.1, Phase 11) — DB-10 pattern reused in `jobs.enabled_override` Phase 14 migration |
+| Log dedupe: Option A (insert-then-broadcast with `RETURNING id`) | Benchmark T-V11-LOG-02 confirmed p95 insert latency < 50ms for 64-line batches on SQLite | ✓ Settled (v1.1, Phase 11) — UI-20 |
+| `/timeline` is a separate page, single SQL query bounded by `LIMIT 10000` | Dashboard query must stay tight; N+1 per-job scan would explode on large job fleets | ✓ Settled (v1.1, Phase 13) — OBS-01, OBS-02, EXPLAIN verified on both backends |
+| Rust-side percentile (no `percentile_cont`) | Structural parity requires identical code path on SQLite + Postgres | ✓ Settled (v1.1, Phase 13) — OBS-05 locked by `just grep-no-percentile-cont` CI guard |
+| `jobs.enabled_override` nullable tri-state (NULL = follow config, 0 = force disabled, 1 = force enabled) | Airflow-style; preserves config-source-of-truth semantics; `upsert_job` never touches the column | ✓ Settled (v1.1, Phase 14) — DB-14 locked by T-V11-BULK-01 |
+| Bulk disable does NOT terminate running jobs | Toast communicates this explicitly; operators use the Stop button (Phase 10) for forceful termination | ✓ Settled (v1.1, Phase 14) — ERG-02 |
+| No confirmation dialog for Stop or Bulk Disable | Consistent with Run Now (no confirmation); toast-only UX across all three | ✓ Settled (v1.1, Phases 10 + 14) |
+| `cronduit health` CLI + Dockerfile `HEALTHCHECK` (replaces busybox `wget --spider`) | Removes an ecosystem dependency with observable parsing quirks on chunked axum responses | ✓ Settled (v1.1, Phase 12) — OPS-06, OPS-07 |
+| D-10: `release.yml` rc-tag gating so rc pushes do NOT move `:latest` | rc tags are pre-releases by semver; `:latest` is the non-rc-stable contract | ✓ Settled (v1.1, Phase 12) — OPS-07 |
+| D-13: rc tag cuts are maintainer-action, NOT `workflow_dispatch` | Signing-key trust anchor lives on the maintainer's workstation, not in a GHA runner identity | ✓ Settled (v1.1, Phase 12) — carried forward to every subsequent rc/stable cut |
+| Six-tag GHCR contract (`:X.Y.Z`, `:X.Y`, `:X`, `:latest`, `:rc`, `:main`) | Documented negative-space: no `:edge`, `:nightly`, `:dev`, or per-branch tags | ✓ Settled (v1.1, Phase 12.1) — OPS-09, OPS-10, README six-row table |
+| `:main` floating tag: multi-arch build on every main push | Bleeding-edge operators pin `:main`; parity with release.yml build plumbing | ✓ Settled (v1.1, Phase 12.1) — OPS-10 |
+| Retroactive `:latest` retag via `docker buildx imagetools create` (not rebuild) | Manifest-list re-pointing is instant and idempotent; preserves per-platform layer digests | ✓ Settled (v1.1, Phase 12.1) — OPS-09 retroactive half |
+| UAT-driven rc loop (rc.3 → rc.6 on Phase 14) | Each UAT pass surfaces real operator-visible bugs that unit/integration tests missed; fixes land in-cycle, not on main | ✓ Settled (v1.1, Phase 14) — four fix PRs (#39, #40, #41) before `v1.1.0` tag |
+| `mark_run_orphaned` `WHERE status = 'running'` guard locked in by test | Research Correction #4 — without the guard, restart would overwrite `stopped`/`success`/`failed`/`timeout` rows | ✓ Settled (v1.1, Phase 10) — SCHED-13 |
+| Tailwind v3 → v4 migration landed at start of v1.1 | Dep refresh + Tailwind upgrade as a single PR avoided mixed-state churn later in the milestone | ✓ Settled (v1.1, PR #26) |
 
 ## Evolution
 
@@ -258,4 +287,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-18 — Phases 10, 11, 12 implementation-complete on `gsd/phase-12-context`. Phase 12 delivered OPS-06/07/08 (cronduit health subcommand, Dockerfile HEALTHCHECK, compose-smoke CI). `v1.1.0-rc.1` tag cut queued for after PR merge (maintainer action). Next: Phase 13 (observability polish + rc.2). Previous update: 2026-04-14 — v1.1 milestone kicked off.*
+*Last updated: 2026-04-24 — v1.1 milestone closed via `/gsd-complete-milestone v1.1`. Six phases (10, 11, 12, 12.1, 13, 14) / 52 plans / 33 requirements / six rc cuts / final `v1.1.0` shipped 2026-04-23. `:latest` promoted from `:1.0.1` to `:1.1.0` on both archs. Next: `/gsd-new-milestone` to scope v1.2. Previous: 2026-04-18 — Phases 10, 11, 12 implementation-complete; rc.1 tag cut queued.*

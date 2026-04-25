@@ -2,39 +2,39 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Operator Quality of Life
-status: executing
-stopped_at: Phase 14 shipped — PR #38 (stacked on #37); awaiting UAT before Wave 6
-last_updated: "2026-04-22T23:30:00.000Z"
-last_activity: 2026-04-22 -- Phase 14 PR #38 opened (stacked on quick-fix #37); awaiting maintainer UAT before Wave 6 (final flips)
+status: shipped
+stopped_at: v1.1.0 tagged and :latest advanced; milestone archived via /gsd-complete-milestone v1.1
+last_updated: "2026-04-24T18:00:00.000Z"
+last_activity: 2026-04-24 -- /gsd-complete-milestone v1.1 executed; archives written to .planning/milestones/v1.1-*; PROJECT/ROADMAP/MILESTONES/RETROSPECTIVE evolved; next step /gsd-new-milestone
 progress:
   total_phases: 6
-  completed_phases: 5
-  total_plans: 51
-  completed_plans: 50
-  percent: 98
+  completed_phases: 6
+  total_plans: 52
+  completed_plans: 52
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-14 — v1.1 milestone kicked off)
+See: `.planning/PROJECT.md` (updated 2026-04-24 — v1.1 milestone closed)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 14 — bulk-enable-disable-rc-3-final-v1-1-0-ship
+**Current focus:** v1.2 kickoff — scope not yet defined. Run `/gsd-new-milestone` to begin.
 
 ## Current Position
 
-Milestone: v1.1 — Operator Quality of Life
+Milestone: v1.1 — Operator Quality of Life — ✅ SHIPPED 2026-04-23 (tag `v1.1.0`; rc tags `v1.1.0-rc.1` … `v1.1.0-rc.6`)
 Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: 14 (bulk-enable-disable-rc-3-final-v1-1-0-ship) — IMPLEMENTATION COMPLETE; PAUSED AT UAT GATE
-Plan: 8 of 9 complete (14-09 final flips blocked on maintainer UAT pass)
-Status: Awaiting maintainer to run `.planning/phases/14-bulk-enable-disable-rc-3-final-v1-1-0-ship/14-HUMAN-UAT.md`
-Last activity: 2026-04-22 -- Phase 14 Waves 0-5 implemented (15/15 SQLite scoreboard tests green); HUMAN-UAT.md authored
+Phase: none active
+Plan: none active
+Status: Between milestones. v1.1 closed; v1.2 not yet started.
+Last activity: 2026-04-24 -- `/gsd-complete-milestone v1.1` ran; archives + retro + PROJECT/ROADMAP evolution complete
 
-Progress: [████████░░] 80% (4 of 5 v1.1 phases implemented — 10, 11, 12, 14 implemented; 12.1 inserted; 14 awaiting UAT + final flip)
+Progress: [██████████] 100% (v1.1: 6/6 phases, 52/52 plans, 33/33 requirements Complete)
 
-## v1.1 Phase Shape
+## v1.1 Recap (archived)
 
 ```mermaid
 flowchart LR
@@ -44,20 +44,19 @@ flowchart LR
     RC1 --> P121["Phase 12.1<br/>GHCR tag hygiene<br/>(INSERTED)"]
     P121 --> P13["Phase 13<br/>Observability<br/>+ rc.2 cut"]
     P13 --> RC2(["v1.1.0-rc.2"])
-    RC2 --> P14["Phase 14<br/>Bulk Toggle<br/>+ rc.3 + final"]
-    P14 --> SHIP(["v1.1.0<br/>FINAL SHIP"])
+    RC2 --> P14["Phase 14<br/>Bulk Toggle<br/>+ rc.3..rc.6"]
+    P14 --> SHIP(["v1.1.0<br/>SHIPPED"])
 
-    classDef phase fill:#1a1a1a,stroke:#7fbfff,stroke-width:2px,color:#e0e0ff
+    classDef done fill:#0a3d0a,stroke:#00ff7f,stroke-width:2px,color:#e0ffe0
     classDef inserted fill:#3d2a1a,stroke:#ffbf7f,stroke-width:2px,color:#ffe0c0
     classDef rc fill:#2a1a3d,stroke:#bf7fff,stroke-width:2px,color:#f0e0ff
     classDef ship fill:#00ff7f,stroke:#00ff7f,stroke-width:3px,color:#0a1a0a
-    class P10,P11,P12,P13,P14 phase
-    class P121 inserted
+    class P10,P11,P12,P13,P14,P121 done
     class RC1,RC2 rc
     class SHIP ship
 ```
 
-Phases 10–12 complete (rc.1 cut + verified 2026-04-19). Phase 12.1 inserted as urgent prerequisite for rc.2.
+All 6 phases complete, 6 rc cuts (`rc.1` → `rc.6`), final `v1.1.0` shipped 2026-04-23. Full v1.1 archive: `.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`.
 
 ## v1.0 Recap (archived)
 
@@ -83,38 +82,36 @@ Full v1.0 archive: `.planning/milestones/v1.0-ROADMAP.md`, `.planning/milestones
 
 ## Accumulated Context
 
-### Roadmap Evolution
-
-- **2026-04-19:** Phase 12.1 inserted after Phase 12 (URGENT): GHCR tag hygiene — pin `:latest` to released versions only, add `:main` floating tag for main builds, fix pre-existing `:latest` divergence from the v1.0.1 retag. Discovered during Phase 12 post-push verification; must land before Phase 13's rc.2 cut. See `.planning/phases/12.1-ghcr-tag-hygiene/`.
-
 ### Decisions
 
-All v1.0 decisions remain in `.planning/PROJECT.md` § Key Decisions. v1.1 scoping decisions (recorded 2026-04-14):
+All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions. The v1.1-era decisions (RunControl abstraction vs `kill_on_drop`, dedicated `jobs.next_run_number` counter, three-file tightening migration shape, Option A log dedupe, `/timeline` single-SQL query, Rust-side percentile, `jobs.enabled_override` tri-state, `cronduit health` CLI + Dockerfile HEALTHCHECK, release.yml D-10 rc-tag gating, D-13 maintainer-action tag cuts, six-tag GHCR contract, `:main` floating tag, retroactive `:latest` retag, UAT-driven rc loop, Tailwind v3 → v4 migration) are all captured there.
 
-- **Shape A: "Polish then expand"** — v1.1 is operator quality-of-life only. Net-new feature surface (webhooks, concurrency/queuing) deferred to v1.2.
-- **Iterative rc releases** — `v1.1.0-rc.N` cut at chunky checkpoints (after each functional block: bug fixes → observability → ergonomics). `:latest` GHCR tag stays at `v1.0.1` until final `v1.1.0`. Tag format uses semver pre-release notation (`v1.1.0-rc.1`, not `v1.1.0-rc1`).
-- **Phase numbering continues** — v1.1 starts at Phase 10 (v1.0 ended at Phase 9). No reset.
-- **Five phases, three rcs** — Phases 10–12 ship as rc.1, Phase 13 ships as rc.2, Phase 14 ships as rc.3 then is promoted to final v1.1.0. The rc tag is cut at the end of Phase 12, Phase 13, and Phase 14 respectively.
-- **Out of Scope reshuffled** — webhook notifications and job queuing/concurrency moved from "Out of Scope" to "Future Requirements (v1.2)" because Shape A's premise is that those capabilities *are* coming, just not this milestone. Email notifications remain fully out of scope.
-- **Bulk-disable design resolved** — `jobs.enabled_override` nullable tri-state column (NULL/0/1); `upsert_job` does NOT touch it; `disable_missing_jobs` clears it. Locked in Phase 14 details; no re-discussion needed at phase-plan time.
-- **Log dedupe design deferred** — Option A (insert-then-broadcast with `RETURNING id`) vs Option B (monotonic `seq: u64`) must be picked in Phase 11's PLAN.md before implementation. Recommendation: Option A with latency benchmark.
+### Open questions
 
-### Open questions for phase plans
-
-1. **Phase 10:** Merge `running_handles` into `active_runs` as a single `RunEntry { broadcast_tx, control }` map, or keep separate? (SUMMARY.md § Open Questions #2)
-2. **Phase 11:** Option A vs Option B for log-line id propagation. (SUMMARY.md § Open Questions #1)
-3. **Phase 12:** Reproduce the `(unhealthy)` root cause before declaring the fix complete. (SUMMARY.md § Open Questions #3)
+None. All phase-plan open questions (Phase 10 `active_runs` merge, Phase 11 log-id Option A vs B, Phase 12 `(unhealthy)` root-cause reproduction) were resolved during their respective phase plans.
 
 ### Pending Todos
 
-- `/gsd-plan-phase 10` — next step; decomposes Phase 10 (Stop-a-Job + hygiene preamble) into plans.
-- Create feature branch `gsd/phase-10-stop-a-job` (or similar) before landing any Phase 10 commits. All v1.1 work lands via PR on feature branches — no direct commits to `main`.
+- `/gsd-new-milestone` — kick off v1.2. Scope not yet defined.
 
 ### Blockers/Concerns
 
 None.
 
 Three Phase 9 UAT items from v1.0 are accepted as deferred to natural post-merge validation per the v1.0 audit verdict — see `.planning/milestones/v1.0-MILESTONE-AUDIT.md` § `deferred_post_merge_observation`. They are NOT blockers for v1.1.
+
+## Deferred Items
+
+Items acknowledged and deferred at v1.1 milestone close on 2026-04-24. All six surfaced by the pre-close open-artifact audit are **false positives** — the underlying work shipped and was validated, but the audit tool's heuristics do not recognize the completion markers in these file shapes. Recorded here for traceability.
+
+| Category | Item | Reason flagged | Actual status |
+|----------|------|----------------|---------------|
+| uat | 13/HUMAN-UAT.md | audit tool read "0 pending scenarios" as incomplete | Complete — maintainer runbook for rc.2 tag cut; rc.2 cut + verified 2026-04-21 (commits `7e43c1c`, `344263c`) |
+| uat | 14/14-08-UAT-RESULTS.md | audit tool read "0 pending scenarios" as incomplete | Complete — documents rc.3 UAT FAIL; rc.4/5/6/final resolved all findings (commits `c4b8267`, `7c5f6dd`, `a49898e`, final `v1.1.0` at `a49898e`) |
+| uat | 14/14-HUMAN-UAT.md | audit tool read "0 pending scenarios" as incomplete | Complete — all validation boxes ticked by maintainer at v1.1.0 sign-off (per `14-09-SUMMARY.md` Prerequisites table) |
+| verification | 12/12-VERIFICATION.md | front-matter `status: human_needed` | Complete — all three human-needed items (rc.1 tag cut, GHCR post-push verification, compose-smoke green on PR) closed 2026-04-19 |
+| quick_task | 260414-gbf-fix-defaults-merge-bug-issue-20-defaults | state file missing under `.planning/quick/` | Complete — archived with v1.0 milestone; recorded in `.planning/milestones/v1.0-MILESTONE-AUDIT.md` |
+| quick_task | 260421-nn3-fix-get-dashboard-jobs-postgres-j-enable | state file missing under `.planning/quick/` | Complete — landed in commits `07d81bb`, `7cb1a10`, `7917502`, `3b92a45` (PR #37); logged in Quick Tasks Completed table above |
 
 ### Quick Tasks Completed
 
@@ -126,10 +123,10 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-22T15:22:09.060Z
-Stopped at: Phase 14 UI-SPEC approved
-Resume command: after PR merges, run `/gsd-verify-work 12` once the rc.1 tag is pushed and GHCR state is confirmed. Then `/gsd-discuss-phase 13` or `/gsd-plan-phase 13` to start Phase 13 (observability polish + rc.2).
+Last session: 2026-04-24 — `/gsd-complete-milestone v1.1` executed
+Stopped at: v1.1 milestone archived; STATE/ROADMAP/PROJECT/MILESTONES/RETROSPECTIVE all evolved; awaiting safety commit + REQUIREMENTS.md removal, then next milestone kickoff.
+Resume command: `/gsd-new-milestone` to scope v1.2.
 
-Last activity: 2026-04-18 — Phase 12 executed (7/7 plans complete; MD-01 + MD-02 code review fixes applied inline; HUMAN-UAT.md persisted for 3 pending maintainer-action items)
+Last activity: 2026-04-24 — milestone-close archives written (`.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`), `.planning/MILESTONES.md` v1.1 entry inserted, PROJECT.md current-state advanced to post-v1.1, ROADMAP.md collapsed into milestone groupings, RETROSPECTIVE.md v1.1 section appended with cross-milestone trends.
 
-**Planned Phase:** 13 (Observability Polish (rc.2)) — 6 plans — 2026-04-21T16:37:01.010Z
+**Planned Phase:** none — milestone boundary.
