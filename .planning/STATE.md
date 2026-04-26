@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: roadmap_created
-stopped_at: v1.2 roadmap created (10 phases, 15-24); awaiting first /gsd-discuss-phase 15
-last_updated: "2026-04-25T04:15:00.000Z"
-last_activity: 2026-04-25 -- v1.2 roadmap created via /gsd-roadmapper. 10 phases (15-24), 41 requirements across 6 categories (FOUND/WH/LBL/FCTX/EXIT/TAG), three rc cuts planned (rc.1 after P20, rc.2 after P21, rc.3 after P23, final v1.2.0 in P24). REQUIREMENTS.md traceability table populated.
+status: Roadmap created; awaiting Phase 15 discuss/plan
+stopped_at: Phase 15 context gathered
+last_updated: "2026-04-26T01:47:01.571Z"
+last_activity: "2026-04-25 -- v1.2 roadmap written: 10 phases (15-24), 41 requirements mapped 100%, three rc cuts embedded in functional phases (rc.1 in P20, rc.2 in P21, rc.3 in P23), final v1.2.0 in P24."
 progress:
-  total_phases: 10
+  total_phases: 9
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -118,6 +118,7 @@ Full v1.0 archive: `.planning/milestones/v1.0-ROADMAP.md`, `.planning/milestones
 All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 
 **v1.2 decisions inherited from research/requirements (LOCKED):**
+
 - Webhook delivery worker shape: NEW module `src/webhooks/mod.rs` with bounded `tokio::sync::mpsc::channel(1024)` + dedicated worker task. Scheduler emits via `try_send` (NEVER await tx.send).
 - HMAC algorithm: SHA-256 ONLY (Standard Webhooks v1 spec). No algorithm-agility.
 - Webhook retry: 3 attempts at t=0, t=30s, t=300s with full-jitter (rand 0.8-1.2× multiplier).
@@ -172,8 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-25 — `/gsd-roadmapper` v1.2 roadmap creation
-Stopped at: Roadmap created (10 phases, 15-24); REQUIREMENTS.md traceability populated; STATE.md set to roadmap_created. Ready for `/gsd-discuss-phase 15`.
+Last session: --stopped-at
+Stopped at: Phase 15 context gathered
 Resume command: `/gsd-discuss-phase 15`
 
 **Planned Phase:** 15 — Foundation Preamble (Cargo 1.1.0→1.2.0 bump; cargo-deny CI preamble (non-blocking); webhook delivery worker foundation: bounded mpsc(1024) + dedicated worker task + drop counter; FOUND-15, FOUND-16, WH-02)
