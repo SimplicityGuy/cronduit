@@ -65,6 +65,15 @@ async fn seed_job(
     }
 }
 
+/// Phase 15 / WH-02 — per-test webhook channel. Receiver dropped immediately;
+/// `finalize_run`'s `try_send` returns `TrySendError::Closed` on the closed
+/// channel and is logged at error per D-04. These tests do not assert on
+/// webhook behavior so the noise is harmless.
+fn test_webhook_tx() -> mpsc::Sender<cronduit::webhooks::RunFinalized> {
+    let (tx, _rx) = cronduit::webhooks::channel_with_capacity(8);
+    tx
+}
+
 /// Spawn a minimal scheduler-loop driver that owns the mpsc receiver and
 /// replicates the SchedulerCmd::Stop arm body verbatim. Returns a JoinHandle
 /// so the caller can await the task after it finishes. This mirrors the
@@ -176,6 +185,7 @@ async fn stop_command_executor_yields_stopped_status() {
             "manual".to_string(),
             cancel,
             active_clone,
+            test_webhook_tx(),
         )
         .await
     });
@@ -260,6 +270,7 @@ async fn stop_script_executor_yields_stopped_status() {
             "manual".to_string(),
             cancel,
             active_clone,
+            test_webhook_tx(),
         )
         .await
     });
@@ -362,6 +373,7 @@ async fn stop_docker_executor_yields_stopped_status() {
             "manual".to_string(),
             cancel,
             active_clone,
+            test_webhook_tx(),
         )
         .await
     });

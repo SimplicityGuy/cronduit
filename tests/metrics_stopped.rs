@@ -168,6 +168,8 @@ async fn stop_increments_runs_total_stopped() {
     let pool_clone = pool.clone();
     let active_clone = active_runs.clone();
     let cancel = CancellationToken::new();
+    // Phase 15 / WH-02 — per-test webhook channel; receiver dropped.
+    let (webhook_tx_test, _webhook_rx_test) = cronduit::webhooks::channel_with_capacity(8);
     let exec_handle = tokio::spawn(async move {
         run_job(
             pool_clone,
@@ -176,6 +178,7 @@ async fn stop_increments_runs_total_stopped() {
             "manual".to_string(),
             cancel,
             active_clone,
+            webhook_tx_test,
         )
         .await
     });

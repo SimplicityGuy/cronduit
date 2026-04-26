@@ -25,6 +25,15 @@ fn test_active_runs() -> Arc<RwLock<HashMap<i64, RunEntry>>> {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
+/// Phase 15 / WH-02 — per-test webhook channel. The Receiver is dropped
+/// immediately. `finalize_run`'s `try_send` on a closed channel returns
+/// `TrySendError::Closed` (logged at error per D-04); the integration tests
+/// here do not assert on webhook behavior so this is harmless.
+fn test_webhook_tx() -> tokio::sync::mpsc::Sender<cronduit::webhooks::RunFinalized> {
+    let (tx, _rx) = cronduit::webhooks::channel_with_capacity(8);
+    tx
+}
+
 async fn setup_test_db() -> DbPool {
     let pool = DbPool::connect("sqlite::memory:").await.unwrap();
     pool.migrate().await.unwrap();
@@ -112,6 +121,7 @@ async fn test_command_job_fires_and_captures_logs() {
             "scheduled".to_string(),
             cancel,
             test_active_runs(),
+            test_webhook_tx(),
         )
         .await;
 
@@ -185,6 +195,7 @@ async fn test_script_job_fires_and_captures_logs() {
             "scheduled".to_string(),
             cancel,
             test_active_runs(),
+            test_webhook_tx(),
         )
         .await;
 
@@ -244,6 +255,7 @@ async fn test_failed_command_records_exit_code() {
             "scheduled".to_string(),
             cancel,
             test_active_runs(),
+            test_webhook_tx(),
         )
         .await;
 
@@ -291,6 +303,7 @@ async fn test_timeout_preserves_partial_logs() {
             "scheduled".to_string(),
             cancel,
             test_active_runs(),
+            test_webhook_tx(),
         )
         .await;
 
@@ -354,6 +367,7 @@ async fn test_sync_disables_removed_jobs() {
             "scheduled".to_string(),
             cancel,
             test_active_runs(),
+            test_webhook_tx(),
         )
         .await;
         assert_eq!(run_result.status, "success");
@@ -438,7 +452,8 @@ async fn test_concurrent_runs_same_job() {
                 job1,
                 "scheduled".to_string(),
                 cancel1,
-                test_active_runs()
+                test_active_runs(),
+                test_webhook_tx()
             ),
             run_job(
                 pool2,
@@ -446,7 +461,8 @@ async fn test_concurrent_runs_same_job() {
                 job2,
                 "scheduled".to_string(),
                 cancel2,
-                test_active_runs()
+                test_active_runs(),
+                test_webhook_tx()
             ),
         );
 

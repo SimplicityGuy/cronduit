@@ -239,6 +239,15 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cancel.clone(),
     ));
 
+    // Phase 15 / WH-02 / Task 1 placeholder — provisional webhook channel
+    // wired into the scheduler so the binary compiles. Task 3 of plan 15-04
+    // replaces this with the real `crate::webhooks::spawn_worker(...)` setup
+    // (NoopDispatcher + child cancel token + JoinHandle awaited after the
+    // scheduler drains). The receiver here is intentionally bound so it is
+    // not dropped immediately (which would produce TrySendError::Closed
+    // every time finalize_run emits, once Task 2 lands the emit body).
+    let (webhook_tx, _webhook_rx) = crate::webhooks::channel();
+
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(
         pool.clone(),
@@ -250,6 +259,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cmd_rx,
         config_path.to_path_buf(),
         active_runs,
+        webhook_tx,
     );
 
     // Serve web (blocks until cancel).
