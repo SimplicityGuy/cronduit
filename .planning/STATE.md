@@ -4,10 +4,10 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 15 context gathered
-last_updated: "2026-04-26T03:14:31.136Z"
-last_activity: 2026-04-26 -- Phase 15 planning complete
+last_updated: "2026-04-26T21:37:01.205Z"
+last_activity: 2026-04-26 -- Phase 15 execution started
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 0
   total_plans: 5
   completed_plans: 0
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** v1.2 — Operator Integration & Insight. Roadmap created (10 phases, 15-24); next gate is `/gsd-discuss-phase 15`.
+**Current focus:** Phase 15 — foundation-preamble
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 15 (planned next) — Foundation Preamble (FOUND-15, FOUND-16, WH-02)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-04-26 -- Phase 15 planning complete
+Phase: 15 (foundation-preamble) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 15
+Last activity: 2026-04-26 -- Phase 15 execution started
 
 Progress: [░░░░░░░░░░] 0% (v1.2: 0/10 phases complete; 0/— plans complete)
 
