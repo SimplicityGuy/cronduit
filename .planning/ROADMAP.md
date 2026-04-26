@@ -41,7 +41,7 @@
 
 ### 🚧 v1.2 Operator Integration & Insight (Phases 15–24) — IN PROGRESS
 
-- [ ] **Phase 15: Foundation Preamble** — `Cargo.toml` 1.1.0→1.2.0 bump, `cargo-deny` CI preamble (non-blocking), webhook delivery worker foundation (bounded `mpsc(1024)` + dedicated worker task + drop counter)
+- [x] **Phase 15: Foundation Preamble** — `Cargo.toml` 1.1.0→1.2.0 bump, `cargo-deny` CI preamble (non-blocking), webhook delivery worker foundation (bounded `mpsc(1024)` + dedicated worker task + drop counter) (completed 2026-04-26)
 - [ ] **Phase 16: Failure-Context Schema + run.rs:277 Bug Fix** — `DockerExecResult.container_id` field added and assignment corrected, `job_runs.config_hash` per-run column added (Option A), `get_failure_context(job_id)` single-query helper landed
 - [ ] **Phase 17: Custom Docker Labels (SEED-001)** — operator-defined `labels` plumbed through to `bollard::Config::labels`, merge semantics, `cronduit.*` reserved-namespace validator, type-gated validator, `${ENV_VAR}` interpolation in values, size limits
 - [ ] **Phase 18: Webhook Payload + State-Filter + Coalescing** — Standard Webhooks v1 payload schema (`payload_version: "v1"`), per-job + `[defaults]` config with `use_defaults = false` disable, edge-triggered streak coalescing (default fires on `streak_position == 1`, `fire_every` per-job override)
@@ -68,14 +68,14 @@
   3. An operator can fire a job whose webhook receiver is stalled for 60 seconds and the next scheduled jobs across the fleet still fire on time (no scheduler drift > 1 s) — the `try_send` non-blocking path holds.
   4. An operator can fill the bounded webhook queue past 1024 entries and observe `cronduit_webhook_delivery_dropped_total` increment with a `warn`-level log line per dropped event; the scheduler loop remains unaffected.
 
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans complete
 
 Plans:
 - [x] 15-01-PLAN.md — Cargo.toml version bump 1.1.0 -> 1.2.0 (FOUND-15; the very first v1.2 commit per D-12)
 - [x] 15-02-PLAN.md — cargo-deny CI preamble: deny.toml + just deny + ci.yml lint-job step with continue-on-error: true (FOUND-16)
 - [x] 15-03-PLAN.md — Webhook module skeleton: src/webhooks/{mod,event,dispatcher,worker}.rs + async-trait promotion + cronduit_webhook_delivery_dropped_total telemetry registration (WH-02)
 - [x] 15-04-PLAN.md — Scheduler integration: SchedulerLoop.webhook_tx field + run_job signature/call-site updates + finalize_run step 7d try_send emit + step 7d->7e renumber + bin-layer worker spawn with NoopDispatcher (WH-02)
-- [ ] 15-05-PLAN.md — Wave-0 integration tests: tests/v12_webhook_queue_drop.rs (T-V12-WH-04) + tests/v12_webhook_scheduler_unblocked.rs (T-V12-WH-03) + extend tests/metrics_endpoint.rs::metrics_families_described_from_boot with HELP/TYPE asserts for the drop counter (WH-02)
+- [x] 15-05-PLAN.md — Wave-0 integration tests: tests/v12_webhook_queue_drop.rs (T-V12-WH-04) + tests/v12_webhook_scheduler_unblocked.rs (T-V12-WH-03) + extend tests/metrics_endpoint.rs::metrics_families_described_from_boot with HELP/TYPE asserts for the drop counter (WH-02)
 
 ### Phase 16: Failure-Context Schema + run.rs:277 Bug Fix
 
@@ -239,7 +239,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 15. Foundation Preamble | 4/5 | In Progress|  |
+| 15. Foundation Preamble | 5/5 | Complete   | 2026-04-26 |
 | 16. Failure-Context Schema + run.rs Bug Fix | 0/— | Not started | — |
 | 17. Custom Docker Labels (SEED-001) | 0/— | Not started | — |
 | 18. Webhook Payload + State-Filter + Coalescing | 0/— | Not started | — |
