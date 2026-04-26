@@ -239,14 +239,20 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cancel.clone(),
     ));
 
-    // Phase 15 / WH-02 / Task 1 placeholder — provisional webhook channel
-    // wired into the scheduler so the binary compiles. Task 3 of plan 15-04
-    // replaces this with the real `crate::webhooks::spawn_worker(...)` setup
-    // (NoopDispatcher + child cancel token + JoinHandle awaited after the
-    // scheduler drains). The receiver here is intentionally bound so it is
-    // not dropped immediately (which would produce TrySendError::Closed
-    // every time finalize_run emits, once Task 2 lands the emit body).
-    let (webhook_tx, _webhook_rx) = crate::webhooks::channel();
+    // Phase 15 / WH-02 / D-03 — always-on webhook delivery worker.
+    // NoopDispatcher in P15; P18 swaps in HttpDispatcher against the same
+    // trait. The worker's lifetime is owned by this bin layer: scheduler
+    // shutdown fires the cancel token, and we await the worker's JoinHandle
+    // AFTER the scheduler finishes draining. Order matters — awaiting the
+    // worker before the scheduler drains would race finalize_run's last
+    // try_send calls with the worker's exit and produce noisy
+    // TrySendError::Closed errors in production logs.
+    let (webhook_tx, webhook_rx) = crate::webhooks::channel();
+    let webhook_worker_handle = crate::webhooks::spawn_worker(
+        webhook_rx,
+        std::sync::Arc::new(crate::webhooks::NoopDispatcher),
+        cancel.child_token(),
+    );
 
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(
@@ -267,6 +273,13 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
 
     // 8. Wait for scheduler to drain (Plan 04 will add timeout).
     let _ = scheduler_handle.await;
+
+    // Phase 15 / WH-02 — drain the webhook worker AFTER the scheduler
+    // finishes. The worker exits cleanly when the cancel token fires
+    // (because cancel.child_token() above) AND when the last Sender drops
+    // (which happens when SchedulerLoop is dropped at scheduler_handle
+    // completion). Either path triggers the worker_loop's break.
+    let _ = webhook_worker_handle.await;
 
     // 9. Drain pools before returning.
     pool.close().await;
