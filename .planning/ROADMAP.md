@@ -239,7 +239,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 15. Foundation Preamble | 5/5 | Complete   | 2026-04-26 |
+| 15. Foundation Preamble | 5/5 | Complete    | 2026-04-26 |
 | 16. Failure-Context Schema + run.rs Bug Fix | 0/— | Not started | — |
 | 17. Custom Docker Labels (SEED-001) | 0/— | Not started | — |
 | 18. Webhook Payload + State-Filter + Coalescing | 0/— | Not started | — |

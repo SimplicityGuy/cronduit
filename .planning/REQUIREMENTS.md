@@ -26,9 +26,9 @@ Continuation from v1.0/v1.1 FOUND-01..13.
 
 - [ ] **FOUND-14**: The `src/scheduler/run.rs:277` bug is fixed: `DockerExecResult` carries both `container_id: Option<String>` (from `create_container`) and `image_digest: Option<String>` (from `inspect_container().image`); `finalize_run` populates `job_runs.container_id` with the real container ID and `job_runs.image_digest` with the digest. Historical rows with `container_id = sha256:...` age out via Phase 6 retention; no data migration. `T-V12-FCTX-01`.
 
-- [ ] **FOUND-15**: `Cargo.toml` version is bumped from `1.1.0` to `1.2.0` on the first v1.2 commit. `cronduit --version` reports `1.2.0` from the very first v1.2 commit. rc tags use the semver pre-release format `v1.2.0-rc.1`, `v1.2.0-rc.2`, etc. The final ship is `v1.2.0`.
+- [x] **FOUND-15**: `Cargo.toml` version is bumped from `1.1.0` to `1.2.0` on the first v1.2 commit. `cronduit --version` reports `1.2.0` from the very first v1.2 commit. rc tags use the semver pre-release format `v1.2.0-rc.1`, `v1.2.0-rc.2`, etc. The final ship is `v1.2.0`.
 
-- [ ] **FOUND-16**: A new `cargo-deny` CI job runs `cargo deny check` on every PR (advisories + licenses + duplicate-versions). License allowlist matches the v1.0/v1.1 licensing posture (MIT/Apache-2.0/BSD-3-Clause/ISC/Unicode-DFS-2016 + project-specific exceptions). Failures are non-blocking initially (CI status WARN, not ERROR) for the first rc; promoted to blocking before final v1.2.0.
+- [x] **FOUND-16**: A new `cargo-deny` CI job runs `cargo deny check` on every PR (advisories + licenses + duplicate-versions). License allowlist matches the v1.0/v1.1 licensing posture (MIT/Apache-2.0/BSD-3-Clause/ISC/Unicode-DFS-2016 + project-specific exceptions). Failures are non-blocking initially (CI status WARN, not ERROR) for the first rc; promoted to blocking before final v1.2.0.
 
 ### Webhooks (WH) — new category
 
@@ -36,7 +36,7 @@ Inbound: scheduler emits a `RunFinalized` event on every terminal status. Outbou
 
 - [ ] **WH-01**: Operators can configure a webhook URL per job (`webhook = { url = "https://...", states = ["failed", "timeout", "stopped"] }`) and in `[defaults]`. The TOML `[defaults]` + per-job override + `use_defaults = false` disable pattern matches the existing config behavior (parallels SEED-001 / Docker labels — see LBL-01..05). `T-V12-WH-01`, `T-V12-WH-02`.
 
-- [ ] **WH-02**: A new module `src/webhooks/mod.rs` owns a dedicated tokio task that consumes `RunFinalized` events from a bounded `tokio::sync::mpsc::channel(1024)`. The scheduler emits via `try_send` (NEVER `await tx.send()`); on full queue, the event is dropped with a warn-level log AND a `cronduit_webhook_delivery_dropped_total` counter increment. The scheduler loop is never blocked by outbound HTTP. `T-V12-WH-03`, `T-V12-WH-04`.
+- [x] **WH-02**: A new module `src/webhooks/mod.rs` owns a dedicated tokio task that consumes `RunFinalized` events from a bounded `tokio::sync::mpsc::channel(1024)`. The scheduler emits via `try_send` (NEVER `await tx.send()`); on full queue, the event is dropped with a warn-level log AND a `cronduit_webhook_delivery_dropped_total` counter increment. The scheduler loop is never blocked by outbound HTTP. `T-V12-WH-03`, `T-V12-WH-04`.
 
 - [ ] **WH-03**: Webhook payloads adhere to the [Standard Webhooks v1 spec](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md): three required headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`); HMAC-SHA256 over `webhook-id.webhook-timestamp.payload` (as raw bytes); signature header value `v1,<base64-of-hmac>`. Payloads include a `payload_version: "v1"` field at the root for forward-compatibility. `T-V12-WH-05`, `T-V12-WH-06`, `T-V12-WH-07`.
 
@@ -170,10 +170,10 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | REQ-ID    | Phase | Status  |
 | --------- | ----- | ------- |
 | FOUND-14  | 16    | Pending |
-| FOUND-15  | 15    | Pending |
-| FOUND-16  | 15    | Pending |
+| FOUND-15  | 15    | Complete |
+| FOUND-16  | 15    | Complete |
 | WH-01     | 18    | Pending |
-| WH-02     | 15    | Pending |
+| WH-02     | 15    | Complete |
 | WH-03     | 18    | Pending |
 | WH-04     | 19    | Pending |
 | WH-05     | 20    | Pending |
