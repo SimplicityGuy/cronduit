@@ -177,12 +177,6 @@ async fn continue_run(
     active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
     webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
 ) -> RunResult {
-    // Phase 15 / WH-02 placeholder — the webhook_tx Sender is held until
-    // Task 2 inserts the new step 7d emit block in `finalize_run`. The
-    // explicit `let _ = ...` keeps `cargo clippy -- -D warnings` clean
-    // while Task 1 is committed in isolation.
-    let _ = &webhook_tx;
-
     // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
 
@@ -407,7 +401,55 @@ async fn continue_run(
         id: None,
     });
 
-    // 7d. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
+    // 7d. (Phase 15 / WH-02 / D-04 + D-05) Emit RunFinalized event for the
+    // webhook delivery worker. NEVER use the awaiting `send().await` form
+    // on this Sender — that would block the scheduler loop on a slow
+    // receiver (Pitfall 28). try_send returns immediately; on full queue
+    // we drop with a warn log + counter increment (D-04) so scheduler
+    // timing is preserved.
+    //
+    // started_at is recovered from the monotonic `start` Instant by
+    // subtracting from now: finished_at = Utc::now(); started_at =
+    // finished_at - chrono::Duration::from_std(start.elapsed()).
+    let finished_at = chrono::Utc::now();
+    let started_at = finished_at
+        - chrono::Duration::from_std(start.elapsed())
+            .unwrap_or_else(|_| chrono::Duration::zero());
+    let event = crate::webhooks::RunFinalized {
+        run_id,
+        job_id: job.id,
+        job_name: job.name.clone(),
+        status: status_str.to_string(),
+        exit_code: exec_result.exit_code,
+        started_at,
+        finished_at,
+    };
+    match webhook_tx.try_send(event) {
+        Ok(()) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(dropped)) => {
+            tracing::warn!(
+                target: "cronduit.webhooks",
+                run_id = dropped.run_id,
+                job_id = dropped.job_id,
+                status = %dropped.status,
+                "webhook delivery channel saturated — event dropped"
+            );
+            metrics::counter!("cronduit_webhook_delivery_dropped_total").increment(1);
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            // Worker has gone away — only happens during shutdown. P20 will
+            // add drain accounting (WH-10); P15 logs once per occurrence.
+            tracing::error!(
+                target: "cronduit.webhooks",
+                run_id,
+                job_id = job.id,
+                "webhook delivery channel closed — worker is gone"
+            );
+        }
+    }
+
+    // 7e. (renumbered from 7d in Phase 15) Remove broadcast sender so SSE
+    // subscribers get RecvError::Closed (UI-14, D-02).
     active_runs.write().await.remove(&run_id);
     drop(broadcast_tx);
 
