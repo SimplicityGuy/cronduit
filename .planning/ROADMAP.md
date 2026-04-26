@@ -68,10 +68,10 @@
   3. An operator can fire a job whose webhook receiver is stalled for 60 seconds and the next scheduled jobs across the fleet still fire on time (no scheduler drift > 1 s) — the `try_send` non-blocking path holds.
   4. An operator can fill the bounded webhook queue past 1024 entries and observe `cronduit_webhook_delivery_dropped_total` increment with a `warn`-level log line per dropped event; the scheduler loop remains unaffected.
 
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 
 Plans:
-- [ ] 15-01-PLAN.md — Cargo.toml version bump 1.1.0 -> 1.2.0 (FOUND-15; the very first v1.2 commit per D-12)
+- [x] 15-01-PLAN.md — Cargo.toml version bump 1.1.0 -> 1.2.0 (FOUND-15; the very first v1.2 commit per D-12)
 - [ ] 15-02-PLAN.md — cargo-deny CI preamble: deny.toml + just deny + ci.yml lint-job step with continue-on-error: true (FOUND-16)
 - [ ] 15-03-PLAN.md — Webhook module skeleton: src/webhooks/{mod,event,dispatcher,worker}.rs + async-trait promotion + cronduit_webhook_delivery_dropped_total telemetry registration (WH-02)
 - [ ] 15-04-PLAN.md — Scheduler integration: SchedulerLoop.webhook_tx field + run_job signature/call-site updates + finalize_run step 7d try_send emit + step 7d->7e renumber + bin-layer worker spawn with NoopDispatcher (WH-02)
@@ -239,7 +239,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 15. Foundation Preamble | 0/5 | Not started | — |
+| 15. Foundation Preamble | 1/5 | In Progress|  |
 | 16. Failure-Context Schema + run.rs Bug Fix | 0/— | Not started | — |
 | 17. Custom Docker Labels (SEED-001) | 0/— | Not started | — |
 | 18. Webhook Payload + State-Filter + Coalescing | 0/— | Not started | — |
