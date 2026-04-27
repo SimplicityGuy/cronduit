@@ -413,8 +413,7 @@ async fn continue_run(
     // finished_at - chrono::Duration::from_std(start.elapsed()).
     let finished_at = chrono::Utc::now();
     let started_at = finished_at
-        - chrono::Duration::from_std(start.elapsed())
-            .unwrap_or_else(|_| chrono::Duration::zero());
+        - chrono::Duration::from_std(start.elapsed()).unwrap_or_else(|_| chrono::Duration::zero());
     let event = crate::webhooks::RunFinalized {
         run_id,
         job_id: job.id,
