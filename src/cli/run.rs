@@ -239,6 +239,21 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cancel.clone(),
     ));
 
+    // Phase 15 / WH-02 / D-03 — always-on webhook delivery worker.
+    // NoopDispatcher in P15; P18 swaps in HttpDispatcher against the same
+    // trait. The worker's lifetime is owned by this bin layer: scheduler
+    // shutdown fires the cancel token, and we await the worker's JoinHandle
+    // AFTER the scheduler finishes draining. Order matters — awaiting the
+    // worker before the scheduler drains would race finalize_run's last
+    // try_send calls with the worker's exit and produce noisy
+    // TrySendError::Closed errors in production logs.
+    let (webhook_tx, webhook_rx) = crate::webhooks::channel();
+    let webhook_worker_handle = crate::webhooks::spawn_worker(
+        webhook_rx,
+        std::sync::Arc::new(crate::webhooks::NoopDispatcher),
+        cancel.child_token(),
+    );
+
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(
         pool.clone(),
@@ -250,6 +265,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cmd_rx,
         config_path.to_path_buf(),
         active_runs,
+        webhook_tx,
     );
 
     // Serve web (blocks until cancel).
@@ -257,6 +273,13 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
 
     // 8. Wait for scheduler to drain (Plan 04 will add timeout).
     let _ = scheduler_handle.await;
+
+    // Phase 15 / WH-02 — drain the webhook worker AFTER the scheduler
+    // finishes. The worker exits cleanly when the cancel token fires
+    // (because cancel.child_token() above) AND when the last Sender drops
+    // (which happens when SchedulerLoop is dropped at scheduler_handle
+    // completion). Either path triggers the worker_loop's break.
+    let _ = webhook_worker_handle.await;
 
     // 9. Drain pools before returning.
     pool.close().await;

@@ -214,6 +214,15 @@ grep-no-percentile-cont:
     fi
     echo "OK: no percentile_cont / percentile_disc / median( / PERCENTILE_ in src/ (comments ignored)"
 
+# Phase 15 / FOUND-16. Supply-chain hygiene gate: advisories + licenses +
+# duplicate-versions in a single invocation. Non-blocking on rc.1
+# (continue-on-error in ci.yml + bans.multiple-versions = "warn" in deny.toml);
+# promoted to blocking before final v1.2.0 (Phase 24).
+[group('quality')]
+[doc('cargo-deny supply-chain check (advisories + licenses + bans)')]
+deny:
+    cargo deny check advisories licenses bans
+
 # -------------------- DB / schema --------------------
 
 # Delete the dev SQLite database (WAL + SHM included)

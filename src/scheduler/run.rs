@@ -75,6 +75,7 @@ pub async fn run_job(
     trigger: String,
     cancel: CancellationToken,
     active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
+    webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
 ) -> RunResult {
     let start = tokio::time::Instant::now();
 
@@ -104,7 +105,17 @@ pub async fn run_job(
     );
 
     // 2. Hand off to the shared lifecycle helper.
-    continue_run(pool, docker, job, run_id, start, cancel, active_runs).await
+    continue_run(
+        pool,
+        docker,
+        job,
+        run_id,
+        start,
+        cancel,
+        active_runs,
+        webhook_tx,
+    )
+    .await
 }
 
 /// Execute a job run through its lifecycle with a PRE-INSERTED run_id.
@@ -126,6 +137,7 @@ pub async fn run_job_with_existing_run_id(
     run_id: i64,
     cancel: CancellationToken,
     active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
+    webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
 ) -> RunResult {
     let start = tokio::time::Instant::now();
     tracing::info!(
@@ -135,7 +147,17 @@ pub async fn run_job_with_existing_run_id(
         trigger = "manual",
         "run started (pre-inserted by handler — UI-19)"
     );
-    continue_run(pool, docker, job, run_id, start, cancel, active_runs).await
+    continue_run(
+        pool,
+        docker,
+        job,
+        run_id,
+        start,
+        cancel,
+        active_runs,
+        webhook_tx,
+    )
+    .await
 }
 
 /// Shared per-run lifecycle AFTER the `job_runs` row has been inserted.
@@ -144,6 +166,7 @@ pub async fn run_job_with_existing_run_id(
 /// the INSERT step; this helper handles everything downstream:
 /// broadcast channel creation, active_runs insertion, executor dispatch,
 /// log writer task lifecycle, finalization, metrics, cleanup.
+#[allow(clippy::too_many_arguments)]
 async fn continue_run(
     pool: DbPool,
     docker: Option<Docker>,
@@ -152,6 +175,7 @@ async fn continue_run(
     start: tokio::time::Instant,
     cancel: CancellationToken,
     active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
+    webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
 ) -> RunResult {
     // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
@@ -377,7 +401,54 @@ async fn continue_run(
         id: None,
     });
 
-    // 7d. Remove broadcast sender so SSE subscribers get RecvError::Closed (UI-14, D-02).
+    // 7d. (Phase 15 / WH-02 / D-04 + D-05) Emit RunFinalized event for the
+    // webhook delivery worker. NEVER use the awaiting `send().await` form
+    // on this Sender — that would block the scheduler loop on a slow
+    // receiver (Pitfall 28). try_send returns immediately; on full queue
+    // we drop with a warn log + counter increment (D-04) so scheduler
+    // timing is preserved.
+    //
+    // started_at is recovered from the monotonic `start` Instant by
+    // subtracting from now: finished_at = Utc::now(); started_at =
+    // finished_at - chrono::Duration::from_std(start.elapsed()).
+    let finished_at = chrono::Utc::now();
+    let started_at = finished_at
+        - chrono::Duration::from_std(start.elapsed()).unwrap_or_else(|_| chrono::Duration::zero());
+    let event = crate::webhooks::RunFinalized {
+        run_id,
+        job_id: job.id,
+        job_name: job.name.clone(),
+        status: status_str.to_string(),
+        exit_code: exec_result.exit_code,
+        started_at,
+        finished_at,
+    };
+    match webhook_tx.try_send(event) {
+        Ok(()) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(dropped)) => {
+            tracing::warn!(
+                target: "cronduit.webhooks",
+                run_id = dropped.run_id,
+                job_id = dropped.job_id,
+                status = %dropped.status,
+                "webhook delivery channel saturated — event dropped"
+            );
+            metrics::counter!("cronduit_webhook_delivery_dropped_total").increment(1);
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            // Worker has gone away — only happens during shutdown. P20 will
+            // add drain accounting (WH-10); P15 logs once per occurrence.
+            tracing::error!(
+                target: "cronduit.webhooks",
+                run_id,
+                job_id = job.id,
+                "webhook delivery channel closed — worker is gone"
+            );
+        }
+    }
+
+    // 7e. (renumbered from 7d in Phase 15) Remove broadcast sender so SSE
+    // subscribers get RecvError::Closed (UI-14, D-02).
     active_runs.write().await.remove(&run_id);
     drop(broadcast_tx);
 
@@ -534,6 +605,8 @@ mod tests {
             insert_test_job(&pool, "echo-job", "command", r#"{"command":"echo hello"}"#).await;
 
         let cancel = CancellationToken::new();
+        // Phase 15 / WH-02 — per-test webhook channel; receiver dropped.
+        let (webhook_tx_test, _webhook_rx_test) = crate::webhooks::channel_with_capacity(8);
         let result = run_job(
             pool.clone(),
             None,
@@ -541,6 +614,7 @@ mod tests {
             "scheduled".to_string(),
             cancel,
             test_active_runs(),
+            webhook_tx_test,
         )
         .await;
 
@@ -600,6 +674,8 @@ mod tests {
         .await;
 
         let cancel = CancellationToken::new();
+        // Phase 15 / WH-02 — per-test webhook channel; receiver dropped.
+        let (webhook_tx_test, _webhook_rx_test) = crate::webhooks::channel_with_capacity(8);
         let result = run_job(
             pool.clone(),
             None,
@@ -607,6 +683,7 @@ mod tests {
             "scheduled".to_string(),
             cancel,
             test_active_runs(),
+            webhook_tx_test,
         )
         .await;
 
@@ -652,6 +729,8 @@ mod tests {
         };
 
         let cancel = CancellationToken::new();
+        // Phase 15 / WH-02 — per-test webhook channel; receiver dropped.
+        let (webhook_tx_test, _webhook_rx_test) = crate::webhooks::channel_with_capacity(8);
         let result = run_job(
             pool.clone(),
             None,
@@ -659,6 +738,7 @@ mod tests {
             "scheduled".to_string(),
             cancel,
             test_active_runs(),
+            webhook_tx_test,
         )
         .await;
 
@@ -716,6 +796,8 @@ mod tests {
             .unwrap();
 
         let cancel = CancellationToken::new();
+        // Phase 15 / WH-02 — per-test webhook channel; receiver dropped.
+        let (webhook_tx_test, _webhook_rx_test) = crate::webhooks::channel_with_capacity(8);
         let result = run_job_with_existing_run_id(
             pool.clone(),
             None,
@@ -723,6 +805,7 @@ mod tests {
             pre_run_id,
             cancel,
             test_active_runs(),
+            webhook_tx_test,
         )
         .await;
 
@@ -781,9 +864,28 @@ mod tests {
 
         let active1 = test_active_runs();
         let active2 = test_active_runs();
+        // Phase 15 / WH-02 — per-test webhook channels; receivers dropped.
+        let (webhook_tx_test1, _webhook_rx_test1) = crate::webhooks::channel_with_capacity(8);
+        let (webhook_tx_test2, _webhook_rx_test2) = crate::webhooks::channel_with_capacity(8);
         let (r1, r2) = tokio::join!(
-            run_job(pool1, None, job1, "scheduled".to_string(), cancel1, active1),
-            run_job(pool2, None, job2, "scheduled".to_string(), cancel2, active2),
+            run_job(
+                pool1,
+                None,
+                job1,
+                "scheduled".to_string(),
+                cancel1,
+                active1,
+                webhook_tx_test1
+            ),
+            run_job(
+                pool2,
+                None,
+                job2,
+                "scheduled".to_string(),
+                cancel2,
+                active2,
+                webhook_tx_test2
+            ),
         );
 
         assert_ne!(

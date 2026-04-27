@@ -1,0 +1,64 @@
+# deny.toml — cargo-deny v0.19.x configuration for cronduit.
+# Phase 15 / FOUND-16. License allowlist matches v1.0/v1.1 posture.
+# `bans.multiple-versions = "warn"` is the rc.1 posture (D-10); promoted to
+# "deny" with a curated `skip` list before final v1.2.0 (Phase 24).
+
+[graph]
+# Restrict the dep graph to the targets cronduit actually ships for. Same
+# triples as `just openssl-check` / `cargo-zigbuild`.
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+all-features = true
+
+[advisories]
+# RustSec advisory DB (default source). No allowlisted IDs in rc.1.
+# If 15-02 surfaces a pre-existing advisory hit on a transitive dep, add
+# the ID here with a comment explaining why it's not exploitable in our
+# code path. Format:
+#   ignore = [
+#       "RUSTSEC-YYYY-NNNN", # rustls path X — analysis link
+#   ]
+ignore = []
+
+[licenses]
+# v1.0/v1.1 posture: every direct or transitive dep must carry one of
+# these SPDX identifiers. Adding a license to this list is a deliberate
+# decision — document the new dep + crates.io license rationale in a
+# comment when adding.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+]
+# Confidence threshold for license-detection heuristics. 0.93 is the
+# cargo-deny default and the right value unless proven otherwise.
+confidence-threshold = 0.93
+# `default`, `unlicensed`, `copyleft`, `allow-osi-fsf-free`, `deny` are
+# DEPRECATED in cargo-deny v0.19.x and emit errors. Do NOT add them.
+
+[bans]
+# rc.1 posture per D-10: log duplicate-version findings as warnings, do
+# NOT fail the bans check. Phase 24 will promote to "deny" with a curated
+# `skip = [...]` allowlist for transitive duplicates we accept (e.g., the
+# windows-sys / windows_x86_64_msvc families).
+multiple-versions = "warn"
+# Wildcards in dep version requirements are usually a smell; warn (not deny).
+wildcards = "warn"
+# Empty in rc.1; populate in Phase 24 with curated skips.
+skip = []
+skip-tree = []
+
+[sources]
+# Reject crates from any registry except crates.io (default-registry behavior).
+# Cronduit pulls only from crates.io; this guard catches an accidental
+# git-dep or alt-registry entry in Cargo.toml.
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

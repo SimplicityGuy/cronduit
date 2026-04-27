@@ -77,6 +77,11 @@ pub struct SchedulerLoop {
     /// Per-run authoritative records (shared with AppState for SSE, UI-14, and
     /// for plan 10-05 SchedulerCmd::Stop lookup). D-01: merged map.
     pub active_runs: Arc<RwLock<HashMap<i64, RunEntry>>>,
+    /// Phase 15 / WH-02 / D-03: always-on sender to the webhook delivery
+    /// worker. Cloned into every `run::run_job(...)` call so `finalize_run`
+    /// can emit `RunFinalized` at step 7d. The worker is spawned by the
+    /// bin layer (`src/cli/run.rs`) at startup with the matching Receiver.
+    pub webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
 }
 
 impl SchedulerLoop {
@@ -126,6 +131,7 @@ impl SchedulerLoop {
                                 "catch-up".to_string(),
                                 child_cancel,
                                 self.active_runs.clone(),
+                                self.webhook_tx.clone(),
                             ));
                             tracing::warn!(
                                 target: "cronduit.scheduler",
@@ -150,6 +156,7 @@ impl SchedulerLoop {
                                 "scheduled".to_string(),
                                 child_cancel,
                                 self.active_runs.clone(),
+                                self.webhook_tx.clone(),
                             ));
                             tracing::info!(
                                 target: "cronduit.scheduler",
@@ -194,6 +201,7 @@ impl SchedulerLoop {
                                     "manual".to_string(),
                                     child_cancel,
                                     self.active_runs.clone(),
+                                    self.webhook_tx.clone(),
                                 ));
                                 tracing::info!(
                                     target: "cronduit.scheduler",
@@ -225,6 +233,7 @@ impl SchedulerLoop {
                                     run_id,
                                     child_cancel,
                                     self.active_runs.clone(),
+                                    self.webhook_tx.clone(),
                                 ));
                                 tracing::info!(
                                     target: "cronduit.scheduler",
@@ -290,6 +299,7 @@ impl SchedulerLoop {
                                                 "manual".to_string(),
                                                 child_cancel,
                                                 self.active_runs.clone(),
+                                                self.webhook_tx.clone(),
                                             ));
                                         }
                                     }
@@ -309,6 +319,7 @@ impl SchedulerLoop {
                                                 rid,
                                                 child_cancel,
                                                 self.active_runs.clone(),
+                                                self.webhook_tx.clone(),
                                             ));
                                         } else {
                                             tracing::warn!(
@@ -555,6 +566,7 @@ pub fn spawn(
     cmd_rx: tokio::sync::mpsc::Receiver<cmd::SchedulerCmd>,
     config_path: PathBuf,
     active_runs: Arc<RwLock<HashMap<i64, RunEntry>>>,
+    webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
 ) -> JoinHandle<()> {
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
@@ -567,6 +579,7 @@ pub fn spawn(
         cmd_rx,
         config_path,
         active_runs,
+        webhook_tx,
     };
     tokio::spawn(scheduler.run())
 }
@@ -631,6 +644,12 @@ mod tests {
             id: job_id,
             ..make_test_job(job_id, "fast-job", "echo done")
         };
+        // Phase 15 / WH-02 — run::run_job now requires a webhook_tx Sender.
+        // Construct a per-test channel; the Receiver is dropped immediately.
+        // finalize_run's try_send on a closed channel returns
+        // TrySendError::Closed (logged at error per D-04); the test does
+        // not assert on webhook behavior so this is harmless.
+        let (webhook_tx_test, _webhook_rx_test) = crate::webhooks::channel_with_capacity(8);
         join_set.spawn(run::run_job(
             pool.clone(),
             None,
@@ -638,6 +657,7 @@ mod tests {
             "test".to_string(),
             child_cancel,
             test_active_runs(),
+            webhook_tx_test,
         ));
 
         // Cancel after a small delay to let the run start.
@@ -694,6 +714,12 @@ mod tests {
             id: job_id,
             ..make_test_job(job_id, "slow-job", "sleep 60")
         };
+        // Phase 15 / WH-02 — run::run_job now requires a webhook_tx Sender.
+        // Construct a per-test channel; the Receiver is dropped immediately.
+        // finalize_run's try_send on a closed channel returns
+        // TrySendError::Closed (logged at error per D-04); the test does
+        // not assert on webhook behavior so this is harmless.
+        let (webhook_tx_test, _webhook_rx_test) = crate::webhooks::channel_with_capacity(8);
         join_set.spawn(run::run_job(
             pool.clone(),
             None,
@@ -701,6 +727,7 @@ mod tests {
             "test".to_string(),
             child_cancel,
             test_active_runs(),
+            webhook_tx_test,
         ));
 
         // Cancel immediately.

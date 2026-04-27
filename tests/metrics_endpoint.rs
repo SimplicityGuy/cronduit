@@ -67,6 +67,16 @@ fn metrics_families_described_from_boot() {
         body.contains("# TYPE cronduit_run_failures_total counter"),
         "missing TYPE for cronduit_run_failures_total; body: {body}"
     );
+
+    // Phase 15 / WH-02 / D-11 — drop counter must render HELP/TYPE from boot.
+    assert!(
+        body.contains("# HELP cronduit_webhook_delivery_dropped_total"),
+        "missing HELP for cronduit_webhook_delivery_dropped_total; body: {body}"
+    );
+    assert!(
+        body.contains("# TYPE cronduit_webhook_delivery_dropped_total counter"),
+        "missing TYPE for cronduit_webhook_delivery_dropped_total; body: {body}"
+    );
 }
 
 // The stubs below remain intentional Nyquist compliance placeholders. They are

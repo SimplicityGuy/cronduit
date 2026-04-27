@@ -1,625 +1,442 @@
-# Feature Research — Cronduit v1.1 "Operator Quality of Life"
+# Feature Research — v1.2 (Operator Integration & Insight)
 
-**Domain:** Peer-tool calibration for a self-hosted cron scheduler with web UI, polish milestone on top of shipped v1.0
-**Researched:** 2026-04-14
-**Confidence:** HIGH on the execution/CI analogs (GitHub Actions, Jenkins, Rundeck, Cronicle, Buildkite, Hangfire, Nomad, Airflow) — verified against docs/issues. MEDIUM on the HTMX-specific UX patterns — the general SSE-resume pattern is HIGH but the "which flavor fits HTMX 2.x best" judgment is MEDIUM.
+**Domain:** Self-hosted Docker-native cron scheduler with web UI — Cronduit v1.2 milestone scope only
+**Researched:** 2026-04-25
+**Confidence:** HIGH on webhooks (Standard Webhooks spec + Svix + GitHub conventions verified), HIGH on Docker labels (SEED-001 already locks the design), HIGH on exit codes (Linux/Docker conventions are decades old), MEDIUM on tagging UX (no single dominant convention; multiple valid shapes), MEDIUM-HIGH on failure-context (drawing from Sentry / Cronitor / Healthchecks patterns, no single "the way")
 
-## Scope note
+## Executive Summary
 
-This document is a **calibration pass** on the v1.1 feature list already scoped in `.planning/PROJECT.md § Current Milestone`. It does **not** redesign any v1.0 feature; it answers "how do peer tools solve this, and where does cronduit's planned implementation sit on that spectrum?" The downstream consumer is `REQUIREMENTS.md` acceptance criteria + `gsd-roadmapper` phase splitting.
+v1.2 layers five additive features on top of the v1.1.0 codebase. Three of them — webhooks, Docker labels, and tagging — are well-trodden ground in the operator-tools ecosystem with clear conventions to copy. Two of them — failure context on run detail, and per-job exit-code histogram — are more cronduit-shaped: they exist as scattered features in adjacent products (Sentry's "First Seen", Cronitor's exit-code alerting, Komodor's exit-code reference) but have no canonical UX. Cronduit gets to define what good looks like for its homelab + Docker-native posture.
 
-The v1.0 research (`.planning/milestones/v1.0-research/FEATURES.md`) stays authoritative for everything cronduit already ships. This file only covers the nine v1.1 target features.
+The biggest research finding is that the **webhook** feature is the only one where v1.2 must commit to specific external contracts (header names, signature algorithm, retry schedule) at requirement-write time, because operators will write receiver code against them and we cannot churn the contract in v1.3. The **Standard Webhooks** spec ([standard-webhooks/standard-webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md)) is the right anchor: HMAC-SHA256, three required headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`), signed content `id.timestamp.payload`, with a recommended retry schedule spanning ~75 hours. Cronduit doesn't need that long a window for a homelab tool — 3 attempts over ~10 minutes is the right fit and aligns with the locked `[defaults]` description in PROJECT.md.
 
----
+For **Docker labels**, SEED-001 already locks the design. Research only confirmed that a `cronduit.*` reserved namespace is the right convention (Docker's [own docs](https://docs.docker.com/engine/manage-resources/labels/) recommend reverse-DNS prefixing for tooling; Traefik does this with `traefik.*`), and that the v1.2 scope should NOT add env-var overlay or `cronduit_*` synonyms — the TOML file is already the source of truth and a second config surface would muddy reload semantics.
+
+For **failure context**, the cheap signals operators consume are: time-based (first-failure timestamp, consecutive-failure streak, last-successful-run link) plus identity-based (image digest delta, config hash delta). Two additional cheap signals worth considering: **scheduler-fire-time vs run-start-time skew** (already on the run row) and **duration vs typical p50** (we already compute p50 in v1.1). All five fit on the existing run-detail page as an inline panel — a separate "Why did this fail?" page would scatter UX.
+
+For **per-job exit-code histogram**, the right shape is **bucket by raw exit code** with named-meaning tooltips for the well-known ones (0, 1, 2, 124, 125, 126, 127, 137, 139, 143). Last-seen-per-code alongside count is a Cronitor-style touch worth adding cheaply. Do NOT collapse to "0 vs non-zero" — that loses the signal a homelab operator most cares about (OOM-killed `137` vs application error `1`).
+
+For **tagging**, the right shape is **multi-tag per job, lowercase-normalized, alphanumeric + dash, server-side validation, URL-query-string filter persistence, chip-toggle filter UX**. Saved-server-side filters are out of scope for v1.2 — they imply a user model we don't have.
 
 ## Feature Landscape
 
-### Table Stakes (Peer tools universally ship these)
+### Table Stakes (v1.2 — Operators Expect These)
+
+These are features where absence makes the v1.2 milestone feel half-baked. Each has at least one direct competitor implementation we're matching.
 
 | Feature | Why Expected | Complexity | Notes |
-|---|---|---|---|
-| **Stop a running job from the UI** | Every comparable scheduler has an Abort/Kill/Stop button. Cronicle, Rundeck, Jenkins, Hangfire, Nomad, Airflow, GitHub Actions, dkron (via timeout only — see below) all ship it. A scheduler without a stop button forces the operator to `docker kill` from the host, which defeats the point of having a web UI. | MEDIUM | cronduit's planned single-hard-kill semantics are *unusual* — see the deep dive below. Expect this to be the most-contested calibration decision in v1.1. |
-| **Per-job run history with stable identifiers** | Operators say "run #42 of backup-postgres is wedged." Peer tools universally provide this via either a globally unique ID or a per-job sequential number (usually both). | LOW-MEDIUM | cronduit v1.0 has the globally unique `run_id`; v1.1 adds the per-job sequential number to match GitHub Actions' `run_number` / Buildkite's `build.number` convention. |
-| **Snapshot-then-follow log view** | Returning to a running job's log page must show the accumulated output first, then attach to live. Kubernetes Dashboard, Jenkins console, Cronicle's live watcher, `docker logs -f`, `kubectl logs -f --since` all do this. The "empty page that fills in from now" failure mode is universally considered a bug. | MEDIUM | v1.1 bug-fix scope already captures this. The standard pattern is **render DB rows, then open SSE with a `Last-Event-ID` cursor = last DB row id**. See LOG UX deep dive. |
-| **Chronologically ordered log output across live/static transitions** | If the run finishes mid-stream, the last few buffered SSE frames must not interleave with the DB re-render. This is a universally accepted correctness requirement. | LOW-MEDIUM | This is a bug fix on cronduit v1.0; every peer tool that ships a live tail has hit and fixed this bug at some point (Kubernetes Dashboard: kubernetes/dashboard#6468-ish class of bug; Jenkins console has a historical "duplicate last lines" bug with similar root cause). |
-| **Per-job success/fail visibility at a glance** | GitHub Actions workflow list, Airflow grid view, Buildkite pipeline overview, Jenkins "weather report", Cronicle dashboard tiles — every peer tool communicates "is this job healthy?" with a colored badge or icon on the dashboard. Not having it forces click-through for every job. | LOW | v1.1 success-rate badge is the cronduit version. |
+|---------|--------------|------------|-------|
+| **Webhook URL + state-filter list per job** | Every adjacent tool (Healthchecks.io, ofelia, Drone, Cronitor) lets operators pick which states fire a webhook. State filters are the default selectivity knob. | LOW | `url: String`, `states: Vec<TerminalStatus>` — defaults `["failed", "timeout", "stopped"]`. Inherit from `[defaults]` with `use_defaults = false` override (matches SEED-001 / labels). |
+| **HMAC-SHA256 signature header** | Industry-standard since GitHub popularized it ~2014. SHA-256 is the universal choice across [Stripe, GitHub, CircleCI, Zendesk, Shopify, Okta](https://inventivehq.com/blog/how-hmac-webhook-signatures-work-complete-guide). Operators expect to copy a verifier from any tutorial. | LOW | Use Standard Webhooks scheme: `webhook-signature: v1,<base64-sig>` over `webhook-id.webhook-timestamp.payload`. |
+| **Webhook delivery retry with exponential backoff + jitter** | Universal across [Hookdeck](https://hookdeck.com/outpost/guides/outbound-webhook-retry-best-practices), [Svix](https://www.svix.com/resources/webhook-best-practices/retries/), Stripe, Slack. A webhook that fails once and never retries is a footgun. ±20% jitter is the convention. | LOW | 3 attempts: t=0s, t≈30s (24-36s with jitter), t≈300s (240-360s). After 3 failures, persist as `delivery_failed` and surface in UI. |
+| **Distinguish retryable vs permanent failure** | Convention: 5xx + 408 + 429 + connection timeout = retry; 4xx (except 408/429) = give up. Hammering a 401 is rude. | LOW | Standard treatment. Document the rule in README. |
+| **Inspectable webhook delivery log per job** | Every webhook tool ships this — Stripe's "Recent deliveries" page, Healthchecks.io webhook activity, ofelia run history. Operators need "did the alert actually go out?" visibility. | MEDIUM | New table `webhook_deliveries` — `(job_id, run_id, url, attempt, status_code, response_body_excerpt, sent_at, latency_ms, outcome)`. Inline panel on job detail page; bounded retention (e.g. last 50 per job, follows existing log-retention pattern). |
+| **Custom Docker labels merged onto spawned containers (SEED-001)** | Most common homelab integration pattern (Traefik routing, Watchtower exclusion, backup label filtering) is blocked today. ofelia and docker-crontab support some flavor; cronduit emits only its internal labels. | LOW | SEED-001 locks: `labels: Map<String, String>` in `[defaults]` + `[[jobs]]`, type-gated to `docker` jobs, `cronduit.*` reserved, `use_defaults = false` replaces, otherwise per-job-wins on collision. |
+| **Reserved-namespace validation for operator labels** | Docker's [own labelling guidance](https://docs.docker.com/engine/manage-resources/labels/) mandates reverse-DNS prefixing; `com.docker.*`, `io.docker.*`, `org.dockerproject.*` are reserved. Traefik reserves `traefik.*`. Cronduit must reserve `cronduit.*` for the same reason — operator labels under `cronduit.*` would collide with internal orphan-reconciliation labels. | LOW | New validator in `src/config/validate.rs` per SEED-001. Fail config validation at load time with GCC-style error pointing at the offending key. |
+| **First-failure timestamp shown on a failed run** | Sentry's "First Seen" is canonical for error-tracking UX. The signal answers "is this brand-new or has it been failing for a week?" without scrolling run history. | LOW | Already computable from `job_runs` — `MIN(start_time) WHERE job_id=? AND status='failed' AND start_time >= last_success_time`. Renders as "First failure: 2 hours ago" inline. |
+| **Consecutive-failure streak counter** | Same axis as first-failure but more actionable — "this job has failed 4 times in a row" tells the operator whether to investigate this run or wait for a pattern. Healthchecks.io and Cronitor both expose this. | LOW | Computed from `job_runs` via terminal-status sequence scan; cached on the run-detail render path. |
+| **Link to last successful run** | Sentry / GitLab CI / Cronitor all do this. Operators want to compare logs/config/duration between the last-known-good and the failing run with one click. | LOW | Single SELECT `MAX(start_time) WHERE job_id=? AND status='success'`; render as breadcrumb-style link. |
+| **Image digest delta (Docker jobs only)** | When a Docker job starts failing right after an image bump, the digest delta is the smoking gun. Watchtower auto-updates make this a real homelab failure mode. | MEDIUM | Requires recording `image_digest` on `job_runs` at run-start (new nullable column + bollard `inspect_image` call). Compare current run's digest with last successful run's digest; render as "Image changed: `sha256:abc` → `sha256:def`" + delta highlight. |
+| **Config hash delta** | Did the config change recently? Cheap signal that's easy to compute (hash the resolved per-job config struct) and hard to miss when reading a failure UI. | LOW | `job_runs.config_hash` (new nullable column) — store SHA-256 of the resolved config struct at run-start. Compare with last successful run's hash. |
+| **Per-job exit-code histogram (last N runs)** | Cronitor's job-detail dashboard shows exit-code distribution. Komodor's [container-exit-codes guide](https://komodor.com/learn/exit-codes-in-containers-and-kubernetes-the-complete-guide/) confirms the bucketing operators care about (0, 1, 125-127, 137, 139, 143). For a Docker-native homelab tool, distinguishing OOM-kill (137) from app-error (1) from missing-binary (127) is the headline diagnostic. | LOW | Server-rendered card on job detail page (mirrors v1.1's p50/p95 card). Group-by `exit_code`, `COUNT(*)`, `MAX(start_time) AS last_seen` over the last 100 runs. |
+| **Named exit-code tooltips for well-known codes** | Operators won't memorize `137 = SIGKILL = OOM-killed-by-host`. Komodor's reference is the canonical lookup. Cronicle, Cronitor, and dkron either expose raw codes or omit the dimension; cronduit can do better cheaply. | LOW | Hard-coded lookup table in Rust: `0→"success", 1→"general error", 2→"misuse", 124→"timeout (coreutils)", 125→"docker run failed", 126→"command not executable", 127→"command not found", 128→"invalid exit", 130→"SIGINT (Ctrl-C)", 137→"SIGKILL (often OOM)", 139→"SIGSEGV (segfault)", 143→"SIGTERM (graceful)"`. Render as `<span title="...">137</span>`. |
+| **Multi-tag per job (`tags = ["backup", "weekly"]`)** | Multi-tag is the dominant convention in monitoring/scheduler tools (Cronitor, Healthchecks.io, Datadog). Single-tag would frustrate the homelab operator who wants to slice by both `env=prod` and `category=backup`. | LOW | TOML field on `[[jobs]]`, optional; deserialize as `Option<Vec<String>>`. |
+| **Tag normalization at config load** | UX disaster otherwise — `Backup`, `BACKUP`, `backup` all become separate filter chips. Industry-standard normalization is lowercase + trim + alphanumeric/dash only ([UI tagging conventions](https://schof.co/tags-ux-to-implementation/)). | LOW | Single regex pass at config-validate time; reject (don't silently mutate) tags that don't match `^[a-z0-9][a-z0-9-]{0,30}$`. Failing loudly is friendlier than silent mutation. |
+| **Tag filter chips on dashboard** | Industry-standard dashboard UX since ~2018; Datadog, Sentry, Cronitor all do chip-toggle multi-select with "Clear all". Server-rendered with HTMX query-param swap fits cronduit's stack. | LOW | `?tags=backup,weekly` query string drives a `WHERE tags && ARRAY[...]` filter (or LIKE-based for SQLite where we'll store tags as a JSON or comma-separated string). Toggling a chip swaps the dashboard partial. |
 
-### Differentiators (What cronduit can make distinctive)
+### Differentiators (Cronduit-Specific)
+
+These are features that go beyond what adjacent tools ship, leaning on Cronduit's homelab + Docker-native posture.
 
 | Feature | Value Proposition | Complexity | Notes |
-|---|---|---|---|
-| **Distinct `stopped` status (not `cancelled` / `aborted` / `killed`)** | Most peer tools conflate operator-initiated termination with "failed" (GitHub Actions: `cancelled` in the conclusion enum but stored as if completed; Jenkins: `ABORTED`; Rundeck: `aborted`; Airflow: `failed` unless you touch `mark success`). None use the word "stopped." cronduit's choice is a small but real UX distinctive — "stopped" reads as deliberate operator action, not a bug. | LOW (it's a taxonomy decision) | Flag: the *word* is a differentiator. The **semantics** (single hard kill) are the unusual bit. See STOP deep dive. |
-| **Run timeline / gantt inside the dashboard itself** | Airflow, Jenkins (Blue Ocean / Pipeline Graph View), Nomad, Dagster all ship timeline views — but they all require navigating *into* a specific DAG/pipeline/job first. A last-24h/7d timeline **on the main dashboard** that shows every job's runs at once is not standard; it's closer to a Grafana "heatmap of job runs" panel. Cronduit can make this first-class. | MEDIUM | See RUN TIMELINE deep dive. The 24h/7d window is standard; color coding conventions are established. |
-| **Per-job duration p50/p95 rendered from the run history table (no Prometheus dependency)** | Peer tools that show percentiles do it via an external Prometheus/Grafana stack (cronduit v1.0 already emits `cronduit_run_duration_seconds{job}` — the cleanest peer analog is "go look at Grafana"). Rendering p50/p95 inline from the persistence layer means operators without a Grafana stack still get it. | MEDIUM | See DURATION TREND deep dive. Minimum sample size threshold matters. |
-| **Bulk enable/disable with config-file-is-source-of-truth semantics** | This is genuinely rare. ofelia's runtime enable/disable state is lost on config reload. Sidekiq-cron has per-job disable but no bulk UI. Hangfire has no concept of "disable a recurring job" — you delete and re-add it. GitHub Actions has per-workflow disable but it's a GitHub setting, not a runtime override. None of them solve "runtime override of config state" cleanly, because they either *are* the source of truth (Cronicle, Rundeck, Hangfire — DB-first) or they *aren't trying* (systemd timers, ofelia). Cronduit picking the config-is-truth stance and still offering runtime disable would be a distinctive. | MEDIUM-HIGH | See BULK deep dive — the design question flagged in PROJECT.md is real and needs explicit resolution at phase-plan time. |
-
-### Anti-Features (peer-tool drift to explicitly reject)
-
-| Feature | Why Requested | Why Problematic | Alternative |
-|---|---|---|---|
-| **Graceful `SIGTERM → wait → SIGKILL` escalation for Stop** | Docker's own `docker stop` does this; Cronicle does TERM-then-KILL with a timeout; Rundeck tries to (with well-documented failures). It "feels" like the right thing. | Introduces a new configuration knob (grace period) per job type. Doubles the state machine: `stopping` → `stopped` vs. `stopping` → `timeout-during-stop` → `stopped`. Cronduit is a **polish milestone**; picking single hard kill means one new status, one new button, one test matrix. The graceful path is a legitimate v1.2+ feature if operators ask, but it's not table stakes. Note that `docker stop` itself falls back to SIGKILL eventually, so a single hard kill is just the degenerate case of the graceful path with timeout=0. | Ship v1.1 with single `docker kill -s KILL` / `process kill -9` / cancel-token-then-drop semantics. Document the limitation in the README. If v1.2 adds graceful termination, it's additive (new `stop_grace_period` job field, default 0s = current behavior). |
-| **Rundeck-style child process tree cleanup** | Rundeck has a [well-known bug class (#1038, #3160, #2105)](https://github.com/rundeck/rundeck/issues/1038) where "Kill Job" only kills the direct child, leaving grandchildren running. Operators will ask cronduit to walk process groups. | Process-group kill requires `setsid()` at spawn time, process-group-kill (`kill -TERM -pgid`) semantics, platform-specific behavior on macOS/BSD, and still doesn't help Docker jobs (which are a separate problem domain). For Docker jobs, `docker kill` on the top-level container already propagates correctly via the container's cgroup. | For `type = "command"` / `type = "script"`: document that cronduit kills the top-level process only; if operators run shell pipelines with backgrounding, they're responsible for process groups. For `type = "docker"`: `docker kill` is authoritative. |
-| **Stopping a job that's already terminal returns a helpful error** | "I pressed Stop and nothing happened" is a bad UX. Instinct is to return a 400 with a detailed message. | Jenkins / Rundeck / GitHub Actions all treat "stop on terminal state" as a silent no-op or a 404 / 409. Adding a custom error page for a race the operator cannot meaningfully recover from is polish-on-polish. | Silent no-op on terminal state. Return 409 Conflict with a body of "run is already in state `<status>`" for the API; the UI should hide/disable the Stop button as soon as the run polls into a terminal state. |
-| **Full web UI job editor / "add job from the dashboard"** | Operators will ask "why can't I just add a job here instead of editing TOML?" | Violates the **config file is the source of truth** locked decision (PROJECT.md Key Decisions + v1.0 validated requirements). v1.0 research FEATURES.md already called this out as an anti-feature. | Keep the UI read-mostly. Bulk enable/disable is the only runtime state write the UI should gain in v1.1. Job CRUD remains edit-the-TOML-and-reload. |
-| **Auth inside cronduit so the Stop button isn't an unauthenticated destructive action** | Shipping a "kill my running backup" button with no auth does feel uncomfortable. | PROJECT.md Out of Scope is explicit: v1 assumes loopback / trusted LAN / reverse proxy. Adding auth to gate *one* new button would open the door to auth creep across the UI. | Document in README + THREAT_MODEL.md that Stop is one of the destructive actions operators gate behind their reverse proxy. Default bind is already `127.0.0.1` per v1.0. |
-| **Workflow DAGs / "stop the downstream chain when I stop this job"** | "If I kill this job, shouldn't dependent jobs also be killed?" | PROJECT.md Out of Scope is explicit: no job dependencies. This is Airflow/Dagster territory. | Jobs are independent. Stopping one stops exactly one run. |
-| **Webhook / chain notification on stop** | "I want Slack to know when I stopped a job so the team isn't confused" | v1.2 Future Requirements already captures webhooks on state transitions. | Defer. When v1.2 webhooks ship, `stopped` will be one of the transitions that fires the webhook. |
-| **Live container exec / web terminal into a running job** | "I want to see what's happening inside the container right now before I kill it" | Security boundary, auth requirement (see above), websocket protocol, TTY handling. v1.0 research already flagged this as an anti-feature. | `docker exec` from the host. Live log tail is what cronduit gives you. |
-| **Export run history as CSV / JSON from the UI** | "I want to chart this in Excel" | Low value add, nontrivial surface area, better served by direct SQLite queries (`sqlite3 cronduit.db 'SELECT ... FROM job_runs'`) or scraping `/metrics`. | Not in v1.1. Maybe v1.4 if operators actually ask. |
-| **Replayable ad-hoc one-shot runs (run a command not in config)** | "I want to run `df -h` on the host from the dashboard" | PROJECT.md Out of Scope: config is the single source of truth for what runs. Adding ad-hoc exec is an auth + threat-model reopen. | Not in v1.1 or any version. |
-
----
-
-## Feature deep dives
-
-### 1. STOP A JOB
-
-#### Peer-tool reference implementations
-
-| Tool | Endpoint / mechanism | Terminal status | Notes |
-|---|---|---|---|
-| **Jenkins** | `BUILD_URL/stop` (graceful), `/term` (forcible), `/kill` (hard-kill pipeline) — [docs](https://www.jenkins.io/doc/pipeline/steps/workflow-basic-steps/) | `ABORTED` (one of `SUCCESS`/`FAILURE`/`UNSTABLE`/`NOT_BUILT`/`ABORTED`) — [Result javadoc](https://javadoc.jenkins-ci.org/hudson/model/Result.html) | Three-tier escalation, visible to users. The word Jenkins uses throughout the UI is "Abort." |
-| **Rundeck** | `POST /execution/{id}/abort` — [docs](https://docs.rundeck.com/docs/manual/07-executions.html) | `aborted` (one of `running`/`succeeded`/`failed`/`aborted`/`timedout`/`scheduled`/`failed-with-retry`) | Known child-process cleanup bugs ([#1038](https://github.com/rundeck/rundeck/issues/1038), [#2105](https://github.com/rundeck/rundeck/issues/2105), [#3160](https://github.com/rundeck/rundeck/issues/3160)). Mapped internally as `cancel`. |
-| **Cronicle** | "Abort" link on Home tab; child processes get SIGTERM with a configurable timeout, then SIGKILL | "Aborted" tag on the run | [#248](https://github.com/jhuckaby/Cronicle/issues/248) documents incomplete child-process cleanup even with the TERM→KILL escalation. |
-| **GitHub Actions** | Cancel workflow run button | Status `completed` / Conclusion `cancelled` — [docs](https://github.com/orgs/community/discussions/70540) | Uses the word "cancelled." `cancelled` counts as "not success" for branch protection. Note it's a `conclusion`, not a `status` — GHA's two-field model keeps "is it still running?" separate from "what happened?" |
-| **Hangfire** | Dashboard "Delete" button on a Processing job. Actual termination relies on the job's `CancellationToken` being respected. | `Deleted` (succeeded/failed/deleted are the three completion states) — [discuss thread](https://discuss.hangfire.io/t/cancel-a-running-job/603) | [#1298](https://github.com/HangfireIO/Hangfire/issues/1298) — "Deleting jobs does not stop them." Job is removed from the UI's Processing list immediately but may continue running for minutes. Cautionary tale. |
-| **Nomad** | `nomad alloc stop <alloc>` or `nomad job stop <job>` | allocation goes to `complete`/`failed`; no distinct `stopped` status | Nomad's taxonomy is `Pending` / `Running` / `Dead`; the user-initiated stop is not visibly distinct from natural completion. |
-| **dkron** | **No explicit kill command.** [Stop a running job discussion #1261](https://github.com/distribworks/dkron/discussions/1261) confirms it. The shell executor's timeout is the only abort path. | n/a | Flag: dkron is the one peer tool that *doesn't* ship Stop. Operators are expected to set timeouts and wait. |
-| **Airflow** | `Mark as failed` / `Mark as success` on the task/DAG run; signal-based cancellation via `/trigger/{dag}/clear?task_id=...` flow | Status enum: `success`/`running`/`failed`/`up_for_retry`/`upstream_failed`/`skipped`/`queued`/`scheduled` | Has no explicit operator-stopped status; the DAG run is marked `failed` when the task is killed. |
-
-#### Calibration verdicts for cronduit v1.1
-
-**Status word — `stopped`** — **MILD DIFFERENTIATOR, LOW RISK.** Every peer tool uses a different word (`aborted`, `cancelled`, `killed`, `failed`, `deleted`). There's no de facto convention, so cronduit can use `stopped` without contradicting expectations. The word "stopped" is friendlier than "aborted" and more precise than "cancelled" (which implies "before it started running"). Ship it.
-
-**Single hard kill — UNUSUAL, FLAG FOR README.** Six of the eight peer tools do graceful-then-force (`SIGTERM → wait → SIGKILL`): Docker, Cronicle, Jenkins (via `/stop`), Hangfire (via `CancellationToken`), Rundeck, Airflow. Two don't (dkron has no stop at all; GitHub Actions' cancel is implementation-defined per runner and generally best-effort). Choosing single hard kill is *defensible* because:
-
-1. Cronduit is a **polish milestone** — the smallest state machine wins. `stopping` → `stopped` with no intermediate timeout is one new status, one new button.
-2. `docker stop` itself degrades to SIGKILL eventually, so single hard kill is the degenerate case of a graceful stop with timeout=0.
-3. For `type = "docker"` jobs, `docker kill -s KILL` is semantically "container goes away right now, all its children go with it via cgroup termination." No process-tree walk needed. This is cleaner than the equivalent for local commands.
-4. The moby#8441 race that v1.0 already documented (auto_remove=false + explicit remove) means cronduit already has to wait+remove after kill. The exit-code capture path is already built.
-
-But it's unusual. **README should explicitly say: "Stop kills immediately (SIGKILL / `docker kill -s KILL`). There is no grace period. Use per-job `timeout` for graceful bounds."**
-
-**`docker kill -s KILL` over bollard — STRAIGHTFORWARD.** bollard's `kill_container` takes a `KillContainerOptions { signal: Some("KILL") }`. No orchestration needed. Make sure the post-kill flow matches the existing moby#8441 pattern (wait_container → remove_container), marking the run `stopped` on the way out.
-
-**"Cannot stop terminal state" error handling — SILENT NO-OP IS STANDARD.** Peer-tool precedent: Jenkins' `/stop` on a terminal build is a no-op with 302 back to the build page; Rundeck returns a body like `{"abortstate":"failed", "reason":"Job is not running"}` but with HTTP 200; GitHub Actions' UI hides the cancel button once the run is terminal; Cronicle's Abort link just disappears. The convention is: **hide the button client-side the moment polling reports a terminal status; accept the race on the server with a 409 Conflict + terse body if the POST lands during the transition.** No detailed error message needed.
-
-#### Acceptance-criteria implications for REQUIREMENTS.md
-
-- **REQ: Stop button renders only when run status is `running`.** (Hidden the instant polling sees `stopped`/`success`/`failed`/`timeout`/`cancelled`.)
-- **REQ: `POST /api/runs/:id/stop` returns 202 on running runs, 409 on terminal runs.** No grace period. No "are you sure?" confirm dialog in v1.1 (polish, not v1.0 parity).
-- **REQ: On success, status transitions atomically from `running` → `stopped` with a recorded `stopped_at` timestamp and a reason field (default: "stopped by operator").** `exit_code` should be `null` (NOT 137/143; those are signal numbers, and the operator didn't care). Distinguishes the row from `timeout`-terminated runs on inspection.
-- **REQ: For `type = "docker"` jobs, the container is `docker kill -s KILL`'d via bollard, then the v1.0 wait_container→remove_container flow runs to completion. Exit code is captured as normal but the run row is `stopped` regardless of the exit code.**
-- **REQ: For `type = "command"` / `type = "script"` jobs, the spawned process is killed via the existing tokio cancellation token + `kill_on_drop(true)` pattern. No process-group walk.** Document in README that shell pipelines inside a `script` may leak grandchildren.
-- **REQ: The new `stopped` status is visible in the run history table, on the job detail page, on the dashboard card, and in `/metrics` as a new label value on `cronduit_runs_total{status="stopped"}`.**
-
----
-
-### 2. PER-JOB RUN NUMBERS
-
-#### Peer-tool reference implementations
-
-| Tool | Format | Per-job or global | Mechanism | Source |
-|---|---|---|---|---|
-| **GitHub Actions** | `${{ github.run_number }}` | **Per workflow** (unique per workflow file in a repo; begins at 1, increments, does not change on re-run) | Incrementing counter maintained by GitHub per-workflow. Also exposes `github.run_id` for globally unique. | [docs discussion](https://github.com/orgs/community/discussions/26709), [workflow syntax](https://docs.github.com/actions/using-workflows/workflow-syntax-for-github-actions) |
-| **Buildkite** | `BUILDKITE_BUILD_NUMBER` (e.g., `27`) | **Per pipeline** | Incremented per build, "may have occasional gaps." Each build also has a global `build.id` UUID. | [Builds API](https://buildkite.com/docs/apis/rest-api/builds) |
-| **Jenkins** | `#142` (in `jobname #142`) | **Per job** | `BUILD_NUMBER` env var; Jenkins maintains a next-build-number file per job on disk. | [builtin Jenkins convention] |
-| **Cronicle** | No per-job run number; uses a global `job_id` UUID | Global only | Run history lists by time. | [Cronicle WebUI docs](https://github.com/jhuckaby/Cronicle/blob/master/docs/WebUI.md) |
-| **Rundeck** | Global execution ID only | Global | `/execution/{id}` endpoint | [Executions docs](https://docs.rundeck.com/docs/manual/07-executions.html) |
-| **Airflow** | Run ID is a string (typically `scheduled__<logical_date>` or `manual__<timestamp>`); no integer counter | Neither, really | Historical: Airflow prefers logical dates; there is no `#142` convention. | [Airflow docs] |
-| **Nomad** | Allocation ID UUID; no per-job counter | Global | | [Nomad docs] |
-| **Hangfire** | Global `jobId` integer | Global | | [Hangfire docs] |
-
-#### Calibration verdicts for cronduit v1.1
-
-**Per-job numbering is a CI convention, not a general scheduler convention.** The two peer tools with the clearest analog (GitHub Actions, Buildkite) both pick per-pipeline. The general-purpose schedulers (Cronicle, Rundeck, Airflow, Nomad, Hangfire) all use global IDs only. This matters because cronduit is ambiguously positioned — it's a cron scheduler, but operators who came from CI will expect `#142`.
-
-**The CI mental model is the right one for cronduit.** Operators will say "run #142 of backup-postgres was slow" much more naturally than "run 14,293 was slow." GitHub Actions' decision to ship both `run_id` and `run_number` — and to scope `run_number` per workflow — is a well-validated design choice that matches how humans refer to recurring jobs.
-
-**Implementation pattern — schema and backfill:**
-
-- **Schema change:** Add `job_run_number INTEGER NOT NULL` to `job_runs`. Keep the existing `id` as globally unique primary key.
-- **On insert:** Compute via `SELECT COALESCE(MAX(job_run_number), 0) + 1 FROM job_runs WHERE job_id = ?` inside the same write transaction. With the v1.0 write-pool single-writer SQLite setup, this is contention-safe. For Postgres, the same query under `SERIALIZABLE` or with an advisory lock would work; an alternative is a dedicated `jobs.next_run_number` counter column updated in the same transaction. Recommend the MAX(+1) approach for both backends to keep the logical schema identical.
-- **Backfill migration (idempotent, runs on startup):**
-  ```sql
-  -- Postgres-style; SQLite port uses ROW_NUMBER() OVER (PARTITION BY ...)
-  UPDATE job_runs SET job_run_number = s.rn
-  FROM (
-      SELECT id,
-             ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY started_at, id) AS rn
-      FROM job_runs
-  ) s
-  WHERE job_runs.id = s.id AND job_runs.job_run_number IS NULL;
-  ```
-  Idempotency: `WHERE job_run_number IS NULL` means a second run is a no-op. See [SQLite ROW_NUMBER](https://www.sqlitetutorial.net/sqlite-window-functions/sqlite-row_number/). [Schema-migration idempotency in SQLite](https://www.red-gate.com/hub/product-learning/flyway/creating-idempotent-ddl-scripts-for-database-migrations) is a known sore spot — the `WHERE col IS NULL` guard is the standard escape hatch.
-- **Per-backend migration files:** Both backends support `ROW_NUMBER() OVER (PARTITION BY ...)` (SQLite ≥ 3.25, Postgres forever). A single shared SQL migration would almost work; cronduit's locked constraint says "per-backend migration files where dialect requires" so ship two copies with identical content to stay uniform.
-- **Display convention:** `backup-postgres #142` in the UI. Keep the global `id` visible in the run detail page footer / debug area so operators can still bisect across jobs.
-
-**Complexity estimate for roadmapper: 1 plan.** Schema change + backfill migration + insert-path update + UI rendering. The only hidden risk is the Postgres/SQLite migration file parity — pairs well with the existing testcontainers-Postgres CI lane. GitHub Actions' own history suggests this is a solved problem, but cronduit's in-transaction MAX(+1) is worth a property test: "N concurrent inserts for job_id=X produce run numbers 1..N with no gaps or duplicates."
-
-#### Acceptance-criteria implications for REQUIREMENTS.md
-
-- **REQ: New runs get a `job_run_number` that is strictly sequential per `job_id`, starting at 1 for the first run of each job, with no gaps.**
-- **REQ: Existing rows in `job_runs` at the time of upgrade get backfilled with `job_run_number` in `(started_at, id)` order, within a single `UPDATE` using `ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY started_at, id)`.**
-- **REQ: The migration is idempotent (a second startup is a no-op).**
-- **REQ: UI renders `<job name> #<job_run_number>` on run list rows, run detail page headers, and dashboard card tooltips. The global `id` remains the URL path component (`/jobs/:id/runs/:run_id`) — don't break existing permalinks.**
-- **REQ: A Postgres + SQLite integration test asserts the same numbering across backends for the same insert sequence.**
-
----
-
-### 3. LOG TAIL UX — three related bugs
-
-The three sub-features (ordering, error-at-load, backfill-on-navigate) are different symptoms of the **same** root cause: the v1.0 SSE tail pipeline has no coordination between "DB snapshot" and "live stream." Solving them together with one coherent pattern is simpler than solving them independently.
-
-#### Peer-tool reference implementations
-
-| Tool | Pattern | Notes |
-|---|---|---|
-| **`docker logs -f` (CLI reference)** | Reads historical lines from stdio files **inline with** the streaming follow — the docker daemon writes to the same JSON file and the CLI just `tail -f`'s it. Supports `--since` for cursor-based resume. [docs](https://docs.docker.com/reference/cli/docker/container/logs/) | The single unified stream means ordering is correct by construction. This is the gold standard. |
-| **`kubectl logs -f --since=<duration>`** | Same pattern as docker logs; kubelet is the single writer and the client reads from a single ordered stream. | Same guarantees. |
-| **Kubernetes Dashboard (official + kubetail, kdd)** | [DEV post on implementation](https://dev.to/perber/building-a-kubernetes-dashboard-implementing-a-real-time-logview-with-server-sent-events-and-react-window-1lel): initial REST fetch for the last N lines, then SSE for follow. The dashboard renders the REST snapshot into a buffer, then appends SSE frames to the tail of the buffer. | **Snapshot-then-follow**. The critical detail: the REST snapshot includes a cursor (last log ID or timestamp), and the SSE request passes it via `?since=<cursor>` so the server emits only strictly-newer frames. Zero overlap, zero gap. |
-| **Jenkins Classic console** | Polls a single HTTP endpoint with a byte-offset query parameter (`progressiveText?start=<offset>`). Server returns new bytes + updated offset. | Not SSE, but the cursor-based resume is the same idea. |
-| **Cronicle live log watcher** | WebSocket stream from the runner; on page load, the server pushes the buffered log and then attaches to live. | All in one transport (WebSocket). [WebUI docs](https://github.com/jhuckaby/Cronicle/blob/master/docs/WebUI.md) |
-| **Airflow task logs** | Static file rendering; auto-refreshes the whole block. No live streaming in stable Airflow. | Degenerate case — refresh the whole page. |
-
-#### The universal pattern: **snapshot-then-follow with a cursor**
-
-Every peer tool that does this correctly follows the same three-step recipe:
-
-1. **Server renders a snapshot** of already-persisted log lines with a cursor (last persisted line ID, byte offset, or `Last-Event-ID`).
-2. **Client opens the live channel with the cursor** (`?since=<cursor>` or the standard `Last-Event-ID` HTTP header).
-3. **Server emits strictly-newer frames only** when responding to the live channel. If the run terminates mid-stream, it emits a terminal event (e.g., `event: done\ndata: stopped`) and closes.
-
-This collapses all three cronduit v1.1 bugs:
-- **Ordering across live→static transition**: eliminated because there is only one authoritative order (the persisted line ID).
-- **"Error getting logs" on load**: eliminated because the snapshot is always valid HTML rendered server-side, regardless of SSE state.
-- **Backfill on navigate**: the snapshot *is* the backfill.
-
-#### Does HTMX support this cleanly?
-
-**Yes, with a nuance.** The HTMX SSE extension (v2.x, which cronduit v1.0 ships) does read `id:` fields from SSE events and sends `Last-Event-ID` on reconnect. From [htmx.org/extensions/sse](https://htmx.org/extensions/sse/):
-
-> If the server includes `id:` fields in its SSE messages, the extension tracks the last received ID and sends it as a `Last-Event-ID` header when reconnecting. If the server reads the `Last-Event-ID` header and replays missed messages, nothing is lost.
-
-**But HTMX 4.x removed `sse-swap`.** From the [htmx SSE extension docs](https://htmx.org/extensions/sse/), the 4.x migration note: *"sse-swap is gone entirely in htmx 4.x. There is no equivalent, because the extension no longer has its own swap system."* cronduit v1.0 is on HTMX 2.0.4 — fine for v1.1 — but this means the chosen pattern will need a revisit if cronduit ever adopts HTMX 4.x. **Flag for PITFALLS.md / PROJECT.md: HTMX 4.x is a v1.2+ decision, not a v1.1 concern.**
-
-#### Calibration verdicts for cronduit v1.1
-
-**Pattern: single HTML template renders DB-persisted log lines, then an SSE subscription with `id:` cursoring continues from the last rendered line.**
-
-Concretely:
-
-- The server-rendered log page template iterates `SELECT id, ts, stream, line FROM job_logs WHERE run_id = ? ORDER BY id` at request time — no SSE involved in the initial render. This eliminates the "Error getting logs" transient entirely: the page either renders successfully or returns a 500, both of which are stable states.
-- For running runs, the template appends an `<div hx-ext="sse" sse-connect="/api/runs/:id/log/sse?after=<last_rendered_id>">` block. The server emits SSE events with `id: <log_line_id>` for each new line, and `event: done` when the run terminates.
-- The server subscribes to the existing v1.0 log channel from `after=<last_rendered_id>` — any frames with `id <= after` are suppressed. Frames with `id > after` are streamed in order.
-- On reconnect (tab backgrounded, network blip), HTMX's built-in `Last-Event-ID` handling resumes from the correct cursor automatically. See [SSE extension docs on reconnection](https://htmx.org/extensions/sse/).
-- On run termination, the server emits a final `event: done` and closes the connection. The client swaps the log container to a static "Run finished" banner via `hx-swap-oob`.
-
-**Ordering guarantee** comes from a single source: `job_logs.id` is the monotonic write order. As long as the SSE subscriber consumes frames in id-order (not timestamp-order — wall-clock is not monotonic across reload or NTP adjustments), ordering is correct by construction.
-
-**Error-at-load elimination** comes from moving the initial render out of SSE. The SSE connection is an *enhancement*, not the source of truth.
-
-**Backfill-on-navigate** is automatic: the initial HTML already contains the full accumulated log because it's read from the DB.
-
-**One specific failure mode to watch for — the "I just started running" race.** If the operator hits the page at the moment a new run starts, the DB may have zero log rows yet and the `after=<last_rendered_id>` cursor is `0`. That's fine — the SSE stream emits frames starting from id=1. Test case: click Run Now, immediately click through to the run detail page, confirm all log lines appear in order.
-
-**One nuance on SSE + HTMX 2.x + `pauseOnBackground`.** The default (`pauseOnBackground: true`) is actually **desirable** for cronduit: when the operator backgrounds the tab, the SSE connection pauses; when they come back, it reconnects with `Last-Event-ID` and the server replays anything missed. This matches the "looking at a wedged backup in a tab I left open overnight" operator flow. Leave the default.
-
-#### Acceptance-criteria implications for REQUIREMENTS.md
-
-- **REQ: Run detail page server-renders all persisted log lines for the run at request time, ordered by `job_logs.id` ASC. No SSE dependency for initial render. Never shows "Error getting logs."**
-- **REQ: For runs where `status = 'running'`, the page appends a `hx-ext="sse"` block that connects to `/api/runs/:run_id/log/sse?after=<last_persisted_log_id>`.**
-- **REQ: The SSE endpoint emits one `data:` frame per log line with `id: <job_logs.id>`, `event: line`. The server subscribes from the live tail, filters out any row with id ≤ `after`, and streams the rest in id order.**
-- **REQ: On reconnection (any cause), the browser's HTMX SSE extension sends `Last-Event-ID`; the server honors it and resumes from the correct cursor with no gaps or duplicates.**
-- **REQ: When the run transitions to any terminal state, the SSE endpoint emits a final `event: done` frame and closes the connection. The client triggers a final partial refresh to pick up the new terminal status badge.**
-- **REQ: Integration test: submit a job that prints 50 lines over 5 seconds. Open the run page mid-run. Assert: (1) all 50 lines eventually appear in order, (2) no duplicates, (3) no "Error getting logs" frame is ever rendered, (4) the terminal status badge updates when the run ends.**
-- **REQ: Integration test: submit a job, navigate *away*, navigate *back* at 50% completion. Assert: all already-written lines appear in the DOM immediately on load, then remaining lines stream in.**
-- **REQ: Integration test: submit a job, navigate to the detail page, kill the SSE connection (simulate network drop), reconnect. Assert: no gap and no duplicate around the reconnection boundary.**
-
----
-
-### 4. RUN TIMELINE (GANTT)
-
-#### Peer-tool reference implementations
-
-| Tool | Pattern | Dependency shape |
-|---|---|---|
-| **Airflow Gantt (per DAG run)** | Timeline integrated into the grid view; each task is a colored bar from start→end. Colors: green=success, red=failed, yellow/orange=running, gray=queued/skipped — see [Airflow UI docs](https://airflow.apache.org/docs/apache-airflow/stable/ui.html) and [Astronomer](https://www.astronomer.io/docs/learn/airflow-ui). Server-rendered (Flask + Jinja + SVG), no JS framework dependency for the render itself. | Per-DAG-run, not cross-DAG. [Issue #22001](https://github.com/apache/airflow/issues/22001) is operators asking for "global gantt chart (across all DAGs)" — **Airflow does not ship this.** |
-| **Jenkins Pipeline Graph View** | Per-pipeline-run stage timeline; not a true gantt, more a DAG waterfall. Server-rendered, no React — [plugin page](https://plugins.jenkins.io/pipeline-graph-view/). | Per-run only. Blue Ocean was the cross-pipeline timeline but is deprecated. |
-| **Nomad UI** | Allocation timeline per job; each alloc gets a lifecycle bar. | Per-job only. |
-| **Buildkite pipeline overview** | List of recent builds with start-time/duration bars aligned horizontally — it's closer to a "recent activity chart" than a true gantt but serves the same "what ran when" purpose. | Per-pipeline only. |
-| **Grafana heatmap** | The common operator fallback is to scrape `cronduit_runs_total{status}` into Prometheus and render a status-heatmap in Grafana. | Cross-job, but requires an external observability stack. |
-
-#### Calibration verdicts for cronduit v1.1
-
-**Key insight: a cross-job timeline on the dashboard itself is unusual for a scheduler.** Every peer tool's gantt is scoped to a single pipeline/DAG/job. The operator use case — "show me every job's runs in the last 24h on one screen" — is typically served by Grafana, not by the scheduler's own UI. cronduit bringing this first-class is a **differentiator**, not a table-stakes feature.
-
-**Rendering approach — inline SVG, server-rendered, no JS framework.** The design constraint (terminal aesthetic, no SPA, single binary) rules out any JS charting library. The pattern that works:
-
-- Server queries: `SELECT job_id, started_at, COALESCE(ended_at, NOW()), status FROM job_runs WHERE started_at >= NOW() - INTERVAL '24 hours' ORDER BY started_at`.
-- Template renders one `<svg>` per job row, with `<rect>` elements per run positioned by `started_at` and sized by duration. One row per job, time axis shared across all rows.
-- Color mapping via CSS classes: `.run-success`, `.run-failed`, `.run-running`, `.run-stopped`, `.run-timeout`, `.run-cancelled` — tie to the existing design system green/red/amber tokens.
-- x-axis tick marks as plain SVG `<line>` elements with `<text>` labels at hour (24h view) or day (7d view) boundaries.
-
-**This is ~200 lines of askama template + one SQL query + one handler.** Small, no hidden complexity. The only risk is "what if a job has 10,000 runs in 24h?" — guard with a LIMIT, or pre-aggregate via `GROUP BY` into 5-min buckets for the 7d view.
-
-**24h / 7d as preset windows — YES, standard.** No peer tool ships a full time-range picker in v1 of this feature. Airflow's grid view has a `lookback` control (default 14, max configurable). Jenkins has "last 30 builds." Grafana has `now-24h`/`now-7d` as the two most-used defaults. **Cronduit v1.1 should ship two fixed windows (24h, 7d) as a toggle, not a picker.** Picker is a v1.3+ polish.
-
-**Color coding — use the existing design system tokens, not a new palette.** Airflow's palette (green/red/yellow/gray) is conventional but not normative. cronduit's terminal-green aesthetic wants:
-
-- `success` → primary green (bright)
-- `failed` → red
-- `timeout` → amber/orange
-- `stopped` → muted gray (operator-initiated, intentional)
-- `cancelled` → muted gray + dashed border (if the distinction even survives v1.1)
-- `running` → primary green with `animate-pulse` Tailwind class or SVG `<animate>` on fill-opacity
-- No status text — color + hover-tooltip only. The design system's tight color vocabulary wins here.
-
-**Accessibility: color alone is not sufficient.** Peer tools (Airflow included) all ship status-by-icon *and* status-by-color. For cronduit, the hover tooltip (`<title>`) showing `backup-postgres #142 · 3m42s · success` is the text accessibility layer — SVG `<title>` is screen-reader-readable and needs zero JS.
-
-**Complexity estimate for roadmapper: 1 plan.** Timeline render + SQL + template + two preset buttons + hover tooltip. No migration. No API surface change. Fits cleanly into an observability-polish chunk alongside the sparkline and p50/p95 work.
-
-#### Acceptance-criteria implications for REQUIREMENTS.md
-
-- **REQ: Dashboard has a new "Timeline" section above or alongside the existing job list, with two window toggles: "24h" (default) and "7d."**
-- **REQ: The timeline renders one row per enabled job (disabled jobs are hidden or greyed — design decision at phase-plan).**
-- **REQ: Each run is a colored `<rect>` positioned by `started_at` on an x-axis spanning the current window. Color encodes status using the existing design system tokens. Duration is reflected in the `width` attribute.**
-- **REQ: Running runs show a visual indicator (pulse animation, open-ended right edge, or both).**
-- **REQ: Hovering a run shows an SVG `<title>` tooltip with `<job_name> #<run_number> · <duration> · <status>`.**
-- **REQ: Clicking a run navigates to the run detail page.**
-- **REQ: Rendering is server-side SVG — no JS charting library, no JSON-to-SVG client hydration.**
-- **REQ: The timeline SQL query is bounded (LIMIT or `started_at >= NOW() - window`) so a job with 10k runs/day does not blow up the page.**
-
----
-
-### 5. SUCCESS-RATE BADGE + SPARKLINE
-
-#### Peer-tool reference implementations
-
-| Tool | Window | Sample shape | Source |
-|---|---|---|---|
-| **GitHub Actions "performance metrics"** | Last 30 days, configurable | Failure rate percentage per workflow; no sparkline built-in | [docs](https://docs.github.com/en/actions/administering-github-actions/viewing-github-actions-metrics) |
-| **gh-workflow-stats (community CLI)** | Configurable `--last-n` or `--days` | Per-workflow success-rate percentage, rendered as text. | [repo](https://github.com/fchimpan/gh-workflow-stats) |
-| **CICube (commercial GHA dashboard)** | Rolling 7d / 30d | Success rate + trend line | [blog](https://cicube.io/blog/github-actions-dashboard/) |
-| **Jenkins "weather report"** | Last 5 builds | Single icon (sun/cloud/rain/storm) encoding a 0-100% score; no sparkline | [Jenkins builtin] |
-| **Airflow calendar view** | Configurable | Grid of days, each colored by pass/fail aggregate — functions as a low-resolution sparkline. | [Airflow UI docs](https://airflow.apache.org/docs/apache-airflow/stable/ui.html) |
-| **Buildkite pipeline cards** | Last 10 builds | Status dots in a row — the de facto "mini sparkline" for CI pipelines. | [Buildkite pipelines docs](https://buildkite.com/docs/pipelines) |
-
-#### Calibration verdicts for cronduit v1.1
-
-**Window choice: rolling last N runs, not a time window.** Peer tools split. GitHub Actions uses time windows (30d), Jenkins uses last-N (5), Buildkite uses last-N (10), Airflow offers both. For cronduit, **last N runs (recommend N=20) is the better default** because:
-
-1. A daily backup that runs 30 times in 30 days has meaningful success-rate signal at N=20.
-2. An hourly scrape that runs 720 times in 30 days would have its signal averaged into oblivion by a 30-day window — last-20 keeps recent behavior visible.
-3. Sparklines at N=20 fit comfortably in a dashboard card at terminal-display sizes (~120-200px width → 6-10px per point).
-4. The SQL is trivial: `ORDER BY started_at DESC LIMIT 20`.
-
-**Minimum sample size before showing a rate:** Ship the badge only when N≥5 runs exist. Below that, render `—` or `(new job)`. Peer-tool convention is loose here but Jenkins's weather report needs 5 to compute.
-
-**Sparkline rendering: inline SVG, no library.** Server-rendered SVG sparkline is ~20 lines of askama template. The key bits:
-
-- `<svg width="120" height="24" viewBox="0 0 120 24">`
-- One `<rect>` per run (column sparkline), colored by status, width = `120/N`, height from bottom.
-- Or: `<polyline>` for a duration sparkline (duration on y-axis, run index on x-axis).
-- Recommend **column sparkline of status (one colored bar per run)**, not a line sparkline of duration — the operator's primary question is "is this healthy?" not "how fast?" The duration question is better answered by the p50/p95 trend (next section).
-
-**Anti-patterns to avoid:**
-
-- **Do NOT use a JS sparkline library.** React-sparklines, Chart.js, uPlot, etc., all break the single-binary / no-SPA constraint. Inline SVG is ~20 template lines; a library is a new dependency surface.
-- **Do NOT encode both status AND duration in the same sparkline.** Overloading a sparkline with two dimensions is a known Tufte anti-pattern — operators will misread it. Two sparklines, each monadic, beats one dual-axis sparkline every time. v1.1 ships the status sparkline; duration visualization lives in the p50/p95 trend on the detail page.
-- **Do NOT recompute on every page render without an index.** If cronduit adds 100 jobs and each dashboard render runs 100 `SELECT ... ORDER BY started_at DESC LIMIT 20` queries, that's 100 SQLite round-trips. Mitigation: one CTE that computes per-job last-20 in a single query, or an ephemeral in-memory cache with a 5-second TTL. Measure before optimizing.
-
-**Success-rate formula:** `successful_runs / total_runs_in_window`. cronduit's new `stopped` status is ambiguous here — should an operator-stopped run count as a failure? **Recommendation: `stopped` runs are excluded from both numerator and denominator** (treated as "didn't really happen from a reliability perspective"). Same rationale as GitHub Actions treating `cancelled` separately from failure in most contexts. Document explicitly.
-
-#### Acceptance-criteria implications for REQUIREMENTS.md
-
-- **REQ: Each dashboard job card renders a success-rate badge and a 20-run column sparkline.**
-- **REQ: Success rate = `count(status='success') / count(status IN ('success','failed','timeout'))` over the last 20 runs. `stopped` and `cancelled` runs are excluded from both numerator and denominator.**
-- **REQ: Jobs with fewer than 5 completed runs render `—` in place of the badge and `(new)` or a placeholder sparkline.**
-- **REQ: Sparkline is inline server-rendered SVG — one colored `<rect>` per run, oldest on the left, newest on the right. Colors match the timeline/status color system.**
-- **REQ: The sparkline SQL is a single per-request query (CTE or join) against `job_runs`, not N round-trips.**
-- **REQ: The badge text is the integer percentage (e.g., `95%`), colored green ≥ 95%, amber 80–94%, red < 80%. Thresholds configurable later; not in v1.1.**
-
----
-
-### 6. DURATION TREND (P50/P95) ON JOB DETAIL
-
-#### Peer-tool reference implementations
-
-| Tool | Percentile surface | Minimum sample convention |
-|---|---|---|
-| **Grafana panels from Prometheus `histogram_quantile`** | Standard p50/p95/p99 rendering on the histogram | `histogram_quantile` returns NaN if <2 buckets; no hard minimum, but <20 samples is widely considered noise. [Prometheus histograms practices](https://prometheus.io/docs/practices/histograms/) |
-| **Datadog APM per-endpoint latency** | p50, p95, p99 in a single chart | Datadog docs recommend ≥100 samples per bucket for p99 stability |
-| **New Relic transaction traces** | Median + 95th percentile | ≥50 samples recommended |
-| **Honeycomb heatmaps / BubbleUp** | Non-percentile; full distribution | Not percentile-based |
-| **GitHub Actions performance metrics** | Average only, no percentiles | n/a |
-
-**No scheduler** in the peer-tool set (Cronicle, Rundeck, Airflow, Jenkins, dkron, Hangfire, Nomad, Sidekiq) surfaces per-job duration percentiles inline. They all either show "last duration" or point operators at Prometheus/Grafana. **Cronduit v1.1 rendering p50/p95 from the SQLite run history is a distinctive, not a table-stakes.**
-
-#### Calibration verdicts for cronduit v1.1
-
-**Minimum sample size: N≥20 for p50, N≥50 for p95.** The statistical reasoning:
-
-- p50 (median) is the most robust percentile. It's meaningful as soon as you have enough samples that the middle value is representative — N=20 is a well-known rule of thumb.
-- p95 is much more sensitive to tail samples. A single slow outlier dominates a small sample. The widely-cited minimum is 1/(1-percentile) × some factor; at p95 that's ≥20, and practitioners typically add a margin → 50.
-- Below the threshold, render `—` or "insufficient data (N < 50)".
-
-**Computation: SQL `PERCENTILE_CONT` on Postgres, manual on SQLite.**
-
-- Postgres: `SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms), PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms) FROM job_runs WHERE job_id = ? AND status = 'success' ORDER BY started_at DESC LIMIT 100`.
-- SQLite: no built-in percentile function. Options:
-  1. Read the last N durations into Rust and sort + index (trivial, ~10 lines). **Recommended.**
-  2. Use a recursive CTE with `ROW_NUMBER()` (complex, not faster).
-  3. Bring in a SQLite extension (breaks single-binary story).
-
-The Rust path (option 1) is cleaner and keeps logic identical across backends: fetch up to N durations, sort, compute percentiles by position. N=100 is a reasonable upper bound on "last runs" for percentile rendering.
-
-**Which runs to include:** Only `status='success'` runs. Failed/timeout runs have non-representative durations (failures can be fast or slow depending on where they hit; timeouts all bunch at the per-job timeout value). Document this choice.
-
-**Rendering: two numbers, not a chart.** The operator question is "is this job getting slower?" A p50/p95 pair as text (`p50: 1m34s · p95: 2m12s`) on the job detail page header row is enough for v1.1. An actual trend chart (p50/p95 over time) is a v1.2+ feature and overlaps with the "just scrape `/metrics` into Grafana" story.
-
-**Anti-pattern to avoid: computing percentiles across all time.** The job's performance envelope drifts over months. Always window to "last 100 completed runs" or "last 30 days" — whichever is smaller. Match the sparkline's recency bias.
-
-#### Acceptance-criteria implications for REQUIREMENTS.md
-
-- **REQ: Job detail page renders `p50` and `p95` duration values, computed from the last 100 successful runs.**
-- **REQ: If the job has <20 successful runs, render `—` for p50 and p95 (with a tooltip explaining the threshold).**
-- **REQ: If the job has 20–49 successful runs, render p50 only; render `—` for p95.**
-- **REQ: Percentile computation is done in Rust after fetching sorted durations from SQL (not via a SQL window function), to keep the SQLite and Postgres code paths identical.**
-- **REQ: Only runs with `status='success'` are included in the percentile computation. Document this in the tooltip.**
-- **REQ: Values are formatted with human-readable durations (`1m34s`, not `94000ms`).**
-
----
-
-### 7. BULK ENABLE / DISABLE
-
-This is the v1.1 feature with the **most unresolved design tension**, as PROJECT.md already flags.
-
-#### The core conflict
-
-Cronduit's **locked decision**: *"File-based config is the source of truth (hand-written, no ofelia importer)"*. On every startup / SIGHUP / file-watch reload, the config file authoritatively declares which jobs exist and which are enabled.
-
-Bulk disable from the UI needs to write state somewhere. If it writes to the config file, cronduit becomes a UI-first tool and breaks the GitOps/read-only-config constraint. If it writes to the DB, the state is lost the next time the operator edits the config file and a reload happens — unless reload has logic to preserve UI-set disable state.
-
-#### Peer-tool survey — who solved this cleanly?
-
-| Tool | Config source | Disable semantics | How it handles the conflict |
-|---|---|---|---|
-| **ofelia** | Config file + Docker labels (hybrid) | Web UI allows enable/disable per job | Env vars override config → Docker labels → config file. But on file reload, runtime disable state is lost. [README](https://github.com/mcuadros/ofelia) |
-| **Cronicle** | DB-first (UI is source of truth) | Dashboard toggle per event | Clean — there is no config file to conflict with. Lives in a different product category. |
-| **Rundeck** | DB-first | Per-job "enabled" flag in the job definition | Clean — DB is source of truth. |
-| **Hangfire** | Code + DB | No "disable" concept — you `RemoveIfExists` and `AddOrUpdate` | Clean because the problem is out-of-scope. |
-| **Airflow** | DAG Python files + DB | DAG "pause/unpause" button; state persists in the metadata DB; surviving DAG file changes | **Closest peer.** Pause state is metadata DB; DAG file changes on disk don't reset pause. |
-| **Sidekiq-cron** | DB-first recurring job registration | Per-job enable/disable in the Web UI | Clean — DB is source of truth. |
-| **systemd timers** | Unit files + runtime state | `systemctl stop` / `mask` — runtime state in `/run` or `/etc` | Clean *because of layering*: unit files in `/usr/lib` are the base, `/etc` overrides persist, `/run` is transient. Three-tier. |
-| **ofelia's web UI (netresearch fork)** | Same as ofelia | Disable via UI | Same issue as ofelia: reload loses UI state. Operators complain. |
-
-**The cleanest peer model is Airflow's**, not any of the schedulers closer to cronduit in category: Airflow has a clean separation between **declaration** (DAG file, code) and **runtime operator state** (pause/unpause, stored in the metadata DB, persisted across DAG file re-parses). This is the pattern cronduit should copy.
-
-#### The proposed semantics (decision needed at phase-plan time, sketched here)
-
-1. **Declarative state in TOML**: `enabled = true` (default) — this is what the config file says.
-2. **Operator-override state in DB**: a new column `job_state_override VARCHAR` on the `jobs` table, values `NULL` (no override) / `'enabled'` / `'disabled'`.
-3. **Effective state at runtime**: `COALESCE(jobs.job_state_override, config_enabled_flag)` — the operator override wins, unless cleared.
-4. **Config reload preserves override**: when a job is resynced from the config file, `job_state_override` is preserved unless the *declarative* `enabled` field in the file changes (in which case the override is cleared). This matches Airflow's DAG-file-edit clearing-pause-state behavior with an opt-out for "I really just want file state."
-5. **UI displays**: shows the effective state + a small indicator when there's an override (e.g., `disabled (operator)` vs `disabled (config)`).
-6. **Bulk action**: checkboxes on dashboard + a single "Enable" / "Disable" action bar that writes `job_state_override` for each selected job in one transaction.
-
-This is the **Airflow-style clean resolution** of the config-vs-runtime tension. It's distinctive because no direct peer cron scheduler (ofelia, dkron, systemd-cron, etc.) has solved it — but it's not novel, Airflow has been running with it for years.
-
-#### Anti-patterns to reject
-
-- **"Write back to the TOML file from the UI."** Violates the locked constraint that config is hand-written and read-only-mounted. Makes git-pr-review-your-config workflows impossible. Hard no.
-- **"Just ignore config reload and keep UI state authoritative."** Breaks the sync-on-startup semantics that v1.0 already shipped. Operators would be confused when their `enabled = false` in the file is silently overridden by a DB value they can't see.
-- **"Require the operator to add a `[runtime]` section to the TOML."** Undocumented runtime sections = operator confusion. Keep runtime state in the DB, not in the file.
-
-#### Is this common enough to be table stakes?
-
-**No — it's rare and legitimately a differentiator.** The direct peer tools (ofelia, dkron, docker-crontab, systemd-cron) either don't offer it or offer it with well-documented pain. Airflow offers it but is in a completely different product category. **Shipping bulk enable/disable cleanly is a v1.1 distinctive**, not catch-up. PROJECT.md can lean into this.
-
-**Complexity estimate for roadmapper: 1-2 plans.**
-
-1. **Plan A (schema + override model):** Add `job_state_override` column, update sync-on-reload to preserve it, update scheduler to consult COALESCE effective state. Integration tests for all four combinations (file=on/off × override=null/on/off).
-2. **Plan B (UI):** Checkbox multi-select + action bar on dashboard. Server-side POST handler. Display of effective state + override indicator. May merge with plan A if the UI work is small.
-
-#### Acceptance-criteria implications for REQUIREMENTS.md
-
-- **REQ: `jobs.job_state_override` column added to the schema, nullable.**
-- **REQ: Sync-on-reload preserves `job_state_override` for existing jobs *unless* the config file's `enabled` value for that job has changed since the last sync, in which case the override is cleared.**
-- **REQ: Scheduler runs a job only if `COALESCE(jobs.job_state_override, config_enabled) = 'enabled'`.**
-- **REQ: Dashboard displays a checkbox column when multi-select mode is toggled. Selecting jobs and pressing "Disable" POSTs a bulk action that writes `job_state_override='disabled'` for each selected job in a single transaction.**
-- **REQ: A job's dashboard card visually distinguishes "disabled by operator" from "disabled by config" (e.g., a small icon or different muted-color shade). The distinction exists so the operator can tell "I disabled this" from "someone edited the file."**
-- **REQ: Enabling a job via bulk action clears any existing `job_state_override` (sets it to NULL), not `='enabled'`. This means a re-enabled job returns to tracking the config file. Document this.**
-- **REQ: A per-job "Clear override" action exists (UI affordance TBD at phase-plan).**
-- **REQ: Prometheus metric `cronduit_jobs{state="enabled|disabled_by_config|disabled_by_override"}` gauge for operator visibility.**
-
----
-
-## Feature dependencies
+|---------|-------------------|------------|-------|
+| **Standard Webhooks v1 spec adherence** | Most cron tools (ofelia, dagu, Cronicle) ship ad-hoc webhook formats. Cronduit can adopt the [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks) spec out of the box — `webhook-id`/`webhook-timestamp`/`webhook-signature` headers, `id.timestamp.payload` signing — so operators can verify with off-the-shelf libraries (svix-webhooks, webhook-verifier crates). One-line documentation: "we follow the Standard Webhooks spec". | LOW | Pure protocol decision; the actual signing math is the same as a homemade scheme. The win is operator trust + zero custom verifier code. |
+| **Webhook payload exposes Cronduit-native fields** | A webhook from cronduit with `{job_run_number: 42, job_name: "backup-postgres", status: "failed", duration_seconds: 12.4, exit_code: 137, image_digest: "sha256:..."}` is immediately useful to a homelab Slack bot. Generic schedulers ship sparser payloads. | LOW | JSON shape is small surface area; lock the field names at requirement-write time so v1.3+ can extend without breaking. |
+| **Image-digest delta as a first-class failure signal** | Watchtower-driven homelabs auto-rev images and "this used to work" is the #1 confusion. Surfacing the digest delta in the failure-context panel is uniquely valuable for the homelab + Docker-native posture. | MEDIUM | Requires the new `job_runs.image_digest` column; reuses the v1.0 `bollard` plumbing. The competitive moat: no other Docker-aware scheduler does this. |
+| **Config-hash delta as a first-class failure signal** | "Did I just change something?" is the operator's first instinct on a fresh failure. Cronduit owns the config-as-source-of-truth model, so the resolved config struct is available, hashable, and meaningful. | LOW | Stable-key serialization → SHA-256. Cheap. |
+| **Exit-code histogram with named meanings** | Cronitor exposes raw codes; Cronicle doesn't bucket. Cronduit's "137 = SIGKILL (often OOM)" tooltip with last-seen-timestamp is a homelab-tier diagnostic that adjacent tools don't ship. | LOW | Static lookup table; the value is the editorial choice (which codes get a label, which stay raw). |
+| **`cronduit.*` reserved namespace explicitly documented** | SEED-001's reserved-namespace validator is rare in scheduler tooling — most just hope for no collisions. Documenting `cronduit.run_id` / `cronduit.job_name` as reserved (and rejecting operator labels in that prefix at config load) hardens the orphan-reconciliation contract for the long haul. | LOW | Already locked at SEED-001. Worth calling out in the README as a feature, not a footnote. |
+| **Tag chips integrate with the existing terminal-green design system** | The chip styling fits the design system without inventing new tokens. Doesn't sound like a feature, but it preserves the aesthetic that's a stated cronduit differentiator. | LOW | Tailwind + existing token palette. |
+
+### Anti-Features (Do NOT Build for v1.2)
+
+These are real operator requests we will hear post-launch. Documenting them here as out-of-scope prevents scope creep mid-milestone.
+
+| Anti-Feature | Why Requested | Why Problematic | What to Do Instead |
+|--------------|---------------|-----------------|-------------------|
+| **Webhook payload templating (Handlebars / Jinja / `${VAR}` substitution)** | Operators want to "pre-format for Slack" without a middleware. Drone, Healthchecks, and Sumo Logic [all support](https://www.sumologic.com/help/docs/alerts/webhook-connections/slack/) this. | Templating is its own product surface — escaping rules, error handling on missing vars, validation, security review for SSTI patterns, performance for large templates. The footprint dwarfs the rest of v1.2. | Ship a JSON payload only. Document the cronduit→Slack bridge pattern using a 10-line shell receiver in the README. Revisit templating in v1.3+ if demand is loud. |
+| **Email / SMTP / Slack-direct / Discord-direct notification channels** | "I just want it in Slack." | Each channel adds auth, retry semantics, formatting choices, and ongoing maintenance as APIs evolve. Healthchecks.io and Cronicle both built this and report ongoing pain. | Webhook-only in v1.2. Operators wire Slack/Discord/email via a webhook-receiver service or n8n / Pipedream. PROJECT.md already declares email out of scope. |
+| **Webhook templating for the URL itself** (`https://example.com/webhook?job=${JOB}`) | "I want different jobs to hit the same webhook with different paths." | Same templating problem at smaller scale; same conclusion. Per-job URLs already give the operator full control. | Use a different `url` per job. |
+| **Configurable retry schedule per job** | "I want 5 attempts over an hour." | One more knob multiplies the test matrix. The 3-attempt / ~10 min schedule is opinionated for a reason. | Lock the schedule at the milestone level. Reconsider if a real operator pings asking for it. |
+| **Circuit breaker per webhook URL** | "If example.com is down, stop hammering for an hour." | Real for SaaS-scale webhook systems (Svix, Hookdeck) where a single bad endpoint can saturate a sender. Not a credible problem at homelab scale (3 attempts, then stop, per delivery). | The 3-attempt cap IS the circuit breaker for v1.2. Per-endpoint pause-after-N-consecutive-failures is a v1.3+ feature if anyone asks. |
+| **Dead-letter queue / replay UI** | Svix-style "deliver this failed webhook again." | Implies a redelivery mechanism, an admin UI button, and a re-signing flow (replay protection complicates this). | Persist `webhook_deliveries` rows so operators can see WHY it failed; if they need to replay, a `cronduit webhook resend <delivery_id>` CLI is a future v1.3 minimal addition. |
+| **Webhook payload for `running` (start) events** | "Tell me the moment a job starts." | Doubles webhook traffic, adds a non-terminal state to the contract, and most operators only act on terminal states. v1.0 already emits Prometheus + structured logs for run-start observability. | Terminal states only: `success`, `failed`, `timeout`, `cancelled`, `stopped`. (`running` is excluded.) |
+| **Per-tag webhooks / "alert all backup jobs"** | "Send me one webhook for any failure in `tags=[backup]`." | Ties tagging (UI-only feature) to webhooks (per-job config) — a coupling we explicitly reject in PROJECT.md (`v1.2 tag scope = UI-only filter`). Aggregation belongs in Alertmanager, not cronduit. | Operators configure webhooks per-job. If they want tag-level fan-out, they front it with a webhook receiver that filters on `tags` in the payload. |
+| **Tag metadata (descriptions, colors, icons)** | "I want my `prod` tag to be red." | Each metadata dimension is its own column, UI surface, and persistence story. v1.2 is filter chips, not a tag-management product. | Tags are strings. Render in the existing terminal-green theme. |
+| **Tag-based metrics labels (`cronduit_runs_total{tag="backup"}`)** | "Let me alert on tag-failure rate in Prometheus." | Unbounded cardinality risk — exactly what the v1.0 metrics design avoided with bounded labels. | UI-only filter chips per the PROJECT.md decision. Operators alert on `job` label or build aggregation in their Prometheus rules. |
+| **Run-detail "Why did this fail?" auto-generated narrative** | "Tell me in English what's wrong." | LLM territory. Out of scope for v1 forever. | Surface raw signals (digest delta, config hash, streak, last success). Operator decides. |
+| **Config hash delta linked to git commit / diff view** | "Show me the actual config that changed." | Implies a config-history table, a diff renderer, and SHA-vs-text mapping. Useful but big. | Show the hash delta. Operator looks at their git log. |
+| **Image-digest "subscribe to upstream changes" / digest-pinning helper** | "Warn me before pulling a new digest." | Orthogonal to scheduling — feels like Watchtower territory. | Out of scope; operators pin digests in `image:` if they want stability. |
+| **Histogram of stdout/stderr line counts, durations, etc.** | "Add more histograms." | Each new card is real UI weight. Exit-code histogram is in scope; nothing else. | Done at exit-code histogram. |
+| **Saved/named filter views per user** | "I want a tag preset for my Sunday-morning review." | Implies a user model — exactly what v1 doesn't have (no auth in v1, deferred to v2). | URL query strings persist filters; operators bookmark URLs. |
+| **Tag autocomplete / typeahead on a search box in addition to chips** | "Both!" | Two UI surfaces for the same job; chips already cover the case. | Chip-toggle only for v1.2. If users have hundreds of tags (they won't) revisit. |
+| **Custom webhook headers per job** (`headers = { "X-Auth-Token" = "..." }`) | "My receiver wants a bearer token." | Reasonable, but adds a per-job map column AND operators expect interpolation (`${ENV}`) which adds env-substitution at webhook-send time. Bigger surface than first appears. | Out of scope for v1.2. The HMAC signature IS authentication. If a receiver also needs a token, the operator can put a thin proxy in front. Revisit v1.3 if demand surfaces. |
+| **Per-job override of the retry schedule** | (See above.) | Same. | Locked schedule. |
+| **Docker labels via env-var overlay** (e.g., `CRONDUIT_LABELS_JOB1=key=val`) | "I want to set labels at compose-up time without touching the TOML." | Adds a second config surface that fights "TOML is source of truth" + reload semantics get confused (does an env-var change retrigger a reload? what fires the file-watch?). The existing `${ENV_VAR}` interpolation in TOML values already covers the "I want to inject at compose-up" case. | Operators use `${ENV_VAR}` inside the TOML `labels = { foo = "${MY_VAR}" }` map. (Confirm at requirement-write time that `${ENV_VAR}` interpolation works in label *values* — should be free since v1.0 interpolates the whole TOML string before parsing.) |
+| **Internal `cronduit.*` synonym labels we might add later** | (Operator question: "should the reserved namespace include any labels we don't yet emit?") | We currently emit `cronduit.run_id` and `cronduit.job_name`. Reserving the whole `cronduit.*` namespace already future-proofs additions like `cronduit.job_run_number`, `cronduit.executor_type`, `cronduit.config_hash`, `cronduit.image_digest`, etc., without further design work. | The SEED-001 design is correct — reserve the whole namespace. v1.2 emits the existing two labels; future versions can add more without operators having to migrate. |
+
+## Feature Dependencies
 
 ```mermaid
 flowchart TD
-    Stopped["New 'stopped' status<br/>+ Stop button"] --> StopSchema["job_runs.status enum update"]
-    Stopped --> StopMetric["cronduit_runs_total{status='stopped'}"]
-    Stopped --> StopSparkline["Sparkline color mapping"]
+    subgraph "v1.0/v1.1 foundation (already shipped)"
+        TS["Terminal-status emission<br/>(success/failed/timeout/cancelled/stopped)"]
+        BOL["bollard Config::labels<br/>(orphan-reconciliation labels)"]
+        JR["job_runs table<br/>(start_time, status, exit_code, duration)"]
+        DB["3-file migration pattern<br/>(add nullable → backfill → tighten)"]
+        DASH["Dashboard partial<br/>(filter/sort UI)"]
+        JD["Job-detail page<br/>(p50/p95 card slot)"]
+        RD["Run-detail page<br/>(metadata panel)"]
+        VAL["Config validators<br/>(check_cmd_only_on_docker_jobs pattern)"]
+        DEF["[defaults] + use_defaults = false<br/>override pattern"]
+    end
 
-    RunNumber["Per-job run numbers"] --> RunNumSchema["job_run_number column + backfill"]
-    RunNumber --> RunNumUI["UI renders '#142' everywhere run is shown"]
-    RunNumUI --> Timeline["Timeline tooltips"]
-    RunNumUI --> StopSparkline
+    subgraph "v1.2 features"
+        WH["Webhook notifications"]
+        LBL["Custom Docker labels<br/>(SEED-001)"]
+        FC["Failure context panel"]
+        XH["Exit-code histogram"]
+        TG["Job tagging / filter chips"]
+    end
 
-    LogFix["Log tail UX (3 bugs)"] --> LogSnapshot["Snapshot-then-follow pattern"]
-    LogSnapshot --> LogCursor["after=&lt;last_id&gt; cursor on SSE"]
+    subgraph "v1.2 schema additions"
+        IMG["job_runs.image_digest<br/>(new nullable column)"]
+        CFG["job_runs.config_hash<br/>(new nullable column)"]
+        WD["webhook_deliveries table<br/>(new)"]
+    end
 
-    Timeline["Run timeline (gantt)"] --> TimelineSQL["Bounded SELECT on job_runs"]
-    Timeline --> DesignColors["Status color mapping (shared with sparkline)"]
+    TS --> WH
+    DEF --> WH
+    DEF --> LBL
+    BOL --> LBL
+    VAL --> LBL
+    JR --> FC
+    JR --> XH
+    IMG --> FC
+    CFG --> FC
+    DB --> IMG
+    DB --> CFG
+    DB --> WD
+    WH --> WD
+    JD --> XH
+    RD --> FC
+    DASH --> TG
 
-    Sparkline["Success-rate badge + sparkline"] --> DesignColors
-    Sparkline --> SparklineSQL["Last-20 per job (CTE)"]
-
-    PercentileTrend["p50/p95 duration trend"] --> PercentileSQL["Last-100 successful runs"]
-    PercentileTrend --> PercentileMin["Min sample threshold (N&gt;=20, N&gt;=50)"]
-
-    Bulk["Bulk enable/disable"] --> BulkSchema["job_state_override column"]
-    Bulk --> BulkSync["Config reload preserves override"]
-    Bulk --> BulkUI["Dashboard checkbox + action bar"]
-
-    BulkSchema -.-> Timeline
-    BulkSchema -.-> Sparkline
-    note1["Disabled jobs rendering is<br/>shared by timeline + dashboard"]:::note
-    BulkSchema -.-> note1
-
-    classDef note fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style WH fill:#0a3d0a,stroke:#00ff7f,color:#e0ffe0
+    style LBL fill:#0a3d0a,stroke:#00ff7f,color:#e0ffe0
+    style FC fill:#0a3d0a,stroke:#00ff7f,color:#e0ffe0
+    style XH fill:#0a3d0a,stroke:#00ff7f,color:#e0ffe0
+    style TG fill:#0a3d0a,stroke:#00ff7f,color:#e0ffe0
 ```
 
-### Dependency notes
+### Dependency Notes
 
-- **Stop → Sparkline color mapping**: the new `stopped` status needs a color before the sparkline ships, otherwise the first stopped run is rendered as "unknown status." Sequence: Stop first, sparkline second (or merge).
-- **Run numbers → Timeline tooltips**: the timeline tooltip should show `backup-postgres #142 · 3m42s · success`. If run numbers ship after timeline, the initial timeline ships with no run identifier in the tooltip — ugly but not blocking. **Recommend run numbers first.**
-- **Log UX fixes are independent** of all other v1.1 work. Can ship in its own chunk and rc.
-- **Bulk disable is independent** of all observability polish but touches the sync-on-reload code path, which is one of the most delicate areas of v1.0. **Highest risk in v1.1.** Merits its own dedicated plan with its own integration tests. Recommend last in the rc sequence so observability polish ships first.
-- **Sparkline + Timeline + p50/p95** all share the "status color tokens" work. Ship the design-system color mapping once as a shared template include, not three times.
+- **Webhooks depend on terminal-status emission** — v1.0/v1.1 already emit `success`/`failed`/`timeout`/`cancelled`/`stopped` at the scheduler-loop level. The webhook dispatcher hooks into that emission point (likely after the DB write in `mark_run_terminal` or equivalent) — no scheduler-core surgery required.
+- **Webhooks AND Docker labels both reuse the `[defaults]` + `use_defaults = false` override pattern** — the existing TOML schema already handles this for other fields; both features extend it to `webhook` and `labels` blocks. Decision-locked at SEED-001 for labels; webhooks should follow identical semantics for consistency.
+- **Failure context depends on `job_runs.image_digest` and `job_runs.config_hash` columns existing FIRST** — these are new nullable columns added via the v1.1-pattern three-file migration (add nullable → backfill from current run state where possible → leave nullable since pre-v1.2 runs have no value). The failure-context panel can render gracefully when columns are NULL ("no prior digest recorded"), so the migration ordering only constrains the *write* side: capture digest+hash on run-start before the failure-context panel can compute deltas.
+- **Image-digest capture depends on bollard `inspect_image` plumbing** — already present in v1.0's image-pull path. The new write happens at run-start (after the image is resolved, before the container is created). Adds one bollard API call per Docker job run; cheap.
+- **Exit-code histogram is a pure read-side feature** — no schema changes needed; just a new SELECT against existing `job_runs.exit_code`. Lowest-risk feature in v1.2.
+- **Tagging filter chips depend only on the dashboard partial existing** — already present from v1.0. Adds one new TOML field (`tags`), one normalization+validator, one query-string filter, one chip render. No schema migration if tags are stored only in the in-memory job model (re-derived from config on load); a `jobs.tags` column would be needed only if we wanted DB-side filtering, which we probably do for consistency with the existing dashboard query shape — flag for the requirements pass.
+- **Webhooks and tags do NOT interact in v1.2** — explicit decision in PROJECT.md (tag scope = UI-only). No "alert all jobs in tag X" feature. Tags don't appear in webhook payloads either (we lock that at requirement-write time as a deliberate omission so v1.3 can add it without breaking).
+- **Failure context and exit-code histogram are independent** — the histogram aggregates across all runs; the failure context is per-run. They share the same data source (`job_runs.exit_code`) but render in different panels.
+- **Custom Docker labels do NOT affect webhook payloads** — the `image_digest`/`config_hash` already covers the "what container ran?" question. Surfacing operator-defined labels in webhook payloads is a v1.3 question.
 
----
+## MVP Definition
 
-## v1.1 rc chunking recommendation
+### Launch With (v1.2.0)
 
-Based on the feature dependency graph and the shape-A iterative release strategy in PROJECT.md, the natural chunking is:
+The minimum to call v1.2 a coherent milestone. Each item maps to at least one REQ-ID at requirement-write time.
 
-**rc.1 — Bug fix block** (smallest, ships first for operator feedback)
-- Log tail UX (all three sub-bugs) via the snapshot-then-follow pattern
-- Per-job run numbers (+ idempotent backfill)
-- Stop a running job (+ new `stopped` status)
+**Webhook notifications:**
+- [ ] Per-job `webhook = { url = "...", states = [...], hmac_secret = "${ENV}" }` block in `[[jobs]]`
+- [ ] `[defaults]` `webhook` block with `use_defaults = false` override semantics matching SEED-001
+- [ ] HMAC-SHA256 signing per Standard Webhooks spec (`webhook-id`, `webhook-timestamp`, `webhook-signature` headers)
+- [ ] JSON payload with `{type: "run.terminal", id, timestamp, data: {job_name, job_run_number, status, exit_code, duration_seconds, started_at, finished_at, image_digest?, run_url}}`
+- [ ] 3-attempt retry: t=0s, t≈30s, t≈300s (exponential backoff, ±20% jitter)
+- [ ] Retryable: 5xx, 408, 429, network/timeout. Permanent: 2xx (success), other 4xx (give up)
+- [ ] `webhook_deliveries` table + bounded retention (e.g., last 50 per job)
+- [ ] Inline panel on job detail showing recent deliveries with status code, latency, attempt count
+- [ ] Loud structured-log event on every delivery (success, retry, give-up)
+- [ ] Document the verifier snippet in README (Rust + Python + bash) — operators copy-paste
 
-**rc.2 — Observability polish** (medium, depends on rc.1's `stopped` status + run numbers for display)
-- Run timeline (gantt)
-- Success-rate badge + sparkline
-- Per-job p50/p95 duration trend
+**Custom Docker labels (SEED-001):**
+- [ ] `labels: Map<String, String>` in `[defaults]` and `[[jobs]]`
+- [ ] Merge semantics: `use_defaults = false` → replace; otherwise per-job-wins on collision
+- [ ] Reserved-namespace validator (`cronduit.*` prefix → config validation error at load)
+- [ ] Type-gated validator (`labels` on command/script jobs → config validation error)
+- [ ] Plumbed through to `bollard::Config::labels` at the existing label-building site
+- [ ] Integration test that spawns a Docker job with operator labels and asserts they land via `inspect_container`
+- [ ] `${ENV_VAR}` interpolation works in label values (free if v1.0's interpolation is string-level pre-parse)
+- [ ] README + `examples/cronduit.toml` updated with realistic Traefik + Watchtower examples
 
-**rc.3 — Ergonomics** (riskiest, touches sync-on-reload)
-- Bulk enable/disable with config-override semantics
+**Failure context panel:**
+- [ ] New `job_runs.image_digest` column (nullable, three-file migration)
+- [ ] New `job_runs.config_hash` column (nullable, three-file migration)
+- [ ] Capture image digest at run-start for Docker jobs (via existing `inspect_image` plumbing)
+- [ ] Capture config hash at run-start (SHA-256 over stable-key serialization of resolved config)
+- [ ] Inline panel on run detail (only on terminal-failure runs: `failed`, `timeout`, `cancelled`, `stopped`)
+- [ ] Render: first-failure timestamp, consecutive-failure streak, link to last successful run, image-digest delta (Docker only), config-hash delta
+- [ ] Each signal renders gracefully when missing (e.g., "no prior successful run on record")
+- [ ] No deltas computed against pre-v1.2 runs (NULL image_digest / config_hash → "first recorded run")
 
-**Final `v1.1.0`** = rc.3 + any dressing (changelog, docs, migration notes).
+**Per-job exit-code histogram:**
+- [ ] New card on job detail page (mirrors v1.1 p50/p95 card placement)
+- [ ] Bucket by raw `exit_code`, COUNT(*), MAX(start_time) AS last_seen, over the last 100 runs
+- [ ] Static lookup table for named exit-code meanings (0, 1, 2, 124, 125, 126, 127, 130, 137, 139, 143)
+- [ ] Render as small table or bar chart (decide at design pass — terminal-green aesthetic), with named meaning as tooltip
+- [ ] N=20 minimum (matches v1.1 p50/p95 minimum); below that → "not enough data yet"
 
-This matches PROJECT.md's stated strategy and gives operators value after rc.1 (the log bugs are the most-felt), rc.2 (dashboard polish), and rc.3 (ergonomics).
+**Job tagging / grouping:**
+- [ ] `tags: Vec<String>` field on `[[jobs]]` (optional)
+- [ ] Normalization at config-load: lowercase, trim, regex-validate `^[a-z0-9][a-z0-9-]{0,30}$`; reject (don't silently mutate) on mismatch
+- [ ] Reject duplicate tags per job at config-load
+- [ ] Filter chips on dashboard: `?tags=backup,weekly` query string drives the filter
+- [ ] Multi-select via chip toggle; "Clear all" UI; chip count badge
+- [ ] Tags rendered as small chips on each dashboard job card
+- [ ] Tags do NOT appear in webhook payloads, metrics labels, or search index (UI-only locked in PROJECT.md)
+- [ ] Storage: tags persisted on the in-memory `Job` and (likely) in a `jobs.tags` column for query consistency — flag for requirements pass to confirm shape
 
----
+### Add After Validation (v1.2.x patches)
 
-## Feature prioritization matrix
+Things that may surface in rc UAT and patch into v1.2.x without breaking the milestone shape.
 
-| Feature | User Value | Implementation Cost | Priority | Notes |
-|---|---|---|---|---|
-| Log tail snapshot-then-follow | HIGH | MEDIUM | P1 (rc.1) | Three bugs, one fix |
-| Per-job run numbers | MEDIUM | MEDIUM | P1 (rc.1) | Small UX win, migration has subtlety |
-| Stop a running job (single hard kill) | HIGH | LOW-MEDIUM | P1 (rc.1) | Biggest ops win; unusual semantics flagged |
-| Run timeline (gantt, 24h/7d) | MEDIUM-HIGH | MEDIUM | P1 (rc.2) | Distinctive; not table stakes |
-| Success-rate badge + sparkline | HIGH | LOW | P1 (rc.2) | Most-glanced dashboard element |
-| p50/p95 duration trend | MEDIUM | LOW | P1 (rc.2) | Distinctive; minimum-sample threshold matters |
-| Bulk enable/disable | MEDIUM-HIGH | MEDIUM-HIGH | P1 (rc.3) | Riskiest; highest design ambiguity; distinctive |
+- [ ] `cronduit webhook test <job_name>` CLI subcommand — fires a synthetic delivery against the configured URL for end-to-end verification (operators ask for this once they've configured 5 webhooks)
+- [ ] Webhook delivery panel sorts/filters (last 7 days, only failures, etc.)
+- [ ] Histogram chart rendering polish (terminal-green bar chart vs table) if rc UAT prefers one over the other
+- [ ] Tag chip styling tuning (size, max-display-count before "+N more", overflow behavior)
 
-All seven listed items are P1 for v1.1 because the milestone is explicitly polish-and-fix, and the scope was already set in PROJECT.md. The `rc.N` column is the recommended *sequence*, not the priority.
+### Future Consideration (v1.3+)
 
----
+Operator requests we will hear during/after v1.2 rollout that are correct to defer.
 
-## Competitor feature matrix (v1.1-scope only)
+- [ ] Per-job custom HTTP headers on webhooks (bearer tokens, etc.)
+- [ ] Per-tag webhook fan-out (depends on first verifying tagging is the right grouping primitive)
+- [ ] Webhook payload templating (only if a real operator argues for it)
+- [ ] `cronduit webhook resend <delivery_id>` for replay
+- [ ] Tag metadata (descriptions, colors)
+- [ ] Tag-based metrics labels (only if we solve the cardinality problem with an explicit allowlist)
+- [ ] Per-job retry schedule overrides on webhooks
+- [ ] Circuit breaker per webhook URL (only if multi-job-same-URL becomes a footgun in practice)
+- [ ] Image-digest history page ("show me every digest this job has run with")
 
-| Feature | ofelia | Cronicle | Rundeck | Jenkins | GitHub Actions | Hangfire | Nomad | Airflow | dkron | sidekiq-cron | **Cronduit v1.1 (target)** |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| **Stop running job** | ✓ (UI) | ✓ (abort, TERM→KILL) | ✓ (abort, buggy child cleanup) | ✓ (stop/term/kill escalation) | ✓ (cancel) | Partial (relies on cancel token) | ✓ (alloc stop) | ✓ (mark failed) | **No** | ✓ | ✓ (single hard kill, `stopped` status) |
-| **Distinct operator-stopped status** | No (lost on reload) | `Aborted` | `aborted` | `ABORTED` | `cancelled` (conclusion) | `Deleted` | No | `failed` | n/a | No | **`stopped` (new word, no peer)** |
-| **Per-job run number** | No | No | No | **Yes** (`#142`) | **Yes** (`run_number`) | No | No | No | No | No | **Yes (`#142`, like CI tools)** |
-| **Snapshot-then-follow log view** | Partial | **Yes** | Partial | Partial | Partial | Partial | Partial | No (static logs) | No | No | **Yes (SSE + `Last-Event-ID` cursor)** |
-| **Per-run gantt / timeline** | No | No | No | **Yes** (per pipeline) | **Yes** (per workflow) | No | **Yes** (per job) | **Yes** (per DAG run) | No | No | **Yes (cross-job dashboard-level)** |
-| **Success rate badge/sparkline in UI** | No | No | No | **Yes** ("weather report") | Partial (metrics page) | No | No | **Yes** (calendar view) | No | No | **Yes (dashboard cards)** |
-| **p50/p95 duration inline (no external stack)** | No | No | No | No | No | No | No | No | No | No | **Yes (distinctive)** |
-| **Bulk enable/disable** | No (runtime only) | ✓ | ✓ | ✓ | Partial (per workflow) | No | No | ✓ (pause) | No | Per-job only | **Yes, with config-as-truth reconciliation (distinctive)** |
+### Never (explicit non-goals through v2)
 
----
+- Email / SMTP / direct Slack / direct Discord notifications (explicit out-of-scope in PROJECT.md)
+- LLM-generated failure narratives
+- Tag autocomplete typeahead in addition to chips
+- Saved server-side filter views (depends on user model = post-v2)
+- Webhook payload templating beyond plain JSON
+- Webhooks for non-terminal states (`running`, `enqueued`, etc.)
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|-----------|---------------------|----------|
+| Webhook URL + state filter + JSON payload | HIGH | LOW | P1 |
+| HMAC-SHA256 + Standard Webhooks headers | HIGH | LOW | P1 |
+| 3-attempt retry with backoff + jitter | HIGH | LOW | P1 |
+| `webhook_deliveries` log + UI panel | HIGH | MEDIUM | P1 |
+| `[defaults]` + `use_defaults = false` for webhook block | MEDIUM | LOW | P1 |
+| Custom Docker labels (SEED-001 full scope) | HIGH | LOW | P1 |
+| Reserved-namespace + type-gated validators | MEDIUM | LOW | P1 |
+| `job_runs.image_digest` + `job_runs.config_hash` columns | HIGH | MEDIUM | P1 |
+| First-failure / streak / last-success on run detail | HIGH | LOW | P1 |
+| Image-digest delta on run detail | HIGH | MEDIUM | P1 |
+| Config-hash delta on run detail | MEDIUM | LOW | P1 |
+| Exit-code histogram card | MEDIUM | LOW | P1 |
+| Named exit-code meanings (tooltips) | MEDIUM | LOW | P1 |
+| `tags` field + normalization + validators | HIGH | LOW | P1 |
+| Tag filter chips on dashboard | HIGH | LOW | P1 |
+| Tag chips on job cards | MEDIUM | LOW | P1 |
+| `cronduit webhook test <job>` CLI | LOW | LOW | P2 |
+| Webhook delivery panel filters | LOW | LOW | P2 |
+| Per-job custom HTTP headers on webhooks | LOW | MEDIUM | P3 (v1.3+) |
+| Webhook payload templating | LOW | HIGH | P3 (v1.3+) |
+| Per-tag webhook fan-out | LOW | HIGH | P3 (v1.3+) |
+| Tag metadata (descriptions, colors) | LOW | MEDIUM | P3 (v1.3+) |
+| Tag-based metrics labels | LOW | HIGH | NEVER (cardinality) |
+| Email/Slack/Discord direct channels | LOW | HIGH | NEVER (out of scope) |
+
+**Priority key:**
+- **P1** — Must ship in v1.2.0; absence makes the milestone feel incomplete
+- **P2** — Ship in v1.2.x patch; low-risk follow-up
+- **P3** — Defer to v1.3+ pending demand
+- **NEVER** — Explicit non-goal
+
+## Competitor Feature Analysis
+
+Cross-tool survey for the v1.2 features only. v1.0/v1.1 features were covered in the v1.0/v1.1 research and are not re-litigated here.
+
+### Webhooks
+
+| Aspect | ofelia | dagu | Healthchecks.io | Drone CI plugin | Prometheus Alertmanager | Cronduit (target) |
+|--------|--------|------|------------------|------------------|-------------------------|-------------------|
+| Per-job webhook URL | Partial (Slack channel only) | Yes (per-DAG, with token auth) | Yes (per-check, separate up/down URLs) | Yes (per-pipeline) | Receiver-config (group-level) | **Yes (per-job, `[defaults]` + override)** |
+| State filter | Slack on failure | Lifecycle handlers (success/failure/abort) | Up/down events | Build complete | Firing/resolved | **Yes — `states = ["failed", "timeout", "stopped"]`** |
+| Signing scheme | None | Token auth | None native | None native | None native | **HMAC-SHA256, Standard Webhooks v1** |
+| Retry semantics | None documented | Built-in retry on send failures | 30s timeout, **2 retries** | None native (plugin choice) | Configurable (`group_wait`/`repeat_interval`) | **3 attempts, exp backoff w/ jitter** |
+| Retry backoff | n/a | n/a | Linear short delay | n/a | Linear (`repeat_interval`) | **Exponential (0s/30s/300s, ±20%)** |
+| Dead-letter / inspectable log | No | Logs only | Yes (recent webhook activity) | Logs only | Notification log | **Yes (`webhook_deliveries` table + UI panel)** |
+| Payload format | Slack-shaped JSON | Configurable (handler script) | URL-encoded body or JSON, with `$NAME`/`$STATUS` placeholders | Handlebars template | Specific JSON schema (alerts array) | **Standard Webhooks JSON shape** |
+| Templating | n/a | Script-based | `$NAME`/`$STATUS` placeholders in body | Handlebars | Go templates | **No (anti-feature for v1.2)** |
+| Per-job HMAC secret | n/a | n/a | n/a | n/a | n/a | **Yes — `hmac_secret = "${ENV}"`, opt-in** |
+
+**Verdict:** No tool in the cron/scheduler space ships HMAC-signed webhooks following the Standard Webhooks spec. Cronduit can lead this.
+
+### Custom Docker labels
+
+| Aspect | ofelia | docker-crontab | dagu | Cronicle | Cronduit (target) |
+|--------|--------|---------------|------|----------|-------------------|
+| Per-job labels in config | Partial (label-driven config IS the model) | No (uses host crontab) | n/a (not Docker-native) | n/a (not Docker-native) | **Yes (`labels = { ... }`)** |
+| `[defaults]` inheritance | n/a | n/a | n/a | n/a | **Yes (matches existing override pattern)** |
+| Reserved namespace | None | n/a | n/a | n/a | **Yes (`cronduit.*`, validated at load)** |
+| Type gating | n/a | n/a | n/a | n/a | **Yes (`docker` jobs only)** |
+| Bollard direct integration | Yes | n/a (CLI) | n/a | n/a | **Yes (already plumbed in v1.0)** |
+
+**Verdict:** SEED-001 design is correct. No competitor in the homelab space does the reserved-namespace + type-gated combination — operators get told their `cronduit.foo = "bar"` label was silently dropped and don't find out until weeks later. Cronduit's load-time validation is a real differentiator.
+
+### Failure context
+
+| Aspect | Sentry | GitLab CI | Cronitor | Healthchecks.io | Cronicle | Cronduit (target) |
+|--------|--------|-----------|----------|------------------|----------|-------------------|
+| First-failure timestamp | **Yes ("First Seen")** | No | Yes | Yes | No | **Yes** |
+| Consecutive failure streak | Indirect (event count) | No | Yes (alerting threshold) | Yes (after-N-failures alert) | No | **Yes** |
+| Link to last successful run | n/a | Yes (pipeline list) | Yes | Yes (last ping) | Partial | **Yes** |
+| Image-digest delta | n/a | n/a | n/a | n/a | n/a | **Yes (Docker-native unique)** |
+| Config-hash delta | n/a | Indirect (commit SHA) | n/a | n/a | n/a | **Yes (config-as-source-of-truth unique)** |
+| Single panel UX placement | Issue-detail page | Pipeline-detail | Job-detail page | Check-detail | Job-detail | **Run-detail inline panel** |
+| Auto-narrative ("Why did this fail?") | Partial (Suspect Commits) | No | No | No | No | **No (anti-feature)** |
+
+**Verdict:** Cronduit's failure-context panel borrows the right pieces from Sentry / Cronitor and adds two homelab-tier signals (image digest + config hash) that adjacent tools lack. The two new columns and a single run-detail panel is the right scope.
+
+### Per-job exit-code histogram
+
+| Aspect | Cronicle | dkron | Cronitor | Komodor (K8s) | Grafana (cron-manager) | Cronduit (target) |
+|--------|----------|-------|----------|---------------|------------------------|-------------------|
+| Exit-code captured per run | Yes | Yes | Yes | Yes | Yes | **Yes (since v1.0)** |
+| Histogram / distribution UI | No | No | Yes (alerting on specific code) | n/a (deep-dive ref material) | Yes (in Grafana panel) | **Yes (job-detail card)** |
+| Named meanings for codes | No | No | No | **Yes (reference doc)** | No | **Yes (inline tooltips)** |
+| Last-seen timestamp per code | No | No | Partial | n/a | Possible via PromQL | **Yes** |
+| Bucketing strategy | Raw codes | Raw codes | Filterable | Reference table | Raw codes | **Raw codes + named tooltips** |
+
+**Verdict:** Nobody in the cron/scheduler space ships a per-job exit-code histogram with named-meaning tooltips. The Komodor reference is the right intellectual anchor for which codes get a label. Pure read-side feature; cheapest of the v1.2 set.
+
+### Job tagging
+
+| Aspect | Cronitor | Datadog | Cronicle | dkron | Healthchecks.io | Cronduit (target) |
+|--------|----------|---------|----------|-------|------------------|-------------------|
+| Tags per job | Yes | Yes (key:value) | Yes (categories) | Yes | Yes | **Yes (string list)** |
+| Multi-tag | Yes | Yes | Limited | Yes | Yes | **Yes** |
+| Normalization | Lowercase | Lowercase + key:value | None (case-sensitive) | None | Lowercase | **Lowercase + alnum-dash regex** |
+| Filter chips on dashboard | Yes | Yes | Limited | Limited | Yes | **Yes** |
+| URL-state filter persistence | Yes | Yes | No | No | Yes | **Yes (?tags=...)** |
+| Tag-based metrics labels | Yes (with cardinality controls) | Yes (counts as billable dimensions) | n/a | n/a | Yes | **No (UI-only locked in PROJECT.md)** |
+| Tag-based webhook fan-out | Yes | n/a | n/a | n/a | Yes | **No (v1.3+ deferred)** |
+| Tag metadata (color, description) | Limited | Yes | No | No | No | **No (v1.3+ deferred)** |
+
+**Verdict:** Multi-tag with normalization, chips, and URL persistence is the dominant convention. Cronduit ships the well-understood UI-only subset and defers tag-as-coupling-mechanism (metrics labels, webhook fan-out) until usage data justifies it.
+
+## Research Notes — Operator Expectations vs Current v1.2 Scope
+
+These are real operator expectations surfaced by the research that the requirements pass should EXPLICITLY accept or reject. None require scope change; the value is forcing a documented decision.
+
+### Webhooks
+
+1. **Operators expect timestamp tolerance** — Standard Webhooks recommends rejecting deliveries >5 minutes off the receiver's clock. Cronduit's *senders* can't enforce this on the receiver; we just emit `webhook-timestamp` in the header and document the tolerance recommendation in the verifier README snippet.
+2. **Operators expect `User-Agent: cronduit/1.2.0` (or similar)** — GitHub uses `GitHub-Hookshot/...`, Stripe uses `Stripe/1.0`, Healthchecks uses its own. Trivial to add; aids receiver-side firewall rules. **Recommend: add as a P1 detail at requirement-write.**
+3. **Operators expect `Content-Type: application/json; charset=utf-8`** — universal convention. Trivial.
+4. **Operators DO NOT expect `running` events** — confirmed: terminal-state-only is the right scope.
+5. **Operators DO NOT consistently expect a webhook for job-config-load events** (e.g., "config reloaded successfully") — Cronduit deliberately doesn't add this for v1.2. Could be a v1.3 addition.
+6. **Operators expect a way to silently disable webhooks for a job without removing the config** — CONFIRM this is covered by the existing `enabled = false` job toggle (which suspends the whole job, not just webhooks). If operators want "still run, just don't fire webhooks", that's an additional knob. **Recommend: document the workaround (set `states = []`) and defer a real toggle.**
+
+### Custom Docker labels
+
+7. **Operators expect `${ENV_VAR}` interpolation in label *values*** — confirm at requirement-write that v1.0's TOML interpolation is string-pre-parse, so `labels = { foo = "${MY_VAR}" }` works for free.
+8. **Operators expect labels to appear in `docker ps` output of cronduit-spawned containers** — they do, by definition (labels are a Docker feature, not a cronduit projection).
+9. **Operators DO NOT expect labels via env-var overlay** — out of scope, decision documented above.
+10. **Operators DO NOT expect labels to appear in webhook payloads in v1.2** — out of scope; flag for v1.3 if asked.
+11. **Operators may expect cronduit to add internal labels beyond `cronduit.run_id` / `cronduit.job_name` later** — the SEED-001 reserved `cronduit.*` namespace already future-proofs additions like `cronduit.job_run_number`, `cronduit.executor_type`, `cronduit.config_hash`, `cronduit.image_digest`, `cronduit.network_mode`. v1.2 emits the existing two; v1.3+ can add more without churning operator configs.
+
+### Failure context
+
+12. **Operators expect duration-vs-typical-p50 deviation to be visible** — v1.1 already computes p50/p95. Cheap addition: render "this run was 3.2× longer than the p50 over the last 100 runs" in the failure context panel. **Recommend: include as a P1 signal alongside the other deltas.**
+13. **Operators expect scheduler-fire-time vs run-start-time skew** — relevant when the scheduler is overloaded or the executor was queued. Already on `job_runs` (firing time vs start time). Cheap addition. **Recommend: include as a P1 signal in the failure-context panel ("started 15s late") when skew >5s.**
+14. **Operators expect a "view diff" link on the config-hash delta** — v1.2 ships hash-only. v1.3 could ship a full config-history table + diff view. Document the v1.2 omission.
+15. **Operators expect failure-context to render on `timeout` runs the same as `failed` runs** — confirmed; the panel triggers on any non-success terminal status (`failed`, `timeout`, `cancelled`, `stopped`).
+16. **Operators DO NOT expect failure-context to surface on `success` runs** — confirmed; the panel is off by default for success.
+
+### Exit-code histogram
+
+17. **Operators expect the histogram to count `stopped` runs (operator-killed) separately or exclude them** — `stopped` runs typically have exit code 137 (we send SIGKILL). They're not "real failures" but they're not "real successes" either. **Recommend: include `stopped` runs in the histogram BUT distinguish via a small visual cue (e.g., different bar color or stacked bar showing `stopped` portion of code 137).** Otherwise the histogram lies about how often a job is actually crashing vs being manually killed.
+18. **Operators expect the histogram to mark code `0` (success) prominently** — most runs are `0`; the histogram should not let one giant `0` bar drown out the diagnostic codes. **Recommend: render `0` as a single stat ("142 successes") + render non-zero codes as the actual bar chart.**
+19. **Operators expect a clickable filter "show all runs with exit code N" from the histogram** — would require a new run-history filter (currently filter is by status, not by exit code). Defer to v1.3 (Future Requirements list already includes "Run history filters (status, date range, exit code)" for v1.3).
+
+### Tagging
+
+20. **Operators may expect tag-based dashboard URL bookmarking** — covered by URL query string persistence. Document explicitly.
+21. **Operators may expect tag-based search on the existing dashboard search box** — confirm at requirement-write whether the existing name-filter and the new tag-filter compose (e.g., `?name=backup&tags=weekly` ANDs them). **Recommend: AND semantics, both filters compose in the same SQL WHERE.**
+22. **Operators may expect to see "tag distribution" or "all tags in use" somewhere** — the dashboard chip bar IS this list (it shows every distinct tag). No separate tag-management page needed.
+23. **Operators DO NOT expect tags to appear in the `/api/jobs/...` JSON outputs in v1.2** unless we add a `GET /api/tags` for client tooling. Defer; the dashboard partial is the only consumer.
+24. **Operators DO NOT expect tag changes to retain across restart without a config edit** — tags are config-driven (in TOML), so they ARE stable across restart. Confirmed.
 
 ## Sources
 
-### GitHub Actions
-- [Explanation for GitHub Workflow run statuses (community discussion #70540)](https://github.com/orgs/community/discussions/70540)
-- [Workflow syntax for GitHub Actions — github.run_number](https://docs.github.com/actions/using-workflows/workflow-syntax-for-github-actions)
-- [Manually modify GITHUB_RUN_NUMBER for workflow (community discussion #26709)](https://github.com/orgs/community/discussions/26709)
-- [Viewing GitHub Actions metrics](https://docs.github.com/en/actions/administering-github-actions/viewing-github-actions-metrics)
-- [gh-workflow-stats CLI](https://github.com/fchimpan/gh-workflow-stats)
-- [CICube GHA dashboard blog](https://cicube.io/blog/github-actions-dashboard/)
+### Webhooks
 
-### Jenkins
-- [Jenkins Result javadoc (status taxonomy)](https://javadoc.jenkins-ci.org/hudson/model/Result.html)
-- [Aborting a build](https://www.jenkins.io/doc/book/using/aborting-a-build/)
-- [Pipeline: Basic Steps (stop/term/kill endpoints)](https://www.jenkins.io/doc/pipeline/steps/workflow-basic-steps/)
-- [Pipeline Graph View plugin](https://plugins.jenkins.io/pipeline-graph-view/)
-- [Blue Ocean pipeline run details](https://www.jenkins.io/doc/book/blueocean/pipeline-run-details/)
+- [Standard Webhooks Specification](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) — `webhook-id` / `webhook-timestamp` / `webhook-signature` headers, `id.timestamp.payload` signing, HMAC-SHA256 with `whsec_`-prefixed base64 secrets, recommended retry schedule (~75 hours)
+- [GitHub: Validating webhook deliveries](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries) — `X-Hub-Signature-256` original convention, `sha256=<hmac>` format, raw-body signing
+- [Inventive HQ: How HMAC Webhook Signatures Work](https://inventivehq.com/blog/how-hmac-webhook-signatures-work-complete-guide) — survey of major providers (Stripe, GitHub, CircleCI, Zendesk, Shopify, Okta) all using SHA-256
+- [Svix Webhook Best Practices: Retries](https://www.svix.com/resources/webhook-best-practices/retries/) — exponential backoff + jitter + dead-letter conventions
+- [Hookdeck: Outbound Webhook Retry Best Practices](https://hookdeck.com/outpost/guides/outbound-webhook-retry-best-practices) — retryable vs permanent status code rules; ±20% jitter convention
+- [Svix Verifying Webhooks Manually](https://docs.svix.com/receiving/verifying-payloads/how-manual) — 5-minute timestamp tolerance convention
+- [Healthchecks.io webhook delivery](https://blog.healthchecks.io/2024/10/how-healthchecks-io-sends-webhook-notifications/) — 30s timeout + 2 retries (Healthchecks's specific choice; we go heavier)
+- [Prometheus Alertmanager configuration](https://prometheus.io/docs/alerting/latest/configuration/) — webhook receiver payload schema reference (alerts array, status field)
+- [Drone CI Webhook Plugin](https://github.com/drone-plugins/drone-webhook) — Handlebars-template payload customization (the templating model we're explicitly avoiding)
+- [Dagu YAML Specification](https://docs.dagu.sh/writing-workflows/yaml-specification) — lifecycle handler model + per-DAG webhook auth
 
-### Rundeck
-- [Rundeck Executions docs (status taxonomy)](https://docs.rundeck.com/docs/manual/07-executions.html)
-- [Kill Job process tree bug #1038](https://github.com/rundeck/rundeck/issues/1038)
-- [Abort execution API #5291](https://github.com/rundeck/rundeck/issues/5291)
-- [Kill job doesn't work #2105](https://github.com/rundeck/rundeck/issues/2105)
+### Docker labels
 
-### Cronicle
-- [Cronicle WebUI docs (abort link, live log watcher)](https://github.com/jhuckaby/Cronicle/blob/master/docs/WebUI.md)
-- [Aborting a job doesn't kill children processes #248](https://github.com/jhuckaby/Cronicle/issues/248)
+- [Docker docs: Object labels](https://docs.docker.com/engine/manage-resources/labels/) — reverse-DNS prefix convention, reserved namespaces (`com.docker.*`, `io.docker.*`, `org.dockerproject.*`)
+- [Traefik Docker provider docs](https://doc.traefik.io/traefik/reference/routing-configuration/other-providers/docker/) — `traefik.*` reserved namespace pattern (the model we're matching with `cronduit.*`)
+- Cronduit `.planning/seeds/SEED-001-custom-docker-labels.md` — full design lock for the feature; merge semantics, reserved namespace, type gating
 
-### Buildkite
-- [Builds API — build.number vs build.id](https://buildkite.com/docs/apis/rest-api/builds)
-- [Buildkite pipelines overview](https://buildkite.com/docs/pipelines)
+### Exit codes
 
-### Hangfire
-- [Don't do it now! Part 4 — Hangfire dashboard, retries, cancellation](https://indexoutofrange.com/Don't-do-it-now!-Part-4.-Hangfire-details-dashboard,-retries-and-job-cancellation/)
-- [Deleting jobs does not stop them #1298](https://github.com/HangfireIO/Hangfire/issues/1298)
-- [Cancel a running job discussion](https://discuss.hangfire.io/t/cancel-a-running-job/603)
+- [Komodor: Exit Codes in Containers and Kubernetes Complete Guide](https://komodor.com/learn/exit-codes-in-containers-and-kubernetes-the-complete-guide/) — canonical reference for 0, 1, 125-127, 128+N (137, 139, 143). Source for the named-meaning lookup table.
+- [TLDP: Appendix E. Exit Codes With Special Meanings](https://tldp.org/LDP/abs/html/exitcodes.html) — Bash exit-code conventions (0, 1, 2, 126, 127, 128, 130, 255)
+- [Linux exit status codes guide](https://www.thelinuxvault.net/blog/list-of-exit-codes-on-linux/) — broader Linux exit-code reference
 
-### Nomad
-- [nomad job stop command](https://developer.hashicorp.com/nomad/commands/job/stop)
-- [periodic block](https://developer.hashicorp.com/nomad/docs/job-specification/periodic)
+### Failure context UX
 
-### Airflow
-- [Airflow UI overview (grid, gantt, calendar)](https://airflow.apache.org/docs/apache-airflow/stable/ui.html)
-- [Astronomer: intro to the Airflow UI](https://www.astronomer.io/docs/learn/airflow-ui)
-- [Global gantt chart feature request #22001](https://github.com/apache/airflow/issues/22001)
+- Sentry's "First Seen" / Cronitor's failure tracking — direct UX inspiration for the first-failure / streak / last-success triple
+- [GitLab CI pipeline detail patterns](https://docs.gitlab.com/operations/error_tracking/) — "link to last successful run" convention reference
 
-### dkron
-- [Dkron REST API](https://dkron.io/api/)
-- [Stop a running job discussion #1261](https://github.com/distribworks/dkron/discussions/1261)
+### Tagging UX
 
-### ofelia
-- [ofelia mcuadros README (job CRUD via UI, config reload)](https://github.com/mcuadros/ofelia)
-- [ofelia netresearch fork](https://github.com/netresearch/ofelia)
+- [Smart Interface Design Patterns: Badges vs Pills vs Chips vs Tags](https://smart-interface-design-patterns.com/articles/badges-chips-tags-pills/) — terminology + filter-chip-as-toggle UX
+- [Tags - From UX to Implementation (Schof)](https://schof.co/tags-ux-to-implementation/) — normalization patterns (lowercase, special-character removal)
+- [Aufait UX: Dashboard Filter Design Guide](https://www.aufaitux.com/blog/dashboard-filter-design-guide/) — filter chip placement and "Clear all" convention
+- [Untitled UI: Tags components](https://www.untitledui.com/components/tags) — chip styling reference for design fidelity
 
-### sidekiq-cron
-- [sidekiq-cron README (per-job disable in UI)](https://github.com/sidekiq-cron/sidekiq-cron)
-- [Enabling/disabling cron in UI discussion #5000](https://github.com/sidekiq/sidekiq/issues/5000)
+### Project context
 
-### systemd timers
-- [ArchWiki systemd/Timers (transient, mask)](https://wiki.archlinux.org/title/Systemd/Timers)
-- [systemd.timer(5) man page](https://man7.org/linux/man-pages/man5/systemd.timer.5.html)
-
-### Docker signal handling
-- [docker container stop (SIGTERM → SIGKILL timeout)](https://docs.docker.com/reference/cli/docker/container/stop/)
-- [Last9: Docker Stop vs Kill](https://last9.io/blog/docker-stop-vs-kill/)
-- [moby#8441 wait/remove race](https://github.com/moby/moby/issues/8441)
-
-### SSE / HTMX / log streaming
-- [htmx SSE extension (Last-Event-ID handling)](https://htmx.org/extensions/sse/)
-- [MDN: Using server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events)
-- [HTML spec: Server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html)
-- [Kubernetes dashboard log view with SSE (DEV post)](https://dev.to/perber/building-a-kubernetes-dashboard-implementing-a-real-time-logview-with-server-sent-events-and-react-window-1lel)
-- [kubetail — real-time Kubernetes log dashboard](https://github.com/kubetail-org/kubetail)
-
-### Prometheus percentiles
-- [Prometheus histograms and summaries practices](https://prometheus.io/docs/practices/histograms/)
-- [SQLite ROW_NUMBER()](https://www.sqlitetutorial.net/sqlite-window-functions/sqlite-row_number/)
-- [Flyway: idempotent DDL scripts](https://www.red-gate.com/hub/product-learning/flyway/creating-idempotent-ddl-scripts-for-database-migrations)
-
-### Internal project context
-- `.planning/PROJECT.md` (v1.1 scope, locked constraints)
-- `.planning/milestones/v1.0-research/FEATURES.md` (v1.0 feature landscape, not redesigned here)
-- `design/DESIGN_SYSTEM.md` (color tokens for status encoding)
-- `CLAUDE.md` (tech stack locks: askama_web 0.15, sqlx 0.8, bollard 0.20, HTMX 2.0.4)
+- `.planning/PROJECT.md` (Active section) — v1.2 feature scope locked at kickoff (2026-04-25)
+- `.planning/MILESTONES.md` — v1.0 + v1.1 history reference
+- `.planning/seeds/SEED-001-custom-docker-labels.md` — Docker labels seed with all design decisions locked
+- `THREAT_MODEL.md` — outbound webhook implications (currently no outbound network in v1.0/v1.1; v1.2 adds the first outbound surface)
+- `.planning/milestones/v1.0-research/FEATURES.md` and `.planning/milestones/v1.1-research/FEATURES.md` — prior research patterns (depth, style, sections to match)
 
 ---
-*Feature research for: Cronduit v1.1 "Operator Quality of Life" — peer-tool calibration pass*
-*Researched: 2026-04-14*
+*Feature research for: Cronduit v1.2 — Operator Integration & Insight*
+*Researched: 2026-04-25*
+*Scope: Webhooks, Custom Docker labels (SEED-001), Failure context, Exit-code histogram, Job tagging — five features ONLY. v1.0/v1.1 features are out of scope for this document.*

@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: — Operator Quality of Life
-status: shipped
-stopped_at: v1.1.0 tagged and :latest advanced; milestone archived via /gsd-complete-milestone v1.1
-last_updated: "2026-04-24T18:00:00.000Z"
-last_activity: 2026-04-24 -- /gsd-complete-milestone v1.1 executed; archives written to .planning/milestones/v1.1-*; PROJECT/ROADMAP/MILESTONES/RETROSPECTIVE evolved; next step /gsd-new-milestone
+milestone: v1.2
+milestone_name: — Operator Integration & Insight
+status: "Phase 15 shipped — PR #46"
+stopped_at: Phase 15 context gathered
+last_updated: "2026-04-27T03:30:37.416Z"
+last_activity: 2026-04-26
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 52
-  completed_plans: 52
+  total_phases: 10
+  completed_phases: 1
+  total_plans: 5
+  completed_plans: 5
   percent: 100
 ---
 
@@ -18,21 +18,52 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-24 — v1.1 milestone closed)
+See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** v1.2 kickoff — scope not yet defined. Run `/gsd-new-milestone` to begin.
+**Current focus:** Phase 15 — foundation-preamble
 
 ## Current Position
 
-Milestone: v1.1 — Operator Quality of Life — ✅ SHIPPED 2026-04-23 (tag `v1.1.0`; rc tags `v1.1.0-rc.1` … `v1.1.0-rc.6`)
-Previous milestone: v1.0 (SHIPPED 2026-04-14, tags `v1.0.0` + `v1.0.1`)
-Phase: none active
-Plan: none active
-Status: Between milestones. v1.1 closed; v1.2 not yet started.
-Last activity: 2026-04-24 -- `/gsd-complete-milestone v1.1` ran; archives + retro + PROJECT/ROADMAP evolution complete
+Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
+Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
+Phase: 16
+Plan: Not started
+Status: Phase 15 shipped — PR #46
+Last activity: 2026-04-26
 
-Progress: [██████████] 100% (v1.1: 6/6 phases, 52/52 plans, 33/33 requirements Complete)
+Progress: [░░░░░░░░░░] 0% (v1.2: 0/10 phases complete; 0/— plans complete)
+
+## v1.2 Roadmap Summary
+
+```mermaid
+flowchart LR
+    P15["P15<br/>Foundation<br/>Preamble"] --> P16["P16<br/>FCTX schema<br/>+ run.rs fix"]
+    P15 --> P17["P17<br/>Docker labels<br/>(SEED-001)"]
+    P15 --> P22["P22<br/>Tagging<br/>schema"]
+    P16 --> P18["P18<br/>Webhook<br/>payload"]
+    P17 --> P20["P20<br/>Webhook<br/>posture"]
+    P18 --> P19["P19<br/>HMAC<br/>+ examples"]
+    P19 --> P20
+    P20 --> RC1(["rc.1"])
+    RC1 --> P21["P21<br/>FCTX UI<br/>+ Exit hist"]
+    P16 --> P21
+    P21 --> RC2(["rc.2"])
+    RC2 --> P22
+    P22 --> P23["P23<br/>Tag chips"]
+    P23 --> RC3(["rc.3"])
+    RC3 --> P24["P24<br/>Close-out<br/>+ TM5/TM6"]
+    P24 --> SHIP(["v1.2.0"])
+
+    classDef todo fill:#1a1a3d,stroke:#7fbfff,stroke-width:1px,color:#e0e0ff
+    classDef rc fill:#2a1a3d,stroke:#bf7fff,stroke-width:2px,color:#f0e0ff
+    classDef ship fill:#00ff7f,stroke:#00ff7f,stroke-width:3px,color:#0a1a0a
+    class P15,P16,P17,P18,P19,P20,P21,P22,P23,P24 todo
+    class RC1,RC2,RC3 rc
+    class SHIP ship
+```
+
+10 phases · 41 requirements · 3 rc cuts planned · strict dependency ordering: P15 before P18/P19/P20; P16 before P18+P21; P22 before P23.
 
 ## v1.1 Recap (archived)
 
@@ -84,21 +115,40 @@ Full v1.0 archive: `.planning/milestones/v1.0-ROADMAP.md`, `.planning/milestones
 
 ### Decisions
 
-All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions. The v1.1-era decisions (RunControl abstraction vs `kill_on_drop`, dedicated `jobs.next_run_number` counter, three-file tightening migration shape, Option A log dedupe, `/timeline` single-SQL query, Rust-side percentile, `jobs.enabled_override` tri-state, `cronduit health` CLI + Dockerfile HEALTHCHECK, release.yml D-10 rc-tag gating, D-13 maintainer-action tag cuts, six-tag GHCR contract, `:main` floating tag, retroactive `:latest` retag, UAT-driven rc loop, Tailwind v3 → v4 migration) are all captured there.
+All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
+
+**v1.2 decisions inherited from research/requirements (LOCKED):**
+
+- Webhook delivery worker shape: NEW module `src/webhooks/mod.rs` with bounded `tokio::sync::mpsc::channel(1024)` + dedicated worker task. Scheduler emits via `try_send` (NEVER await tx.send).
+- HMAC algorithm: SHA-256 ONLY (Standard Webhooks v1 spec). No algorithm-agility.
+- Webhook retry: 3 attempts at t=0, t=30s, t=300s with full-jitter (rand 0.8-1.2× multiplier).
+- Webhook coalescing: edge-triggered, default fires only on `streak_position == 1`; configurable per-job via `fire_every`.
+- Webhook URL validation: HTTPS required for non-loopback/non-RFC1918; HTTP only for local destinations (with WARN).
+- Webhook payload: Standard Webhooks v1 spec headers; `payload_version: "v1"` field.
+- Webhook reload survival + 30s drain on shutdown.
+- Docker labels merge: `use_defaults=false` → replace; otherwise merge with per-job-wins on collision.
+- Reserved namespace: `cronduit.*` (validator at config-load).
+- Type-gated: labels only on `type="docker"` jobs.
+- run.rs:277 bug fix: add `container_id` field to `DockerExecResult`; fix the assignment.
+- Failure-context: 5 P1 signals (time + image + config + duration-vs-p50 + scheduler-fire-skew).
+- `job_runs.config_hash`: per-run column added (Option A; not `jobs.updated_at` proxy).
+- Exit-code: 10-bucket strategy; success as separate stat; stopped distinct from 128-143; last-100-ALL window; NOT exposed as Prometheus label.
+- Tagging: `jobs.tags` TEXT JSON column; per-job only (not in `[defaults]`); lowercase+trim normalization; charset regex; substring-collision check; AND filter semantics; untagged-hidden when filter active; URL state via repeated `?tag=`.
+- cargo-deny: v1.2 preamble (non-blocking initially; promoted to blocking before final v1.2.0).
 
 ### Open questions
 
-None. All phase-plan open questions (Phase 10 `active_runs` merge, Phase 11 log-id Option A vs B, Phase 12 `(unhealthy)` root-cause reproduction) were resolved during their respective phase plans.
+None at roadmap level. Phase-plan-level open questions surface during `/gsd-discuss-phase`.
 
 ### Pending Todos
 
-- `/gsd-new-milestone` — kick off v1.2. Scope not yet defined.
+- Run `/gsd-discuss-phase 15` to start the first v1.2 phase (Foundation Preamble: Cargo bump + cargo-deny + webhook worker scaffolding).
 
 ### Blockers/Concerns
 
 None.
 
-Three Phase 9 UAT items from v1.0 are accepted as deferred to natural post-merge validation per the v1.0 audit verdict — see `.planning/milestones/v1.0-MILESTONE-AUDIT.md` § `deferred_post_merge_observation`. They are NOT blockers for v1.1.
+Three Phase 9 UAT items from v1.0 are accepted as deferred to natural post-merge validation per the v1.0 audit verdict — see `.planning/milestones/v1.0-MILESTONE-AUDIT.md` § `deferred_post_merge_observation`. They are NOT blockers for v1.2.
 
 ## Deferred Items
 
@@ -123,10 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-24 — `/gsd-complete-milestone v1.1` executed
-Stopped at: v1.1 milestone archived; STATE/ROADMAP/PROJECT/MILESTONES/RETROSPECTIVE all evolved; awaiting safety commit + REQUIREMENTS.md removal, then next milestone kickoff.
-Resume command: `/gsd-new-milestone` to scope v1.2.
+Last session: --stopped-at
+Stopped at: Phase 15 context gathered
+Resume command: `/gsd-discuss-phase 15`
 
-Last activity: 2026-04-24 — milestone-close archives written (`.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`), `.planning/MILESTONES.md` v1.1 entry inserted, PROJECT.md current-state advanced to post-v1.1, ROADMAP.md collapsed into milestone groupings, RETROSPECTIVE.md v1.1 section appended with cross-milestone trends.
-
-**Planned Phase:** none — milestone boundary.
+**Planned Phase:** 15 — Foundation Preamble (Cargo 1.1.0→1.2.0 bump; cargo-deny CI preamble (non-blocking); webhook delivery worker foundation: bounded mpsc(1024) + dedicated worker task + drop counter; FOUND-15, FOUND-16, WH-02)

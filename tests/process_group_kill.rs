@@ -33,6 +33,13 @@ use cronduit::scheduler::run::run_job;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+/// Phase 15 / WH-02 — per-test webhook channel. The Receiver is dropped
+/// immediately; these tests do not assert on webhook behavior.
+fn test_webhook_tx() -> mpsc::Sender<cronduit::webhooks::RunFinalized> {
+    let (tx, _rx) = cronduit::webhooks::channel_with_capacity(8);
+    tx
+}
+
 /// Unique sentinel path per test invocation. Uses nanosecond timestamp + pid
 /// so parallel test runs cannot collide. Path is shell-safe (alphanumerics +
 /// dashes) — `ThreadId(n)` debug formatting was avoided because its parens
@@ -220,6 +227,7 @@ async fn stop_kills_shell_pipeline_grandchildren() {
             "manual".to_string(),
             cancel,
             active_clone,
+            test_webhook_tx(),
         )
         .await
     });
@@ -319,6 +327,7 @@ async fn stop_kills_backgrounded_processes_in_script() {
             "manual".to_string(),
             cancel,
             active_clone,
+            test_webhook_tx(),
         )
         .await
     });

@@ -1,461 +1,732 @@
-# Cronduit v1.1 — Architecture Research
+# Cronduit v1.2 — Architecture Research
 
 **Dimension:** Integration Mapping (subsequent milestone, not greenfield)
-**Milestone:** v1.1 "Operator Quality of Life"
-**Researched:** 2026-04-14
-**Confidence:** HIGH — every file path, line number, and module shape verified by direct read of the v1.0.1 source tree.
+**Milestone:** v1.2 "Operator Integration & Insight"
+**Researched:** 2026-04-25
+**Confidence:** HIGH — every cited file path, line number, and symbol verified by direct read of the v1.1.0 source tree on the `docs/v1.1-close-out` branch.
 
-> This document adapts the standard `research-project/ARCHITECTURE.md` template. The default template is greenfield-oriented ("what architecture should we adopt?"); for v1.1 the architecture is already shipped and the valuable research question is "how do the v1.1 features slot into the existing modules, what new data flows are required, and what is the build order?" The sections below reflect that adapted focus.
+> This document adapts the standard `research-project/ARCHITECTURE.md` template the same way the v1.1 research did. The greenfield template asks "what architecture should we adopt?" — for v1.2 the architecture is shipped, the locked decisions are listed in `PROJECT.md`, and the valuable research question is "how do the v1.2 features slot into the existing modules, what new data flows are required, and what is the build order?" The sections below reflect that adapted focus and explicitly omit anything that is roadmap or stack-research territory (per the orchestrator's `Out of scope`).
 
 ---
 
 ## 1. Executive Summary
 
-v1.1 is a **polish-and-fix milestone on top of the shipped v1.0.1 architecture.** Every target feature slots into an existing module or adds a small sibling module. None of them require refactoring the scheduler loop, the pool split, or the template inheritance structure. The two architecturally interesting feature threads are:
+v1.2 is an **expand milestone on top of the shipped v1.1.0 architecture.** Of the five features:
 
-1. **Stop-a-running-job**, which forces us to track a per-run control handle that the `active_runs` map currently does not carry.
-2. **Per-job run numbers**, which forces a migration plus a narrow change in the write path.
+- **Three are mostly-additive on the schema and the executor** — webhook notifications, custom Docker labels (SEED-001), and per-job exit-code histogram. None require touching `SchedulerLoop::run`. None invalidate any v1.0/v1.1 invariant.
+- **One requires a new `job_runs` column with backfill** — failure-context's image-digest delta. The three-file migration shape locked in by Phase 11 (DB-09..13) and reused by Phase 14 (DB-14) fits exactly. There is also a low-risk corollary: the v1.1.0 codebase has a **field-naming bug** that we should fix in the same migration wave (see §3.3 "Pre-existing bug").
+- **One is UI-only with a small DB schema choice attached** — job tagging. The schema choice (JSON column on `jobs` vs separate `jobs_tags` table) is decidable here without re-litigating it at phase-plan time.
 
-Everything else is additive.
+The two architecturally interesting feature threads are:
 
-The **bulk enable/disable design question is resolvable**: option (b) — a new `jobs.enabled_override` column — is the least intrusive choice given how `sync::sync_config_to_db` currently calls `disable_missing_jobs`. The rationale is derived from reading the actual sync code, not aesthetic preference. Details in §3.7.
+1. **Webhook delivery worker** — must not block the scheduler loop, must survive reload, must integrate with the existing `active_runs` `RunEntry` map (which is already the broadcast hub for SSE). The orchestrator's option (c) — emit a `RunFinalized` event, consume it from a new `src/webhooks/` module — is the right call but for a more specific reason than the question hints at: there is **no broadcast/event channel today for run-finalized events**, only the per-run `__run_finished__` log-line sentinel, which is scoped to live SSE subscribers and is dropped whenever no SSE client is connected. The webhook worker needs a real, backpressure-aware delivery channel that's distinct from the SSE log fan-out. Details in §3.1.
+2. **The `[defaults]` + per-job + `use_defaults=false` override pattern** — adding two new fields (webhooks + labels) on top of the four existing ones (`image`, `network`, `volumes`, `delete`, `timeout`) takes the count from 5 to 7. **Do not extract** a generic `MergeWithDefaults` trait yet. Reasons in §3.2.
 
-The **riskiest feature is stop-a-job**, and it should be the Phase-A spike. Everything else is mechanical.
+The **suggested build order** (§4) is dependency-driven, not aesthetic: image-digest capture must precede failure-context queries, and the `[defaults]` schema additions for webhooks + labels are a single coherent config-schema phase. v1.2 maps cleanly onto **3 release candidates** mirroring the v1.1 cadence: `rc.1` (foundation: schema + integration substrate), `rc.2` (insight: failure context + exit-code histogram), `rc.3` (organization: tagging UI + close-out polish).
 
 ---
 
-## 2. Existing Architecture Touchpoints (verified)
+## 2. Existing Architecture Touchpoints (verified for v1.2)
 
-The shipped modules I traced through for this research:
+The v1.1.0 modules I traced through for this research, focused on the integration sites v1.2 actually touches:
 
-| Area | File | What it owns today |
+| Area | File | What it owns today (verified at v1.1.0) |
 |------|------|--------------------|
-| Scheduler loop | `src/scheduler/mod.rs` (595 lines; main loop at L64–L371) | `tokio::select!` over sleep/join_set/cmd_rx/cancel; owns `heap`, `jobs_vec`, `join_set: JoinSet<RunResult>` |
-| Command channel enum | `src/scheduler/cmd.rs` | `SchedulerCmd::{RunNow, Reload, Reroll}` + `ReloadResult` |
-| Per-run task lifecycle | `src/scheduler/run.rs::run_job` (L65–L292) | Insert `running` row → spawn log writer → dispatch to executor → finalize |
-| Local exec | `src/scheduler/command.rs::execute_child` (L58–L144) | `tokio::select!` over child.wait/timeout/cancel, kills via SIGKILL on process group |
-| Docker exec | `src/scheduler/docker.rs::execute_docker` (L76–L369) | Pre-flight → create → start → wait + log stream → `stop_container(t=10)` on timeout/cancel → `maybe_cleanup_container` |
-| Orphan reconciliation | `src/scheduler/docker_orphan.rs` | Filters `label=cronduit.run_id` at startup, stops + removes, marks rows `error`/`orphaned at restart` |
-| Config sync | `src/scheduler/sync.rs::sync_config_to_db` (L102–L216) | Reads `jobs` by name, upserts by hash, then `disable_missing_jobs` for names not in config |
-| Reload plumbing | `src/scheduler/reload.rs::{do_reload, do_reroll, spawn_file_watcher}` | Debounced file-watch + API + SIGHUP all funnel into `do_reload` |
-| DB schema | `migrations/{sqlite,postgres}/20260410_000000_initial.up.sql` | Three tables: `jobs`, `job_runs`, `job_logs`; no per-job counter anywhere |
-| Run inserts | `src/db/queries.rs::insert_running_run` (L286–L313) | `INSERT INTO job_runs (job_id, status='running', trigger, start_time) RETURNING id` |
-| Run finalize | `src/db/queries.rs::finalize_run` (L316–L360) | `UPDATE job_runs SET status/exit_code/end_time/duration_ms/error_message/container_id` |
-| Dashboard query | `src/db/queries.rs::get_dashboard_jobs` (L474–L597) | LEFT JOIN on a row-numbered subquery to attach latest run per job |
-| Dashboard handler | `src/web/handlers/dashboard.rs` | Fetches `DashboardJob[]`, computes next-fire via croner in Rust, renders `DashboardPage` or `JobTablePartial` on HTMX |
-| Job detail handler | `src/web/handlers/job_detail.rs` | Polling-friendly partial at `/partials/jobs/{id}/runs` with `hx-trigger="every 2s"` while `any_running` |
-| Run detail handler | `src/web/handlers/run_detail.rs` | **No log backfill when `is_running=true`** (L64–L82 of `templates/pages/run_detail.html` — just shows a placeholder and attaches the SSE stream) |
-| SSE handler | `src/web/handlers/sse.rs::sse_logs` | Subscribes to broadcast sender from `active_runs`; emits `log_line` + `run_complete` |
-| Active runs registry | `src/web/mod.rs::AppState.active_runs` | `Arc<RwLock<HashMap<i64, broadcast::Sender<LogLine>>>>` — **holds broadcast sender only, no control handle** |
-| API handlers | `src/web/handlers/api.rs` | `run_now`, `reload`, `reroll`, `list_jobs`, `list_job_runs` (all CSRF-gated form posts, return `HX-Trigger` for toasts) |
-| Router | `src/web/mod.rs::router` | 20+ routes; clean pattern for adding new partial/API endpoints |
-| Templates | `templates/{base.html, pages/*, partials/*}` | askama with `{% extends %}` inheritance; partials for `job_table`, `log_viewer`, `static_log_viewer`, `run_history`, `toast` |
-| Health handler | `src/web/handlers/health.rs::health` | Returns `(StatusCode::OK, Json(json!{...}))` via axum — chunked response shape is the likely cause of the reported docker healthcheck failure (bug added to v1.1 scope mid-research) |
-| **Missing today** | — | There is NO `overrides.toml`, no `jobs.enabled_override` column, no timeline view, no per-job run counter, no `stopped` status, no log-backfill for active runs, no `cronduit health` CLI subcommand. |
+| Scheduler loop | `src/scheduler/mod.rs` (873 lines; `SchedulerLoop::run` at L82–L540) | `tokio::select!` over sleep / `join_set` / `cmd_rx` / cancel; new `RunEntry` value-type at L58–L65 (broadcast_tx + control + job_name); `SchedulerCmd::Stop` arm at L406–L444 |
+| Per-run record | `src/scheduler/mod.rs::RunEntry` (L58–L65) | `Clone`-able value held in the `active_runs` map; carries the broadcast channel for SSE AND the `RunControl` for Stop. **No event/notification sender field today.** |
+| Per-run lifecycle | `src/scheduler/run.rs::continue_run` (L147–L397) | Insert RunEntry → spawn log writer → dispatch executor → close sender → finalize_run → broadcast `__run_finished__` sentinel → remove from active_runs. **All terminal-status transitions converge here.** |
+| Docker exec | `src/scheduler/docker.rs::execute_docker` (L78–L417) | Pre-flight → pull → label-build (L146–L149) → create (L171) → start → `inspect_container` for image digest (L240–L251) → wait/timeout/cancel → drain logs → maybe_cleanup_container |
+| **Pre-existing bug** | `src/scheduler/run.rs:277` | `container_id_for_finalize = docker_result.image_digest.clone()` — the local is named *container_id* but is filled with the *image digest*; passed to `finalize_run`'s `container_id` parameter at L331. **Today's `job_runs.container_id` column is silently storing image digests** for docker jobs. v1.2 must address this when introducing the `image_digest` column proper. (See §3.3 "Pre-existing bug.") |
+| Config schema | `src/config/mod.rs::DefaultsConfig` (L76–L85), `JobConfig` (L87–L120) | Locked field set: `image, network, volumes, delete, timeout` mergeable via `apply_defaults`; `cmd, container_name, env, command, script, schedule` per-job-only |
+| Defaults merge | `src/config/defaults.rs::apply_defaults` (L108–L159) | Field-by-field manual merge; `use_defaults == Some(false)` short-circuit at L112; `is_non_docker` gating at L123 prevents docker-only fields from leaking onto command/script jobs; module-level doc at L1–L96 documents the **5-layer plumbing parity invariant** any new field must satisfy |
+| Validators | `src/config/validate.rs::run_all_checks` (L16–L26) | Per-job loop calls `check_one_of_job_type`, `check_cmd_only_on_docker_jobs` (L89–L101 — the type-gated validator pattern SEED-001 references), `check_network_mode`, `check_schedule` |
+| DB schema | `migrations/{sqlite,postgres}/20260410_000000_initial.up.sql` + 4 v1.1 migrations | `jobs` (id, name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at, **+ next_run_number, + enabled_override**); `job_runs` (id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, container_id, error_message, **+ job_run_number**); `job_logs` (id, run_id, stream, ts, line). **No `image_digest`, no `tags`, no webhook-delivery state today.** |
+| Queries | `src/db/queries.rs` (2200 lines) | `get_dashboard_jobs` (L605, returns `DashboardJob` with `enabled_override`), `get_recent_successful_durations` (L813, the v1.1 OBS-04 reference for "fetch a vector of i64s from `job_runs` for a job with `LIMIT N`"), `get_run_history` (L1045), `get_run_by_id` (L1124, returns `DbRunDetail`) |
+| Stats helper | `src/web/stats.rs` (83 lines) | `percentile(samples: &[u64], q: f64) -> Option<u64>` — the Phase 13 OBS-04 reference for "compute distributional summaries in Rust, never SQL" |
+| Web router | `src/web/mod.rs::router` (L48–L90) | Dashboard + job_detail (with `/partials/run-history/{id}` and `/partials/jobs/{job_id}/runs`) + run_detail + settings + timeline + health + bulk_toggle + sse_logs |
+| Job-detail view | `src/web/handlers/job_detail.rs::JobDetailPage` (L41–L50, the `DurationView` structure at L99–L109) | Rust-side card hydration; the v1.1 OBS-04 reference for "compute summary in Rust, render a small struct in the template" |
+| Dashboard view | `src/web/handlers/dashboard.rs::DashboardJobView` (L66–L92) | Includes `is_disabled` bool driven by `enabled_override == Some(0)`, `spark_cells: Vec<SparkCell>`, `spark_badge`, `spark_total/numerator/denominator`. Dashboard query already supports `filter` (LIKE on name) + `sort` whitelist |
+| Active runs map | `src/web/mod.rs::AppState.active_runs` (L43–L45) | `Arc<RwLock<HashMap<i64, RunEntry>>>` — shared between scheduler loop and SSE handler. **No additional event channel exists alongside it.** |
+| SSE | `src/web/handlers/sse.rs::sse_logs` | Subscribes to `entry.broadcast_tx` for log-line frames; treats the `__run_finished__` sentinel (run.rs:373) as a graceful-terminal frame. **Does not currently know about webhooks; the broadcast channel is log-only.** |
+| Orphan reconciliation | `src/scheduler/docker_orphan.rs::reconcile_orphans` (L28–~L100) | Lists containers with `cronduit.run_id` label, stops + removes, marks DB rows. **The label namespace is consumed here**, justifying SEED-001's `cronduit.*` reserved-namespace validator. |
+| Missing today | — | No webhooks module; no event/notification channel separate from log broadcast; no `image_digest` column; no `tags` storage; no exit-code histogram query; no failure-context query helpers. |
 
-One critical subtlety confirmed by reading `run.rs` L71 + `mod.rs` L56 + L388: the scheduler loop owns `join_set: JoinSet<RunResult>` and creates a new `child_cancel = self.cancel.child_token()` **inline at each spawn** (mod.rs L98, L122, L166, L215). **The `child_cancel` is dropped on the next loop iteration — the scheduler does NOT keep a per-run cancel handle anywhere.** This is the first architectural gap v1.1 has to close.
+**Key invariant the v1.2 features must respect:** the per-run finalization point is exactly one place — `continue_run` at run.rs L324–L382. Steps 7 (finalize_run UPDATE), 7b (Prometheus metrics), 7c (`__run_finished__` SSE sentinel), 7d (active_runs.remove + drop broadcast_tx). This is where webhook emission and any other post-terminal fan-out must hook, and the existing ordering must be preserved (DB → metrics → SSE fan-out → cleanup). v1.2 adds steps 7e (webhook emit) between 7c and 7d.
 
 ---
 
 ## 3. Feature-by-Feature Mapping
 
-### 3.1 Stop a Running Job (new `stopped` status)
+### 3.1 Webhook Delivery Worker (recommend: option (c) hybrid, with caveats)
 
-**Touches:**
-- `src/scheduler/cmd.rs` — add `SchedulerCmd::Stop { run_id: i64, response_tx: oneshot::Sender<StopResult> }`
-- `src/scheduler/mod.rs::SchedulerLoop` — **new field** `running_handles: HashMap<i64, RunControl>` where `RunControl` carries a `CancellationToken` (plus, for docker jobs, a `container_id` populated once create succeeds)
-- `src/scheduler/mod.rs` main loop — new match arm for `SchedulerCmd::Stop`; must also **remove** entries from `running_handles` when `join_set.join_next()` yields a `RunResult`
-- `src/scheduler/run.rs::run_job` — must register its `CancellationToken` (and later its `container_id`) into the new map. Simpler: pre-create the token in the scheduler loop and pass it to `run_job`; `run_job` is then responsible for writing its `container_id` into the map once it has one.
-- `src/scheduler/command.rs::execute_child` — already handles `cancel.cancelled()` → SIGKILL path; needs a new `RunStatus::Stopped` variant distinct from `Shutdown` so `run.rs::run_job` can finalize as `"stopped"` rather than `"cancelled"`. Pass a `StopReason` enum through the cancel path.
-- `src/scheduler/docker.rs::execute_docker` — same: its `cancel.cancelled()` branch (L338–L358) currently uses `stop_container(t=10)` and returns `RunStatus::Shutdown` with message `"cancelled due to shutdown"`. Must split into `RunStatus::Stopped` with a different message when triggered by operator-stop vs shutdown.
-- `src/scheduler/run.rs::run_job` L238–L244 — add `RunStatus::Stopped => "stopped"` arm
-- `src/web/handlers/api.rs` — new `pub async fn stop_run(job_id, run_id)` handler, CSRF-gated, sends `SchedulerCmd::Stop`. Mirrors the `run_now` handler shape.
-- `src/web/mod.rs::router` — new route `POST /api/runs/{run_id}/stop`
-- `templates/pages/run_detail.html` + `templates/partials/run_history.html` — a "Stop" button visible only when `status == "running"`
-- `src/scheduler/run.rs` failure classification (L298–L313) — `classify_failure_reason` should map `"stopped"` → a closed variant so `cronduit_run_failures_total` cardinality stays bounded. Either reuse `FailureReason::Abandoned` or add `FailureReason::Stopped`.
-- `migrations/{sqlite,postgres}` — **no schema change needed**. `status` is already `TEXT`. Just a new allowed value.
+**Recommended shape: a new module `src/webhooks/mod.rs` consuming a dedicated `mpsc<RunFinalized>` channel emitted from `continue_run::finalize` step 7e.** Concretely **option (a) with the option (c) framing.**
 
-**Distinguishing cancel-by-shutdown vs cancel-by-operator:**
+The orchestrator's question proposes three shapes (a), (b), (c). The right answer is in fact a refinement of (a):
 
-- **Option A (recommended):** a per-run token plus a per-run `Arc<AtomicU8>` `stop_reason`. The scheduler cancels via `token.cancel()` AND sets `stop_reason = Operator` first. The executor checks `stop_reason` after the `cancel.cancelled()` branch fires.
-- Option B: two tokens (global shutdown + per-run operator). Cleaner semantically but doubles the select-arms in every executor. Rejected.
+- **(b) inline in `continue_run`** is rejected outright. It couples the scheduler-spawned per-run task to outbound HTTP I/O. A slow webhook receiver, DNS hang, or 30-second TCP timeout would block `continue_run`'s step 7d (`active_runs.write().await.remove(&run_id)` + `drop(broadcast_tx)`), which delays SSE clients seeing `RecvError::Closed` and indirectly delays the next run's slot opening. Latency from a misbehaving operator endpoint must NOT propagate to the scheduler.
+- **(c) hybrid using a broadcast channel** is plausible at first glance because the SSE `__run_finished__` sentinel is broadcast-shaped, but it's wrong on inspection. The current per-run broadcast channel (run.rs:157, capacity 256) is **per-run** — it's created on run start and dropped on run finalize. There is no project-wide broadcast channel today. Adding one creates a second event-bus that competes for `RunEntry` ownership; multi-consumer fanout on a per-run channel is also fragile (the SSE handler needs to know which `LogLine` is the sentinel; webhook worker needs to filter to the sentinel; future SSE-log-finalize listeners would need to coexist). Worse: a broadcast channel **drops messages on lagging consumers** (`broadcast::error::RecvError::Lagged`), which is unacceptable for at-least-once delivery semantics on outbound HTTP.
+- **(a) with explicit framing** is the right call. Concrete shape:
 
-**New/modified:**
-- Modified: `cmd.rs`, `mod.rs`, `run.rs`, `command.rs`, `docker.rs`, `api.rs`, `web/mod.rs`, templates
-- New: a tiny `src/scheduler/control.rs` for the `RunControl` struct + `StopReason` enum + `StopResult`, to keep `mod.rs` from ballooning.
+  ```text
+  ┌─────────────────────────┐  RunFinalized event   ┌───────────────────────┐
+  │ continue_run, step 7e   │ ────────────────────▶ │ webhook worker task   │
+  │ src/scheduler/run.rs    │   tokio::sync::mpsc   │ src/webhooks/mod.rs   │
+  └─────────────────────────┘   (bounded, 1024)     └───────────────────────┘
+                                                              │
+                                                              ▼
+                                                     reqwest+rustls client
+                                                     3 attempts, exp backoff
+                                                     HMAC sign, JSON body
+  ```
 
-**Why this is the riskiest feature:** it touches three executors (command, script, docker) + the scheduler loop + the DB finalize path + templates + a new race surface. See §5.1 for the specific race.
+  - The `RunFinalized` value type carries: `run_id: i64`, `job_id: i64`, `job_name: String`, `status: String` (already canonicalized at run.rs L315–L322), `exit_code: Option<i32>`, `started_at: String`, `ended_at: String`, `duration_ms: i64`, `error_message: Option<String>`, AND the resolved per-job webhook config (URL, secret, state-filter list) **fetched at finalize time** so the webhook worker doesn't need to re-resolve the merged-defaults config. The worker is then a stateless consumer.
+  - **Sender:** `tokio::sync::mpsc::Sender<RunFinalized>` lives in a new field on `AppState` and on `SchedulerLoop`. Bounded at 1024. Delivery from `continue_run` uses `try_send` (non-blocking) — if the worker queue is full, log at WARN with a `cronduit.webhooks.dropped` target and increment a `cronduit_webhook_dropped_total{reason="queue_full"}` counter. **The scheduler must never block on webhook delivery.** v1.2 explicitly accepts at-most-1024-in-flight backpressure as a deliberate failure mode (much better than scheduler stalls).
+  - **Worker:** spawned at `cli::run` startup as a `tokio::spawn(webhooks::run_worker(rx, config_path, ...))`. Owns its own `reqwest::Client` (built with `rustls-tls` per the locked TLS posture). For each event, resolves `cfg.webhook` from the merged-job-config in the event payload, filters by `states` list, then fires the HTTP POST with 3-attempt exponential backoff (250ms / 1s / 4s).
+  - **Reload survival:** on `SchedulerCmd::Reload`, the existing reload path (`do_reload`) does not touch the webhook worker at all. The worker continues consuming the mpsc and fires deliveries based on the per-event config (a snapshot at finalize time). Deliveries already in-flight when a reload arrives complete using the snapshot config — this is the explicit drop semantic. This avoids the race where an operator edits a webhook URL while a delivery is mid-retry.
+  - **Shutdown survival:** the worker holds a clone of the global `CancellationToken`. When it fires, the worker drains the mpsc with a short grace (configurable, default 5s) before exiting. **Drop semantics on shutdown:** any event still in the mpsc when grace expires is logged and dropped (`cronduit_webhook_dropped_total{reason="shutdown_drain"}`). v1.1's scheduler shutdown grace already follows this pattern; we mirror it.
 
-### 3.2 Per-Job Sequential Run Number
+  **Files this creates / touches:**
 
-**Touches:**
-- `migrations/sqlite/20260411_000000_job_run_number.up.sql` (new) — `ALTER TABLE job_runs ADD COLUMN job_run_number INTEGER` (nullable, so the backfill UPDATE doesn't block other writers). Plus a paired migration for Postgres.
-- `migrations/sqlite/20260411_000001_job_run_number_backfill.up.sql` (new) — idempotent backfill using a window function: `UPDATE job_runs SET job_run_number = rn FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id) rn FROM job_runs) s WHERE job_runs.id = s.id AND job_runs.job_run_number IS NULL`. SQLite 3.33+ supports this.
-- `migrations/sqlite/20260411_000002_job_run_number_not_null.up.sql` (new) — add `NOT NULL` constraint once backfill completes.
-- `src/db/queries.rs::insert_running_run` — **the design decision.** Two options:
+  | File | Change |
+  |------|--------|
+  | `src/webhooks/mod.rs` (NEW) | `pub fn spawn_worker(...)`, `RunFinalized` event type, retry loop, HMAC signer |
+  | `src/webhooks/payload.rs` (NEW) | JSON body shape, signature header generation |
+  | `src/webhooks/retry.rs` (NEW, optional) | exponential-backoff helper if it grows beyond ~30 LOC inline |
+  | `src/scheduler/run.rs` | Add `webhook_tx: mpsc::Sender<RunFinalized>` parameter to `continue_run` (and propagate up to `run_job` / `run_job_with_existing_run_id` / scheduler `spawn`); after step 7c (`__run_finished__` broadcast), `try_send` a `RunFinalized` event |
+  | `src/scheduler/mod.rs::SchedulerLoop` + `spawn` | New field for the webhook sender; wire it to every `run::run_job(...)` call site (L122, L146, L190, L221, L286, L305) |
+  | `src/cli/run.rs` | Construct the mpsc `(tx, rx)` pair, pass `tx` to `SchedulerLoop`, spawn `webhooks::run_worker(rx, ...)` |
+  | `src/web/mod.rs::AppState` | Optional: add `webhook_tx` if any web handler needs to emit synthetic events (NOT recommended for v1.2 — only the scheduler emits) |
+  | `src/config/mod.rs::DefaultsConfig`, `JobConfig` | Add `webhook: Option<WebhookConfig>` field. New struct `WebhookConfig { url: SecretString, secret: Option<SecretString>, states: Vec<String> }` |
+  | `src/config/defaults.rs::apply_defaults` | Add merge arm for `webhook` (mergeable per-field-equivalent: per-job winning override OR `use_defaults = false` clearing). Mirror existing `image`/`network` arms. Update the parity-table doc-comment. |
+  | `src/config/validate.rs` | New validator `check_webhook_states` rejecting unknown states; new validator `check_webhook_url_scheme` rejecting non-http/https; both follow the v1.0.1 `check_cmd_only_on_docker_jobs` shape |
+  | `src/scheduler/sync.rs::serialize_config_json` | Plumb webhook config through (or — preferred — DO NOT serialize secrets into `config_json`; instead resolve them at event-emit time using the in-memory `Config`) — see §3.2 for the secret-in-DB question |
 
-  **Option A — subquery at insert time.** Single statement with `COALESCE((SELECT MAX … WHERE job_id = $1), 0) + 1`. On SQLite this is atomic within the single write connection — cronduit already uses a separate writer pool with WAL + busy_timeout, so only one writer runs at a time. On Postgres the subquery is NOT atomic; needs a unique constraint + retry loop OR serializable isolation OR a dedicated counter.
+  **Single-event-payload-shape note (architecture-level only):** the actual JSON shape, headers, and HMAC algorithm are stack/requirements-research territory. Architecture's contribution is fixing **where the event lives** (mpsc, not broadcast), **when it fires** (after step 7c, before step 7d), and **what it carries** (a self-contained `RunFinalized` snapshot — no DB re-read in the worker).
 
-  **Option B (recommended) — dedicated counter column on `jobs`.** `ALTER TABLE jobs ADD COLUMN next_run_number BIGINT NOT NULL DEFAULT 1`. `insert_running_run` becomes a two-statement transaction: `UPDATE jobs SET next_run_number = next_run_number + 1 WHERE id = $1 RETURNING next_run_number - 1 AS assigned; INSERT INTO job_runs (…, job_run_number) VALUES (…, $assigned)`. Works identically on both backends because `UPDATE … RETURNING` takes a row lock on the `jobs` row (Postgres) / is serialized by the single writer (SQLite).
+  **Confidence:** HIGH on placement and channel choice; MEDIUM on retry/backoff parameters (those are stack-research / requirements territory and intentionally not specified here).
 
-  **Recommendation: Option B.** Reasons derived from the existing write path:
-  1. Cronduit already uses `ON CONFLICT DO UPDATE … RETURNING id` in `upsert_job` (queries.rs L71–L123) — the team is comfortable with `RETURNING`-on-UPDATE across both backends.
-  2. Option B gives a consistent locking story on both backends without a unique-index retry loop.
-  3. Option A relies on a backend-specific reasoning ("SQLite has one writer") that will NOT survive the first time someone enables statement-level connection pooling for a hypothetical future multi-writer SQLite path.
+---
 
-- `src/db/queries.rs::DbRun` + `DbRunDetail` — add `job_run_number: i64` field, propagate through both `SELECT` statements.
-- `src/web/handlers/run_detail.rs::RunDetailView` — surface `job_run_number`.
-- `templates/pages/run_detail.html` — replace `Run #{{ run.id }}` in the breadcrumb/title with `Run #{{ run.job_run_number }}` (keep global id visible as a hint). **Keep the `/jobs/{job_id}/runs/{run_id}` URL on the global id**; don't rekey by `job_run_number` or the orphan-reconciliation path and the SSE handler both break.
-- `templates/partials/run_history.html` — show `#{{ run.job_run_number }}` as the primary identifier.
+### 3.2 The `[defaults]` + per-job + `use_defaults=false` Pattern: Extract or Duplicate?
 
-**Backfill safety:** the migration runs at startup before `scheduler::spawn` is called (confirmed by reading `src/cli/run.rs` — see §5.2). No race against new inserts.
+**Recommendation: do not extract a generic `MergeWithDefaults` helper for v1.2. Continue duplicating the field-by-field manual merge in `apply_defaults` until at least v1.3.**
 
-**New/modified:** two new migration files per backend; modifications to `queries.rs` insert path, view models, and two templates. No new modules.
+The orchestrator's question is right to surface this: at fanout 5 (image, network, volumes, delete, timeout — one of which has docker-only gating) duplication is fine; at 7 (adding webhook + labels) it starts looking ugly. But there are three reasons to duplicate anyway:
 
-### 3.3 Log Backfill on Navigation
+1. **The merge semantics aren't uniform.** The five existing fields are all "mergeable scalars/collections" with the simple rule "if per-job is `None`, take from defaults." `labels` (SEED-001) is **a map merge** — defaults ∪ per-job, with per-job-key-wins on collision. That's a fundamentally different merge operator. A single generic trait would either be too narrow (misses labels) or too wide (a `Merge` trait that takes a closure parameter, at which point it's just `apply_defaults` written more abstractly).
+2. **The 5-layer parity invariant.** The module-level doc-comment at `src/config/defaults.rs:1–96` is load-bearing — it documents the FIVE places (`JobConfig`, `serialize_config_json`, `compute_config_hash`, `apply_defaults`, `DockerJobConfig`) any new field must touch in lockstep. This is more important than DRY: when one of the five drifts, silent behavior regressions slip through unit tests (issue #20 was caused by exactly this drift; the parity comment + `parity_with_docker_job_config_is_maintained` test at L488 are the regression guard). A generic `MergeWithDefaults` trait would obscure the parity table by hiding `apply_defaults` behind one line per field. Keep the field-by-field merges visible for now — the comment matters more than the LOC count.
+3. **`is_non_docker` gating.** The existing merge function at L123–L153 has docker-only gating that doesn't apply uniformly. `labels` (SEED-001) is also docker-only. `webhook` is NOT — it's allowed on every job type. A generic merge trait would have to take a "applies-to-this-job-type?" predicate, at which point it's not really generic anymore.
 
-**Current behavior** (confirmed by reading `templates/pages/run_detail.html` L64–L82): when `is_running` is true, the template renders an **empty** `#log-lines` div with `sse-connect` attached. No prior log lines are loaded. This is the described bug: lines persisted before the user opened the page are invisible until the run finishes.
+**Concrete cost analysis (the orchestrator asked for "at what fanout does extraction beat duplication?"):**
 
-**Fix — follows the existing "static then live" pattern that already exists for `run_complete`:**
+| Fields | Approach | Approx LOC in `apply_defaults` | Cost of bug in one field | Verdict |
+|--------|----------|---------------------------------|--------------------------|---------|
+| 5 (today) | Duplicate field-by-field with `is_non_docker` gating | ~50 | Easy: spot the typo in the corresponding arm | Duplicate ✓ |
+| 7 (v1.2) | Same | ~70 | Same | Duplicate ✓ |
+| 9 (v1.3+ if more fields land) | Same | ~100 | Same | Duplicate, with a refactor to grouped helper functions (e.g., `merge_docker_only_scalar`, `merge_universal_scalar`, `merge_map_per_key_wins`) but **NOT** a generic trait |
+| 12+ | Now consider a typed builder pattern or a macro | 100+ | Bug surface widens | Refactor — but at that point it's a different shape than the question proposed |
 
-- In `src/web/handlers/run_detail.rs::run_detail`, when `is_running == true`, fetch the existing log lines from the DB (using the same `fetch_logs` helper already at L97–L132) and pass them to the page template alongside the `is_running` flag.
-- `templates/pages/run_detail.html` L64–L82 — render the existing `logs` via the `{% include "partials/log_viewer.html" %}` form **inside** the `#log-lines` div (before the placeholder), then leave the SSE attach as-is.
-- **Dedupe:** the SSE stream will replay lines that were in the broadcast channel's ring buffer (capacity 256, per `run.rs` L101), and for a brand-new subscriber those are lines sent **after** the last slot index.
+**Decision: at v1.2's fanout (7 fields), duplicate.** The added LOC is ~25 (one arm for `webhook`, one for `labels`). The doc-comment parity table grows by 2 rows. The `apply_defaults_use_defaults_false_disables_merge` test grows by two assertions.
 
-**Edge case:** if the backfill read happens at log-id 500 and the SSE subscribe happens milliseconds later, and a burst of lines arrives in between, lines 501–N could briefly double-appear. The **correct fix** is to:
+If a v1.3 milestone adds a third config field that follows the docker-only-scalar pattern, **then** extract `merge_docker_only_scalar(job_field, default_field, is_non_docker, dest)` as a free function — but that's a structural refactor, not a generic trait, and not an architecture decision for v1.2.
 
-1. Fetch the DB snapshot first to get `max(id)`.
-2. Subscribe to SSE.
-3. Discard any SSE line whose id is ≤ the last backfilled id.
+**Implementation breadcrumb for the phase planner:** for both `webhook` and `labels`, the merge arm goes immediately after the existing `delete` arm at L148–L153, and a corresponding test goes in `apply_defaults_use_defaults_false_disables_merge` (L316). The parity-table doc-comment at L62–L72 needs two new rows. The `parity_with_docker_job_config_is_maintained` test at L488 needs to know about both new fields.
 
-Because the broadcast `LogLine` struct (`log_pipeline.rs`) currently has only `stream`, `ts`, `line` — no id — we must add `id: Option<i64>` to `LogLine` and have the broadcast send only **after** the DB insert, with the assigned id populated.
+**Secrets and webhook config (corollary):** `webhook.url` and `webhook.secret` are `SecretString`. Following the existing `env` pattern at L100 (`BTreeMap<String, SecretString>`), they MUST NOT be serialized into `config_json`. That means the webhook-config plumbing is asymmetric: `apply_defaults` merges them, `compute_config_hash` excludes the secret values (matches `env_keys` precedent), `serialize_config_json` either omits them entirely OR serializes only the non-secret fields (URL is *probably* safe to serialize, but the secret is not). The webhook worker needs the merged config at event-emit time — so `RunFinalized` carries a struct `WebhookEventTarget { url: String, secret_ref: SecretString, states: Vec<String> }` populated from the in-memory `Config`, not from the DB. This sidesteps the parity question by making the executor never read webhook config back through `config_json`.
 
-**Touches:**
-- `src/scheduler/log_pipeline.rs` — add `id: Option<i64>` to `LogLine`
-- `src/db/queries.rs::insert_log_batch` — `RETURNING id` so each emitted `LogLine` gets its assigned id back
-- `src/scheduler/run.rs::log_writer_task` — reorder: insert first, then fan-out with populated ids
-- `src/web/handlers/run_detail.rs::run_detail` — pass `logs` and `max_backfill_id` when `is_running`
-- `templates/pages/run_detail.html` — render backfill inside `#log-lines`; a small JS line that records the max id and drops SSE events with lower ids
-- `src/web/handlers/sse.rs` — emit the id as a data-attribute on the rendered div
+---
 
-**Also fixes** the "transient error getting logs" race and the "lines out of order after job completes" bug. With ids, the static swap is deterministic.
+### 3.3 Image-Digest Capture (and the Pre-existing Bug)
 
-### 3.4 Run Timeline (Gantt) View
+**Recommendation: capture from `docker.inspect_container(&container_id, None).await` post-start, exactly where v1.1.0 already does — at `src/scheduler/docker.rs:240–251`. The data is already returned in `DockerExecResult.image_digest` (L67) and propagated to `continue_run`. The work for v1.2 is wiring it into the right `job_runs` column and adding the `image_digest` column.**
 
-**Location decision: new `/timeline` page, NOT on the dashboard.**
+**Bollard 0.20 call sequence — verified:**
 
-Justification: the dashboard already does non-trivial work per request (`get_dashboard_jobs` with a subquery, croner next-fire computation, HTMX polling via `hx-trigger="every 2s"`). Adding a gantt render on top would make the dashboard the hot path for three unrelated query shapes. A dedicated page keeps the dashboard query tight and lets the timeline have its own cache semantics.
+1. `docker_pull::ensure_image(docker, &config.image).await` — the pull. Today this returns `Result<(), _>` (the variable bound at L129 is `_image_digest`, suggesting the pull's digest is intentionally discarded). Re-using the pull's digest is fragile because not every pull emits a `RepoDigest` (cached-locally images return early without one).
+2. `docker.create_container(...)` — returns a `ContainerCreateResponse { id, warnings }`. **Does not** carry the image digest.
+3. `docker.start_container(&id, None)`.
+4. `docker.inspect_container(&container_id, None).await` — the **`ContainerInspectResponse.image`** field is the `sha256:…` digest the container actually started against. This is the canonical "what did we actually run?" value and is what v1.1.0 already extracts at L240–L251.
 
-**Touches:**
-- `src/web/handlers/timeline.rs` (new file) — handler producing `TimelinePage` + `TimelinePartial` for HTMX window-toggle (24h / 7d)
-- `src/web/handlers/mod.rs` — `pub mod timeline;`
-- `src/web/mod.rs::router` — `.route("/timeline", get(handlers::timeline::timeline))` + `.route("/partials/timeline", get(handlers::timeline::timeline_partial))`
-- `templates/pages/timeline.html` (new) — extends `base.html`, renders rows as horizontal bars using plain CSS grid with `grid-template-columns` driven by data attributes. No JS library, no canvas.
-- `src/db/queries.rs::get_timeline_runs(since: DateTime, until: DateTime) -> Vec<TimelineRun>` (new) — single query fetching `(job_id, job_name, status, start_time, end_time_or_now)` for runs whose `end_time >= $since OR status = 'running'`.
-- `templates/base.html` — new nav link "Timeline"
-- Polling cadence: `hx-trigger="every 5s"` on the timeline partial only while the window contains running rows.
+**Conclusion:** the digest capture site **already exists**. The v1.1.0 executor is calling `inspect_container` at exactly the right point. The only missing piece is making sure the value is stored in the right DB column.
 
-### 3.5 Sparkline + Success-Rate Badge on Dashboard Cards
+**Pre-existing bug in v1.1.0 (worth fixing in v1.2):**
 
-**Recommendation:** a separate query `get_dashboard_job_sparks(job_ids: &[i64]) -> HashMap<i64, SparkData>` called once with all ids from `get_dashboard_jobs`. One extra round-trip, but the query is trivially parallelizable and avoids dialect subtleties from adding a CTE to the already-complex `get_dashboard_jobs`.
+At `src/scheduler/run.rs:277`:
 
-**Touches:**
-- `src/db/queries.rs` — new `get_dashboard_job_sparks` function
-- `src/web/handlers/dashboard.rs::to_view` — populate `success_rate: String` and `sparkline: Vec<&'static str>` (20 entries)
-- `templates/partials/job_table.html` — render a fixed 20-cell inline SVG or `<span>` per status. Recommend pure HTML spans with CSS classes keyed to `cd-status-*` variables for consistency with the design system.
-- Refresh: dashboard polling is already in place. No new polling.
+```rust
+container_id_for_finalize = docker_result.image_digest.clone();
+```
 
-### 3.6 Duration Trend p50/p95 on Job Detail
+The local variable is named `container_id_for_finalize` but is filled with the `image_digest`. It is then passed at L331 as `finalize_run`'s `container_id` argument, which writes to the existing `job_runs.container_id` column. **In v1.1.0, the `job_runs.container_id` column is silently storing image digests for docker jobs.** The `container_id` from `docker.create_container` (at docker.rs:190) is held in a local but **never persisted**.
 
-**The dialect split:** SQLite has no built-in `percentile_cont`; Postgres has it since 9.4. Three options:
+This was almost certainly the result of the L67 field rename from `container_id` to `image_digest` happening without the run.rs site being updated to match. It's harmless as long as nothing reads `container_id` semantically — and v1.1.0's consumers happen not to. But fixing it is the right thing to do alongside v1.2's image-digest work.
 
-- **Option A (recommended) — compute in Rust.** Fetch the last N `duration_ms` values (already indexed on `(job_id, start_time DESC)`), sort in-memory, pick indices `[0.5 * len]` and `[0.95 * len]`. For N=100 this is microseconds. Same code path works on both backends.
-- Option B: Postgres-native + custom SQLite — more code, more tests, no payoff.
+**Recommended migration shape (matches the locked v1.1 pattern):**
 
-**Rationale for A:** cronduit's structural-parity constraint exists precisely to avoid dialect-specific code outside migration files.
+Per the v1.1 three-file pattern (DB-09..13 for `job_run_number`, DB-14 for `enabled_override`), the additively-nullable column shape is:
 
-**Touches:**
-- `src/db/queries.rs::get_recent_durations(job_id, limit) -> Vec<i64>` (new, trivial one-column select; reuses existing index)
-- `src/web/handlers/job_detail.rs` — call `get_recent_durations(job_id, 100)`, compute p50/p95 in a small helper
-- Add `p50_display`, `p95_display` to `JobDetailView`
-- `templates/pages/job_detail.html` — new stat card
-- Optional: a `src/web/stats.rs` helper module holding `percentile(samples: &mut [i64], q: f64) -> i64` with its own tests. Recommended for testability.
+| Migration | Purpose |
+|-----------|---------|
+| `migrations/{sqlite,postgres}/2026MMDD_000001_image_digest_add.up.sql` | `ALTER TABLE job_runs ADD COLUMN image_digest TEXT` (nullable) |
+| (no backfill migration needed) | New runs populate the column; historical runs have NULL. UI treats NULL as "unknown" — failure-context delta queries simply skip rows with NULL. |
+| (no NOT NULL migration) | Stays nullable forever. Command/script runs and pre-v1.2 docker runs both have NULL legitimately. |
 
-### 3.7 Bulk Enable/Disable — the Open Design Question (RESOLVED)
+This is **simpler than the three-file pattern** — only one migration file per backend — because the column is permanently nullable. The three-file pattern was needed for `job_run_number` (which is structurally NOT NULL after backfill) and `enabled_override` was a one-file because `NULL` is a meaningful tri-state value. `image_digest` follows the `enabled_override` shape: one file, nullable forever.
 
-**Reading** `src/scheduler/sync.rs::sync_config_to_db` L102–L216 and `src/db/queries.rs::disable_missing_jobs` L129–L169 confirms the semantics:
+**Phase-plan breadcrumb:** the same migration wave should rename `job_runs.container_id` semantics OR (preferred, less risky) add a separate `container_id` column that stores the actual container ID and reconcile what `container_id` currently holds. **The safest play is: add `image_digest TEXT` AND repurpose `container_id` properly in the same migration wave, fixing the run.rs:277 misnaming.** Do NOT do an `ALTER COLUMN` rename. Do NOT delete data. Just add the new column, update `finalize_run`'s signature to take both `container_id: Option<&str>` and `image_digest: Option<&str>` cleanly, and update run.rs:277 to populate both. The column previously called `container_id` keeps its name — the historical data in it (image digests) becomes a known-deviation that gets cleaned up as old runs age out via Phase 6's retention pruner.
 
-- **On every reload**, `sync_config_to_db` computes `active_names = [every job in the config file]` and calls `disable_missing_jobs(pool, &active_names)`, which sets `enabled=0` on every row whose name is NOT in that list.
-- **On every upsert** (`queries::upsert_job` L57), the `ON CONFLICT DO UPDATE` clause **hardcodes `enabled = 1`**. So any job present in the config file gets re-enabled on every sync.
+| Files | Change |
+|-------|--------|
+| `migrations/{sqlite,postgres}/2026MMDD_000005_image_digest_add.up.sql` (NEW) | `ALTER TABLE job_runs ADD COLUMN image_digest TEXT` |
+| `src/db/queries.rs::finalize_run` (L424–L468) | Add `image_digest: Option<&str>` parameter; `UPDATE job_runs SET ... image_digest = $N WHERE id = $M`; matching SQLite + Postgres binds |
+| `src/db/queries.rs::DbRun` (L554–L567), `DbRunDetail` (L571–L584) | Add `image_digest: Option<String>` field |
+| `src/db/queries.rs::get_run_by_id`, `get_run_history` | Add `image_digest` to SELECT lists |
+| `src/scheduler/run.rs` L207–L277 | Rename `container_id_for_finalize` → `image_digest_for_finalize`; capture the actual `container_id` separately from `DockerExecResult` (need a new field `container_id: Option<String>` on `DockerExecResult` at docker.rs:62–L68); pass both to `finalize_run` |
+| `src/scheduler/docker.rs::DockerExecResult` (L62–L68) | Add `pub container_id: Option<String>` |
+| `src/scheduler/docker.rs::execute_docker` (L186–L206, L413–L416) | Plumb the `container_id` from `create_container` result into `DockerExecResult` |
 
-**Option (a) — edit `cronduit.toml` in place.** Rejected.
-- Violates the v1 constraint "Config file mounted read-only".
-- Would require the web process to own write access to an operator-managed file, expanding the blast radius against the documented threat model.
-- Would create a config-write → file-watch → reload → sync loop that races the writer against itself.
+**Confidence:** HIGH on the call-sequence (verified by reading docker.rs:240–251 and the DockerExecResult shape). HIGH on the one-file migration pattern. HIGH on the pre-existing-bug observation (the variable name mismatch is unambiguous in run.rs:277).
 
-**Option (b) — a DB-only flag.** The cleanest instantiation is **a new column `enabled_override` (nullable tri-state: NULL / 0 / 1) on `jobs`**, NOT repurposing `enabled`.
+---
 
-- Semantics:
-  - `enabled_override IS NULL` → behavior follows the config file (current semantics preserved)
-  - `enabled_override = 0` → forced disabled regardless of config
-  - `enabled_override = 1` → forced enabled (not strictly required for v1.1; can be left for a future milestone)
-- `get_enabled_jobs` becomes `WHERE enabled = 1 AND (enabled_override IS NULL OR enabled_override = 1)`.
-- `disable_missing_jobs` continues to set `enabled = 0` on rows whose names left the config — no change.
-- `upsert_job` continues to set `enabled = 1` — no change, because the new override column is untouched by config sync.
-- **Does NOT break reload semantics**: a reload still correctly re-enables a job whose name reappears in the config file, and a reload still disables a job whose name vanishes. The override is orthogonal.
-- **One new rule**: when the operator deletes a job from the config and the row then gets `enabled = 0`, we should also **clear** the `enabled_override` so a later re-add-from-config does the expected thing. One-line addition to `disable_missing_jobs`.
+### 3.4 Failure-Context Queries (cardinality budget: 2 queries, not 5)
 
-**Option (c) — separate `overrides.toml`.** Rejected.
-- Creates a second source of truth that every reader (dashboard, scheduler, api) must consult.
-- The write path for the bulk-disable UI would still need to modify this file, and the file watcher would trigger a reload loop.
-- Bigger surface area than option (b), with no upside.
+The orchestrator lists five candidate query functions. Most can collapse into a single CTE-shaped query that returns a struct.
 
-**Recommendation: Option (b).** Specifically:
-1. New migration adds `enabled_override INTEGER` (SQLite) / `BIGINT` (Postgres), nullable, default NULL.
-2. `get_enabled_jobs` and `get_dashboard_jobs` filter on the composite predicate above.
-3. `disable_missing_jobs` clears the override when disabling.
-4. New DB functions `set_enabled_override_bulk(job_ids: &[i64], override: Option<bool>)` and corresponding API handler `POST /api/jobs/bulk-toggle` (CSRF-gated, form post with multi-select `job_ids[]` + `action=enable|disable`).
-5. **After the bulk update, the API handler must fire `SchedulerCmd::Reload`** so the scheduler rebuilds its heap and newly-disabled jobs stop firing. This requires **no scheduler change** — `do_reload` already fetches enabled jobs via `get_enabled_jobs`, so changing the filter is enough.
-6. Dashboard partial gets checkboxes + a sticky action bar; template touches only.
-7. Settings page should show the current overrides for operator visibility ("3 jobs forced-disabled: foo, bar, baz").
+**Recommended cardinality: 2 read-only queries.**
 
-**Touches:**
-- Migrations (both backends)
-- `src/db/queries.rs`: `get_enabled_jobs`, `get_dashboard_jobs`, `disable_missing_jobs` (clear override on path), new `set_enabled_override_bulk`
-- `src/web/handlers/api.rs`: new `bulk_toggle` handler
-- `src/web/mod.rs::router`
-- `templates/pages/dashboard.html` + `templates/partials/job_table.html`: checkboxes, action bar, CSRF token
-- `templates/pages/settings.html`: optional override list display
+```rust
+// Query 1: failure context summary for the current run's job.
+//
+// Returns ALL of: streak, first_failure_after_last_success, and the last-success run + its image_digest + its config_hash.
+// Single query because all five values come from the same job_runs partition + jobs row.
+pub async fn get_failure_context(pool: &DbPool, job_id: i64) -> anyhow::Result<FailureContext>;
 
-**New/modified:** zero new modules; additions to queries, one new API handler, template changes, two migration files.
+pub struct FailureContext {
+    pub consecutive_failure_streak: i64,                  // contiguous failed/timeout/error runs ending now
+    pub first_failure_after_last_success_at: Option<String>, // RFC3339; None if no failures since last success
+    pub last_success: Option<LastSuccess>,                // None if job has never succeeded
+}
 
-### 3.8 Docker Healthcheck "unhealthy" Bug (added mid-research)
+pub struct LastSuccess {
+    pub run_id: i64,
+    pub job_run_number: i64,
+    pub start_time: String,
+    pub image_digest: Option<String>,                     // populated post-v1.2 for docker runs
+}
 
-**Symptom:** `docker ps` reports the cronduit container as `Up 2 hours (unhealthy)` while `curl http://localhost:8080/health` inside the container returns a correct 200 JSON response.
+// Query 2: current job's resolved config hash for delta computation.
+//
+// Already available from `get_job_by_id` (L972) which returns DbJob with `config_hash`. So query 2 reuses
+// the existing query — no new function needed.
+```
 
-**Root cause hypothesis** (to be confirmed at fix time): busybox `wget --spider` in the alpine:3 base image misparses HTTP responses that axum sends with `Transfer-Encoding: chunked`. Axum's `Json` responder emits the body chunked when the content length isn't pre-computed; busybox `wget --spider` has historical issues with chunked responses that surface as `exit 1` even on 200 OK status.
+**Why these collapse:**
 
-**Fix-path recommendation** (phase-plan time picks the specific path):
+1. `get_first_failure_after_last_success(job_id)` — a single SQL query: find the most recent `status='success'` row, then find the oldest non-success row with `start_time > that`. One query.
+2. `get_consecutive_failure_streak(job_id)` — SQL: `SELECT COUNT(*) FROM (SELECT status FROM job_runs WHERE job_id = $1 AND status != 'running' ORDER BY start_time DESC) WHERE all-prior-rows-were-failures`. This is the classic "longest prefix of non-success rows" — implemented as a window-function or an in-Rust scan over the last 100 rows. **Recommend Rust-side implementation** matching v1.1's OBS-04 pattern: fetch the last 100 terminal rows ordered DESC, count the prefix of non-success rows. ~10 lines of Rust; uniform on both backends; no `percentile_cont`-style structural-parity hazard.
+3. `get_last_successful_run(job_id)` — `SELECT * FROM job_runs WHERE job_id = $1 AND status = 'success' ORDER BY start_time DESC LIMIT 1`. One query.
+4. `get_image_digest_at_last_success(job_id)` — same row as (3); just pluck `image_digest`. **No separate query.**
+5. `get_config_hash_at_last_success(job_id)` — **rejected as proposed**. Storing `config_hash` on every `job_runs` row is overkill; the more honest design is to compute the *delta* in the UI as "current job.config_hash vs 'last known stable hash from v1.2 onward' — which we don't actually have." The pragmatic answer for v1.2: **compare the current `jobs.config_hash` to the `jobs.config_hash` at the time of the last-success run, but the latter requires a new column.** Don't introduce that for v1.2. Instead: failure-context UI shows "config changed at $UPDATE_TIMESTAMP" using `jobs.updated_at` vs the last-success run's `start_time`. This is a strictly simpler invariant — "did the config change since the last success?" — that doesn't require a new column.
 
-1. **(Preferred) Ship a `cronduit health` CLI subcommand** — a new top-level clap subcommand that performs a local `GET http://$bind/health`, parses the JSON, and exits 0 on `status=ok`, 1 otherwise. Healthcheck becomes `CMD ["/cronduit", "health"]`. Self-hosted, zero external tool dependency, image stays small.
-2. **Embed `HEALTHCHECK` in the Dockerfile** so the shipped image has a known-good default independent of the compose file the operator writes. Recommended regardless of which test expression wins.
-3. **Change the axum health handler to force a known Content-Length** — return `Response::builder().header(CONTENT_LENGTH, body.len()).body(...)` instead of `Json(...)`. Fragile; doesn't help operators who use a different healthcheck tool in the future.
+**Concrete file impact:**
 
-Option 1 + 2 together is the most cronduit-flavored solution. It closes an entire category of "operator's healthcheck tool behaves weirdly" bugs by making the healthcheck live inside the binary.
+| Files | Change |
+|-------|--------|
+| `src/db/queries.rs` | New: `get_failure_context(pool, job_id) -> FailureContext`, `FailureContext` + `LastSuccess` structs. ~80 LOC. |
+| `src/web/handlers/run_detail.rs::RunDetailView` (L85–L102) | Add `failure_context: Option<FailureContextView>` field; populate when `run.status` is non-success. |
+| `templates/pages/run_detail.html` | New card, server-rendered, conditional on `failure_context.is_some()`. |
+| `src/web/format.rs` (existing) | Possibly add a "human-readable elapsed-since" formatter if not already there (job_detail uses `format_duration_ms_floor_seconds` for durations; that's not the same as "this job has been failing for 3h 12m"). |
 
-**Touches:**
-- `src/cli/mod.rs` + `src/cli/health.rs` (new) — clap `HealthCmd` with `--bind` / `--config` args; calls the running server's `/health` over HTTP via `reqwest` or a minimal hand-rolled hyper client
-- `Dockerfile` — add `HEALTHCHECK CMD ["/cronduit", "health"]`
-- `examples/docker-compose.yml` — replace the wget healthcheck stanza with the CMD form that invokes `cronduit health`
-- `examples/docker-compose.secure.yml` — same
-- `README.md` — healthcheck troubleshooting section (if any)
+**Confidence:** HIGH on the cardinality budget (2 queries, both straightforward). HIGH on the `config_hash`-at-last-success rejection (introducing a new column for v1.2 is more cost than benefit; `jobs.updated_at` is a sufficient proxy).
 
-**New/modified:** one new CLI subcommand module, Dockerfile addition, two compose-file updates.
+---
 
-**Phase placement:** rc.1 bug-fix block (SCHED/OPS category). Small and independent of the scheduler/log/run-number work.
+### 3.5 Per-Job Exit-Code Histogram
+
+**Recommendation: a new query function `get_exit_code_distribution(pool, job_id, last_n) -> Vec<(i32, u64)>`. Render as a small bar chart (CSS-only horizontal bars, NOT SVG) in a sibling card to the existing Duration card on `job_detail.html`.**
+
+**Why this matches the existing v1.1 pattern:**
+
+The v1.1 OBS-04 reference is `get_recent_successful_durations` (queries.rs L813) → `stats::percentile` (web/stats.rs) → `DurationView` (job_detail.rs L99–L109) → template card. Exit-code distribution follows the same shape:
+
+- Query: fetch `(exit_code, count)` from the last N `job_runs` rows where the job has any terminal status. SQL: `SELECT exit_code, COUNT(*) AS cnt FROM (SELECT exit_code FROM job_runs WHERE job_id = $1 AND status != 'running' ORDER BY id DESC LIMIT $2) GROUP BY exit_code ORDER BY cnt DESC`. Sub-100-row scan, uses `idx_job_runs_job_id_start`. Trivial cost.
+- View struct: `ExitCodeView { entries: Vec<ExitCodeEntry>, total: usize, sample_count_display: String }` — mirroring `DurationView`'s shape.
+- Template: a card with up to ~5 rows (top-N by count); each row is `<exit_code> <count> (XX%) [bar]`. The bar is an HTML element with inline `style="width: XX%;"`. No SVG, no canvas, no JS — keeps the v1 "no JS framework" constraint intact. Same pattern the dashboard sparkline uses.
+
+**Sample-size gating mirrors OBS-04:** if `sample_count < 5`, render `—` (em dash) instead of a histogram and a "5 of 100 terminal runs needed" subtitle. The threshold is smaller than OBS-04's `MIN_SAMPLES_FOR_PERCENTILE = 20` because this is a simpler statistic.
+
+**UI snapshot:**
+
+```
+┌─────────────────────────────────┐  ┌────────────────────────────────────┐
+│  Duration                       │  │  Exit codes (last 100 runs)        │
+│  p50  1m 34s                    │  │   0  ███████████████████  87 (87%) │
+│  p95  4m 12s                    │  │   1  ███                  10 (10%) │
+│  Last 100 successful runs       │  │ 137  █                     2  (2%) │
+└─────────────────────────────────┘  │ none ▏                     1  (1%) │
+                                     └────────────────────────────────────┘
+```
+
+`exit_code: None` (which v1.0 stores when a run was killed without an OS exit code — timeout, stopped, error) renders as `none` per the existing run-detail formatting precedent.
+
+**File impact:**
+
+| Files | Change |
+|-------|--------|
+| `src/db/queries.rs` | New `get_exit_code_distribution(pool, job_id, last_n) -> Vec<(Option<i32>, u64)>` |
+| `src/web/handlers/job_detail.rs` | Add `ExitCodeView` struct (alongside `DurationView`), populate in `job_detail`, pass to template. ~40 LOC. |
+| `templates/pages/job_detail.html` | New card sibling to the Duration card |
+
+**Confidence:** HIGH. Pattern is exactly the v1.1 OBS-04 shape; nothing architecturally novel.
+
+---
+
+### 3.6 Job Tagging — Schema Implications
+
+**Recommendation: a JSON-array column `jobs.tags TEXT NOT NULL DEFAULT '[]'`. Not a separate `jobs_tags` many-to-many table.**
+
+**Why JSON column over join table:**
+
+1. **Cardinality.** Tags are UI-only filter chips — homelab use cases will have fewer than ~30 unique tags fleet-wide, with each job carrying 1–5 tags. A separate `jobs_tags` table with FK + composite index is over-engineered for that data shape.
+2. **Query shape.** The dashboard already supports a `?filter=` LIKE on name and a whitelisted `?sort=`. Adding `?tag=backup` filters to `get_dashboard_jobs` (queries.rs L605) as a single `AND` clause:
+   - SQLite: `AND tags LIKE '%' || ?tag || '%'` (good enough for v1.2's cardinality; degenerates only if a tag is a substring of another tag, which a validator can prevent — see below)
+   - Postgres: `AND tags::jsonb ? $tag` using the `?` JSONB operator on a JSONB-cast TEXT column
+   - **Or** uniformly: `AND tags LIKE '%"' || ?tag || '"%'` — exploiting the JSON encoding to bracket each tag in quotes. This is the structural-parity-friendly shape: one SQL string works on both backends with no dialect branching.
+3. **No structural-parity hazard.** A separate `jobs_tags` table works fine on both backends but doubles the per-job query cost (extra join) and means the `serialize_config_json` parity invariant grows another layer. The JSON column lives entirely on the `jobs` row and serializes through the existing `JobConfig.tags` field.
+4. **TOML side is already a list.** `tags = ["backup", "weekly"]` deserializes to `Vec<String>` cleanly. The serialization to TEXT is `serde_json::to_string(&job.tags)?`.
+
+**Validation rules (config-side):**
+
+- Empty list `tags = []` is allowed (no tags).
+- Each tag must match `^[a-z0-9][a-z0-9_-]{0,30}$` (lowercase alphanumeric, dash, underscore; 1–31 chars). Rejected at `validate.rs::run_all_checks`.
+- Per-job duplicate tags are deduplicated on parse with a warning.
+- Reserved tag names: `cronduit`, `system`, `internal` (rejected). Mirrors the SEED-001 reserved-namespace pattern.
+- **Substring-collision rule:** to make the LIKE-based filter unambiguous, reject any tag that is a substring of another tag in the same fleet at config-validate time. Example: a fleet with `backup` and `backup-daily` is rejected. This is a stronger rule than necessary for Postgres but the simpler rule for SQLite, and structural parity is the constraint.
+
+**Filter-chip URL semantics:**
+
+- `?tag=backup` filters to jobs whose tags include `backup`. Exact match (after the substring-collision rule, exact is unambiguous).
+- Multiple tags → AND semantics by default: `?tag=backup&tag=weekly` shows jobs with BOTH. Implementation: each `?tag=` query parameter is an additional `AND tags LIKE '%"...%"' || tag || '"%'` clause in the SQL.
+- Filter chip click toggles in/out of the URL. Existing `?filter=` (LIKE on name) and `?sort=`/`?order=` continue to work alongside.
+
+**Defaults merge:** `tags` is per-job-only — there is no `[defaults].tags` field. Per-job-only mirrors `cmd` and `container_name`. This keeps the merge surface flat and avoids "what does it mean to default-merge tags? union? replace?" — the answer is "no, you set them per-job."
+
+**File impact:**
+
+| Files | Change |
+|-------|--------|
+| `migrations/{sqlite,postgres}/2026MMDD_000006_jobs_tags_add.up.sql` | `ALTER TABLE jobs ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'` (matches the v1.1.0 single-file shape) |
+| `src/config/mod.rs::JobConfig` | `#[serde(default)] pub tags: Vec<String>` |
+| `src/config/validate.rs` | New `check_tags_valid` validator — name-pattern, reserved-name, fleet-wide substring-collision |
+| `src/scheduler/sync.rs::serialize_config_json` | Serialize `tags` as a JSON array (already a `Vec<String>` — round-trips through serde) |
+| `src/db/queries.rs::DashboardJob` (L536–L550) | Add `tags: Vec<String>` (deserialized from the TEXT column via `serde_json::from_str`) |
+| `src/db/queries.rs::get_dashboard_jobs` (L605) | Accept `&[&str]` of tag filters; AND each as a parameterized LIKE; on Postgres, cast to TEXT and use the same LIKE pattern (NOT JSONB ops) for structural parity |
+| `src/web/handlers/dashboard.rs::DashboardParams` (L23–L31) | Add `#[serde(default, rename = "tag")] tags: Vec<String>` (axum serde_qs supports repeated query params) |
+| `src/web/handlers/dashboard.rs::DashboardJobView` (L66–L92) | Add `tags: Vec<String>` for template |
+| `templates/pages/dashboard.html`, `templates/partials/job_table.html` | Render filter chips + per-job tag badges |
+
+**Confidence:** HIGH on the JSON-column choice (the cardinality + structural-parity argument is decisive). MEDIUM on the substring-collision rule — it's the right call for v1.2 but a future v1.3 could relax it on Postgres-only and lose the parity. Document the trade.
+
+---
+
+### 3.7 Custom Docker Labels (SEED-001 — design pre-locked)
+
+The seed at `.planning/seeds/SEED-001-custom-docker-labels.md` already locks every architectural decision. **Architecture's contribution here is verifying the seed's breadcrumbs are still accurate at v1.1.0 and adding a small clarification on the merge-direction semantics for the map case.**
+
+**Verified breadcrumbs (re-confirmed at v1.1.0):**
+
+| Seed claim | v1.1.0 reality | Verdict |
+|------------|----------------|---------|
+| `src/scheduler/docker.rs:146-149` is the label-build site | Confirmed at L146–L149 (`labels.insert("cronduit.run_id", ...); labels.insert("cronduit.job_name", ...);`) | Accurate |
+| `src/scheduler/docker.rs:171` populates `Config::labels` | Confirmed at L171 (`labels: Some(labels)` in the `ContainerCreateBody` literal) | Accurate |
+| `src/config/defaults.rs:112` is the `use_defaults = false` short-circuit | Confirmed | Accurate |
+| `src/config/defaults.rs:316` is the `apply_defaults_use_defaults_false_disables_merge` test | Confirmed | Accurate |
+| `src/config/validate.rs:89` is the `check_cmd_only_on_docker_jobs` reference pattern | Confirmed | Accurate |
+| `src/scheduler/docker_orphan.rs` consumes `cronduit.run_id` for orphan reconciliation, justifying `cronduit.*` reserved namespace | Confirmed (orphan code at L31, `vec!["cronduit.run_id".to_string()]` filter) | Accurate |
+
+**Architecture clarification on merge direction:**
+
+The seed says:
+
+- `use_defaults = false` → per-job `labels` REPLACE defaults entirely.
+- `use_defaults = true` or unset → defaults map ∪ per-job map, per-job key wins on collision.
+
+This is consistent with the rest of the merge semantics. The implementation site is `apply_defaults` at L108, immediately after the `delete` arm. Pseudocode:
+
+```rust
+// Right after `delete` merge (currently L148–L153):
+match (defaults.labels.as_ref(), &job.labels) {
+    (Some(default_labels), Some(job_labels)) => {
+        // Both present: per-key merge with per-job wins.
+        let mut merged = default_labels.clone();
+        for (k, v) in job_labels {
+            merged.insert(k.clone(), v.clone());  // per-job overwrites
+        }
+        job.labels = Some(merged);
+    }
+    (Some(default_labels), None) => {
+        // Per-job omitted: take defaults verbatim.
+        job.labels = Some(default_labels.clone());
+    }
+    (None, _) => { /* nothing to merge */ }
+}
+```
+
+(The `is_non_docker` gate from L123 wraps this whole block, since labels are docker-only.)
+
+**Reserved-namespace validator:** the seed says any operator label under `cronduit.*` is a config-validation error at load time. Pattern matches `check_cmd_only_on_docker_jobs` (L89). One subtlety: the merged labels (after `apply_defaults`) are what get validated, NOT just the per-job labels. Otherwise a `[defaults].labels = { "cronduit.foo" = "bar" }` would slip through. The validator runs in `validate::run_all_checks` AFTER `apply_defaults` (verified by reading `src/config/mod.rs:185–200` — `parse_and_validate` calls `apply_defaults` at L191–L195 before `run_all_checks` at L199).
+
+**Type-gated validator:** the seed says labels on command/script jobs is a config-validation error. Pattern is verbatim from `check_cmd_only_on_docker_jobs` (L89–L101). The check is `if job.labels.is_some() && job.image.is_none() { ... }`. The error message follows the existing GCC-style format.
+
+**File impact (mirrors the seed's spec, with v1.1.0 line-number confirmations):**
+
+| Files | Change |
+|-------|--------|
+| `src/config/mod.rs::DefaultsConfig`, `JobConfig` | `pub labels: Option<HashMap<String, String>>` on both structs |
+| `src/config/defaults.rs::apply_defaults` | New merge arm after `delete` (L153) |
+| `src/config/defaults.rs` parity-table doc-comment (L62–L72) | New row for `labels` |
+| `src/config/validate.rs::run_all_checks` (L20–L25) | Two new validator calls per job |
+| `src/config/validate.rs` | Two new validator functions |
+| `src/scheduler/docker.rs` (L146–L149) | Extend the label HashMap with operator-defined labels from `config.labels` (a new field on `DockerJobConfig` at L29–L59) |
+| `src/scheduler/docker.rs::DockerJobConfig` (L29–L59) | New `labels: HashMap<String, String>` field |
+| `src/scheduler/sync.rs::serialize_config_json` | Plumb `labels` through |
+| `src/config/hash.rs::compute_config_hash` | Include `labels` in the hash (operators editing labels should trigger config-update detection) |
+| Tests | Per-feature reservations as documented in the seed |
+
+**Confidence:** HIGH. The seed pre-locked everything; architecture's contribution is verification + the merge-direction pseudocode.
 
 ---
 
 ## 4. Suggested Build Order
 
-**Recommended: three rcs, in this order.**
+**Recommended: three release candidates, mapping to the v1.1 cadence.**
 
-### rc.1 — Bug-Fix Block (Phase A)
+```mermaid
+flowchart TB
+    subgraph rc1["rc.1 — Foundation (Schema + Integration Substrate)"]
+        F1["Custom Docker labels (SEED-001)<br/>Config schema + validators + executor<br/>~1 week"]
+        F2["image_digest column + run.rs:277 fix<br/>Migration + finalize_run signature change<br/>~3 days"]
+        F3["Webhook config schema + validators<br/>(no worker yet — schema only)<br/>~3 days"]
+    end
 
-Spike-and-land the riskiest feature first.
+    subgraph rc2["rc.2 — Insight (Failure Context + Histograms)"]
+        F4["Failure context queries + run-detail card<br/>Depends on F2 (image_digest must be populated)<br/>~1 week"]
+        F5["Per-job exit-code histogram<br/>Independent of everything else<br/>~3 days"]
+        F6["Webhook delivery worker + retry + HMAC<br/>Now that schema exists, wire the worker<br/>~1 week"]
+    end
 
-1. **Stop-a-running-job** (§3.1) — riskiest, touches three executors. Spike it alone to de-risk the `RunControl` abstraction. Lands first because (a) every later feature can assume the `stopped` status exists, (b) if it's late, we can still cut a usable rc.1 with log-backfill only.
-2. **Per-job run number** (§3.2) — lands next because the timeline view (§3.4), the run-history partial, and the sparkline (§3.5) all want to display `#N` instead of `#123456`. Landing this before observability polish means we only change the templates once.
-3. **Log backfill + out-of-order fix + transient-error fix** (§3.3) — lands last in rc.1. Requires the `LogLine.id` shape change but touches only the SSE + run_detail path, so it can ship independently of the rest.
-4. **Docker healthcheck fix** (§3.8) — independent, small, can land in parallel. Gate: rc.1 should ship with the healthcheck fixed so external adopters trying rc.1 don't immediately hit the `(unhealthy)` problem.
+    subgraph rc3["rc.3 — Organization + Polish"]
+        F7["Job tagging schema + validators<br/>Depends on F1 (config-schema phase)<br/>~3 days"]
+        F8["Job tagging dashboard filter chips<br/>UI-only, follows F7<br/>~3 days"]
+        F9["Polish + UAT-driven fix loop"]
+    end
 
-### rc.2 — Observability Polish (Phase B)
+    F1 --> F4
+    F1 --> F7
+    F2 --> F4
+    F3 --> F6
 
-All three features share no code; any internal order works. Suggest:
+    rc1 ==> rc2
+    rc2 ==> rc3
+```
 
-5. **Duration trend p50/p95** (§3.6) — smallest, most mechanical. Warm-up.
-6. **Sparkline + success-rate** (§3.5) — new query, template work.
-7. **Timeline view** (§3.4) — new page, new query, new template. Largest in this block.
+### rc.1 — Foundation (Schema + Substrate)
 
-### rc.3 — Ergonomics (Phase C)
+The features that introduce **new config-schema fields** all land first, on the principle that adding `[defaults].labels`, per-job `labels`, per-job `webhook`, and the `image_digest` column should ride one schema-change wave. The webhook delivery WORKER comes later (rc.2) — but the webhook CONFIG SCHEMA and validators land in rc.1 alongside the others. This keeps the "5-layer parity invariant" change-set small and reviewable.
 
-8. **Bulk enable/disable** (§3.7) — new migration, new handler, biggest template changes on the dashboard. Lands last because the selection UI is the most visible regression risk and we want a clean dashboard for rc.1 / rc.2 screenshots.
+1. **Custom Docker labels (SEED-001)** — pre-locked design, ~1 week. Lands first because it's the smallest end-to-end-shippable feature with the schema/validator/executor plumbing surface, and it serves as the reference implementation for the other `[defaults]`-merge feature (webhooks).
+2. **Image-digest column + run.rs:277 fix** — ~3 days. Lands BEFORE failure-context queries can be useful (failure context's image-digest delta requires the column to be populated). Also fixes the pre-existing `container_id` mis-naming bug in the same migration wave.
+3. **Webhook config schema + validators (NO worker yet)** — ~3 days. Adds `WebhookConfig` to `DefaultsConfig` and `JobConfig`, the merge arm in `apply_defaults`, the parity-table doc-comment update, and the two validators (URL scheme + state-list whitelist). Does NOT spawn the worker yet — that's rc.2 work. Lands here so the schema is observable to operators in rc.1 even if delivery is "coming soon."
+
+**rc.1 is the "config-schema rev" rc.** Operators can edit their `cronduit.toml` to add labels, webhook config (will be honored in rc.2), and start populating `image_digest` automatically on every docker run.
+
+### rc.2 — Insight (Failure Context + Histograms + Webhooks)
+
+4. **Failure-context queries + run-detail card** — ~1 week. Depends on F2 (image-digest column must exist and be populating). Follows the v1.1 OBS-04 pattern: query → Rust struct → template card. Two new queries (`get_failure_context` returning a struct + the existing `get_job_by_id` for current config_hash).
+5. **Per-job exit-code histogram** — ~3 days. Independent. Drops onto job_detail.html as a sibling to the Duration card. Reuses the OBS-04 view-struct + template pattern.
+6. **Webhook delivery worker + retry + HMAC** — ~1 week. Spawns `webhooks::run_worker` at startup; wires the mpsc into `continue_run` step 7e; integrates `reqwest+rustls`. Now that the rc.1 schema lets operators configure webhooks, rc.2 actually delivers them.
+
+**rc.2 is the "richer per-run insight" rc.** Operators see why jobs are failing, see exit-code patterns, and start receiving outbound notifications.
+
+### rc.3 — Organization (Tagging) + Polish
+
+7. **Job tagging schema** — ~3 days. New `tags TEXT` column with default `'[]'`. New `JobConfig.tags`. New validators. Plumbed through `serialize_config_json` + `compute_config_hash`. Parity-table doc-comment row.
+8. **Job tagging dashboard filter chips** — ~3 days. UI-only. New URL parameter `?tag=...` (repeatable). Filter chips on the dashboard.
+9. **UAT-driven polish loop** — mirrors v1.1 Phase 14's rc.3 → rc.6 fix-loop. Catch operator-visible bugs that unit/integration tests miss; ship the fixes as new rcs; promote to `v1.2.0` when UAT signs off.
 
 ### Strict dependencies
 
-- §3.2 (run numbers) must land before §3.4 (timeline) and §3.5 (sparkline) — otherwise you render `#{global_id}` in the new views and rewrite them later.
-- §3.3 (log backfill) is independent of everything but benefits from landing early because every rc matters for operator experience.
-- §3.1 (stop) is independent but is the highest-risk spike — land it first so late-breaking regressions have maximum fix time.
-- §3.7 (bulk toggle) is independent and should land last because it changes the most visible surface.
-- §3.8 (healthcheck) is fully independent; fit it wherever convenient in rc.1.
+- **F2 (image-digest column) must precede F4 (failure-context).** F4's image-digest delta query joins through `image_digest`. Hard dependency.
+- **F3 (webhook config schema) must precede F6 (webhook worker).** F6's `RunFinalized` event carries the resolved webhook config, which requires the schema to exist.
+- **F1 (custom Docker labels) does not strictly precede F7 (tagging)**, but they share the "config-schema rev + parity-table update" surface. Landing F1 first sets the precedent for F7 to follow ("here's how you add a new field — see the F1 PR").
+- **F5 (exit-code histogram) is fully independent.** It can ship in rc.1, rc.2, or rc.3 — the recommendation places it in rc.2 because it's thematically "insight" alongside F4.
+
+### Parallel waves
+
+Within rc.1, the three features (F1, F2, F3) can be developed in parallel — they touch the same files but in non-conflicting locations:
+
+- F1 touches `apply_defaults`, validators, docker.rs:146 area, `DockerJobConfig`.
+- F2 touches `finalize_run`, `DbRun`, `DbRunDetail`, run.rs:207–277, docker.rs:62–68 (DockerExecResult).
+- F3 touches `apply_defaults`, validators, `DefaultsConfig`/`JobConfig`. **Conflicts with F1 on `apply_defaults` — should land sequentially within rc.1.**
+
+Within rc.2, F4, F5, F6 are independent and can ship in any order.
 
 ### Spike recommendation
 
-Before cutting rc.1, do a short spike on §3.1 specifically validating:
+Before starting rc.1, do a 2-day spike on F1 specifically validating:
 
-- `RunControl` + `StopReason::Operator` round-trip on all three executors
-- The race in §5.1 is covered by a test
-- `mark_run_orphaned` / orphan-reconciliation still works when a run is `stopped` mid-execution and the process is killed
+- The `apply_defaults` merge arm for the map case is correct (test: `[defaults].labels = {a=1,b=2}`, `[[jobs]] labels = {b=3,c=4}`, merged = `{a=1,b=3,c=4}`).
+- The reserved-namespace validator runs AFTER `apply_defaults` (so it catches `cronduit.foo` from defaults too).
+- The `testcontainers` integration test for "label lands on the running container" works against the Phase 4 harness without modification.
 
----
-
-## 5. Integration Gotchas (→ Test Cases)
-
-### 5.1 Stop-a-Job Races with Natural Completion
-
-**The race:** `SchedulerCmd::Stop { run_id: 42 }` arrives in the scheduler loop at time T. At T+1μs, `join_set.join_next()` yields `RunResult { run_id: 42, status: "success" }` because the job finished naturally. The `Stop` handler then tries to cancel a token whose task is already gone, and — worse — the DB row is already `success`, so overwriting it to `stopped` would be a lie.
-
-**Correct ordering:**
-
-1. `Stop` handler first checks `running_handles.get(&run_id)`.
-2. If present, it cancels the token AND **does NOT touch the DB.** The executor's cancel branch is the only place that writes `status = "stopped"`.
-3. If absent, it either returns `StopResult::AlreadyFinished { final_status }` by reading `job_runs` by id, or returns `StopResult::Unknown` if not in `running_handles` and not in `job_runs`.
-4. `run.rs::run_job`, when finalizing, must `finalize_run` first (takes the writer lock briefly), then `running_handles.write().await.remove(&run_id)`.
-
-**Invariant:** the executor finalizes as `stopped` if and only if it observed `cancel.cancelled()` with `stop_reason = Operator`; otherwise the natural-completion status wins.
-
-**Test cases:**
-
-- Stop during a running job → DB row ends `stopped`, container removed.
-- Stop arrives within 1ms of natural exit → DB row ends in the natural exit status (no `stopped` overwrite). Use `tokio::time::pause` to make the race deterministic.
-- Stop for an unknown `run_id` → 404 from API handler, no DB touch.
-- Stop for a completed `run_id` → handler responds `AlreadyFinished` toast, no DB touch.
-
-### 5.2 Per-Job-Run-Number Backfill Races Startup
-
-**The concern:** "backfill races the scheduler writing new rows." Reading `src/cli/run.rs` and `src/db/mod.rs::migrate` confirms the current ordering:
-
-1. `DbPool::connect()` → `pool.migrate()` runs migrations (before scheduler spawn)
-2. `docker_orphan::reconcile_orphans()` runs (before scheduler spawn)
-3. `sync_config_to_db()` runs
-4. `scheduler::spawn()` starts the loop — only now can new `insert_running_run` calls happen
-
-So the backfill migration runs **strictly before** any new `job_runs` row is inserted by the running scheduler. **No race.** The only remaining concerns:
-
-- The backfill migration must be idempotent (rerun safe) because migrations may be applied partially on crash.
-- The `NOT NULL` constraint must be added in a SEPARATE migration after the backfill migration so a partial backfill doesn't leave an unsatisfiable constraint. Standard two-step-migration practice.
-- On **very large** `job_runs` tables the backfill UPDATE could take seconds. Acceptable for a v1.1 upgrade.
-
-**Test cases:**
-
-- Start with an empty DB → run Insert → `job_run_number` is 1.
-- Start with a populated DB (no column) → migrate → every row has a `job_run_number` matching `ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id)`.
-- Start with a partially backfilled DB (simulating a crashed prior migration) → migrate → all nulls get filled.
-- Backfill migration is rerun on an already-complete DB → no-op (idempotent).
-
-### 5.3 SSE Backfill Dedupe
-
-Covered in §3.3. Summary:
-
-- **Mechanism:** assign `id` in `insert_log_batch`, propagate into `LogLine`, emit via SSE, JS-side drop events with `id <= max_backfill_id`.
-- **Test cases:**
-  - Navigate to a running job after 100 lines are persisted → see 100 lines, then live lines as they arrive, no duplicates at the transition.
-  - Navigate during a log burst (100 lines persisted, 50 more in the broadcast ring) → see 100 from DB + 50 from SSE, none duplicated.
-  - Navigate to a job with 10k lines → pagination still works for the static view (existing `has_older` / `next_offset` shape unchanged).
-
-### 5.4 Bulk Disable + Running Jobs
-
-**Concern:** operator bulk-disables 5 jobs, 2 of them are currently running. The `SchedulerCmd::Reload` that follows the bulk toggle will rebuild the heap WITHOUT those jobs — but the in-flight runs hold cloned `DbJob` values (see `do_reload` L60 comment) and will complete naturally. **This is the correct behavior**: bulk disable stops *future* fires, not running jobs. The operator who wants to stop a running job uses the Stop button from §3.1. Document this in the UI (toast: "3 jobs disabled; 2 currently-running jobs will complete").
-
-### 5.5 `stopped` Status and Orphan Reconciliation
-
-**Concern:** a `stopped` run leaves a container that's in the process of being force-killed. If cronduit crashes between `container_kill` and `finalize_run`, the orphan reconciler at next startup will find the container with `cronduit.run_id=42`, stop it (already stopped), remove it, and mark run 42 as `error`/`orphaned at restart`. That's wrong — the run was explicitly stopped, not orphaned.
-
-**Fix:** change `mark_run_orphaned` to `UPDATE … WHERE id = $1 AND status = 'running'`. Strict improvement on today's behavior, orthogonal to v1.1's Stop feature. Test with: pre-seed a row `status = 'stopped'`, run reconciliation against a matching container, assert row remains `stopped`.
-
-### 5.6 Healthcheck Fix Does Not Break Existing Deployments
-
-**Concern:** operators may have custom healthcheck stanzas in their own compose files that use the old wget pattern. Fix must be backward-compatible.
-
-**Resolution:**
-
-- The Dockerfile `HEALTHCHECK` directive is a new default; operators who override it in their compose file keep their override (compose overrides win over Dockerfile).
-- The `cronduit health` subcommand is additive — adding it to the CLI does not change any existing behavior.
-- Docs should call out the new default + the recommended compose-file pattern so operators opt in.
+This spike de-risks the merge semantics for all subsequent `[defaults]`-using features (webhooks especially).
 
 ---
 
-## 6. Proposed New Modules / Files
+## 5. Integration Map (which v1.0/v1.1 components each new feature touches)
+
+```mermaid
+flowchart LR
+    subgraph v10v11["Existing v1.0 / v1.1 components"]
+        SchedLoop[scheduler::SchedulerLoop]
+        ContinueRun[run::continue_run]
+        DockerExec[docker::execute_docker]
+        ApplyDefaults[config::defaults::apply_defaults]
+        Validate[config::validate]
+        Queries[db::queries]
+        ActiveRuns[AppState.active_runs]
+        DashboardHandler[handlers::dashboard]
+        JobDetailHandler[handlers::job_detail]
+        RunDetailHandler[handlers::run_detail]
+        Migrations[migrations/]
+        Sync[scheduler::sync::serialize_config_json]
+        Hash[config::hash::compute_config_hash]
+    end
+
+    subgraph v12["v1.2 features"]
+        WebhookWorker[webhooks::worker NEW]
+        WebhookConfig[webhook config schema NEW]
+        Labels[custom labels SEED-001]
+        ImageDigest[image_digest column]
+        FailureCtx[failure-context queries]
+        ExitHist[exit-code histogram]
+        Tagging[job tagging]
+    end
+
+    WebhookConfig --> ApplyDefaults
+    WebhookConfig --> Validate
+    WebhookConfig --> Sync
+    WebhookConfig --> Hash
+
+    Labels --> ApplyDefaults
+    Labels --> Validate
+    Labels --> DockerExec
+    Labels --> Sync
+    Labels --> Hash
+
+    ImageDigest --> Migrations
+    ImageDigest --> DockerExec
+    ImageDigest --> ContinueRun
+    ImageDigest --> Queries
+
+    FailureCtx --> Queries
+    FailureCtx --> RunDetailHandler
+    FailureCtx -.depends on.-> ImageDigest
+
+    ExitHist --> Queries
+    ExitHist --> JobDetailHandler
+
+    Tagging --> Migrations
+    Tagging --> ApplyDefaults
+    Tagging --> Validate
+    Tagging --> Queries
+    Tagging --> DashboardHandler
+    Tagging --> Sync
+    Tagging --> Hash
+
+    WebhookWorker --> ContinueRun
+    WebhookWorker -.depends on.-> WebhookConfig
+    ContinueRun -.new mpsc emit.-> WebhookWorker
+```
+
+**Reading the map:**
+
+- `WebhookConfig` and `Labels` both touch `apply_defaults`, `Validate`, `Sync`, and `Hash` (the four-layer parity invariant). They share a "config-schema rev" surface and should land sequentially within rc.1.
+- `ImageDigest` is the load-bearing dependency for `FailureCtx`. ImageDigest must populate before failure-context delta queries are useful.
+- `WebhookWorker` adds a NEW emission point in `continue_run` (step 7e) but does not modify `SchedulerLoop` itself (option (a) keeps the scheduler loop untouched).
+- `Tagging` is the "widest" feature in terms of file touchpoints (Migrations, ApplyDefaults, Validate, Queries, DashboardHandler, Sync, Hash) but every touch is small.
+- `ExitHist` is the narrowest — Queries + JobDetailHandler. Two-file feature.
+
+---
+
+## 6. Integration Gotchas (→ Test Cases)
+
+### 6.1 Webhook Mpsc Backpressure Under Burst
+
+**Concern:** `try_send` returns `Err(TrySendError::Full(...))` when 1024 events are queued. If a job fires 100 runs in 60 seconds (e.g., `* * * * *` × 100 jobs), and the webhook receiver is slow, the mpsc fills up. The scheduler MUST NOT block on `try_send`.
+
+**Correct behavior:**
+
+1. `try_send` failure → log at WARN, increment `cronduit_webhook_dropped_total{reason="queue_full"}`, continue scheduler unchanged.
+2. **Never `await` on `tx.send(...)` in `continue_run`**, because that's blocking the scheduler-spawned task.
+
+**Test cases:**
+
+- Saturate the mpsc to 1024 events with a slow stub worker; verify scheduler `continue_run` continues to finalize runs at full speed and the dropped counter increments.
+- Verify the dropped events are logged with `run_id` so an operator can reconstruct the gap.
+
+### 6.2 Webhook Delivery During Reload
+
+**Concern:** operator edits `cronduit.toml` to change a webhook URL while a delivery is mid-retry (250ms / 1s / 4s = up to 5.25s in flight). Reload arrives. Which URL gets the retry?
+
+**Correct behavior:** the in-flight retry uses the URL from the snapshot in the `RunFinalized` event (i.e., the URL at the time the run finalized, NOT the URL at the time the retry fires). New runs after the reload use the new URL. Document this in the webhook section of README — operators expect "edit URL → all future deliveries use new URL" but should NOT expect "edit URL → in-flight retries redirect."
+
+**Test case:**
+
+- Stub a slow receiver (returns 500 on first attempt, 200 on third). Issue a `RunFinalized`. While the retry is mid-flight, send `SchedulerCmd::Reload` with a new URL. Verify the retry completes against the original URL and a subsequent run goes to the new URL.
+
+### 6.3 The run.rs:277 Misnaming Refactor
+
+**Concern:** v1.1.0 stores image digests in `job_runs.container_id`. v1.2's migration adds `job_runs.image_digest`. Phase plan must:
+
+1. Add `image_digest` column.
+2. Update `finalize_run` to take BOTH `container_id` and `image_digest`.
+3. Update run.rs:277 to populate BOTH (image_digest from `DockerExecResult.image_digest`, container_id from a new `DockerExecResult.container_id` field).
+4. NOT data-migrate the historical `container_id` column — it's a forever-deviation that ages out via Phase 6 retention.
+5. Document the deviation in the migration up-comment.
+
+**Test cases:**
+
+- Run a docker job with v1.2 code → verify `job_runs.image_digest` populated AND `job_runs.container_id` is the actual container ID (not the image digest).
+- Run a command/script job with v1.2 code → verify `job_runs.image_digest` IS NULL AND `job_runs.container_id` IS NULL.
+
+### 6.4 SEED-001 Reserved-Namespace Validator Runs After Merge
+
+**Concern:** if `[defaults].labels` contains `cronduit.foo = "bar"`, the per-job validator must see the merged labels (which now include `cronduit.foo`) and reject. Validating only the per-job labels would let the defaults sneak through.
+
+**Correct behavior:** validators run at `validate::run_all_checks` AFTER `apply_defaults` (verified — `parse_and_validate` calls `apply_defaults` at L191–L195 before `run_all_checks` at L199). The labels validator inspects `job.labels` (merged), not `defaults.labels` separately.
+
+**Test case:**
+
+- Config with `[defaults].labels = { "cronduit.foo" = "x" }` and a per-job that doesn't override → config validation fails with the reserved-namespace error pointing at the merged label.
+
+### 6.5 Tag Substring Collision Detection
+
+**Concern:** SQLite's LIKE-based filter doesn't distinguish between `?tag=backup` and `?tag=back` if a tag `backup-daily` exists alongside `back`. A jobs that has `backup-daily` would match both `?tag=backup-daily` AND `?tag=backup` (substring match), which is wrong.
+
+**The fix:** the validator pre-rejects fleet-wide substring collisions. If config has tags `backup` AND `backup-daily`, the config is rejected at load.
+
+**Edge:** quoting the LIKE pattern with surrounding quotes — `tags LIKE '%"' || ?tag || '"%'` — prevents this entirely because the JSON serialization brackets each tag in `"`. Then `?tag=backup` matches `["backup"]` but NOT `["backup-daily"]`. **Recommend the quoting approach over the validator** as the primary defense; keep the validator as a belt-and-suspenders second layer.
+
+**Test cases:**
+
+- `?tag=backup` against a job tagged `["backup-daily"]` → no match (not in result set).
+- `?tag=backup` against a job tagged `["backup", "weekly"]` → match.
+- Config validator rejects `tags = ["back", "backup"]` on the same job (intra-job substring collision is also a hazard).
+
+### 6.6 Failure-Context Edge Cases
+
+**Concern:** what if a job has never succeeded? What if a job has succeeded once, then never failed since?
+
+**Correct behavior in `get_failure_context`:**
+
+- Job has zero terminal runs → return `FailureContext { streak: 0, first_failure_after_last_success: None, last_success: None }`. UI renders "No history yet."
+- Job has only successes → `streak: 0`, `first_failure: None`, `last_success: Some(...)`. UI renders nothing (failure context card is conditional on `streak > 0`).
+- Job has only failures (never succeeded) → `streak: <count>`, `first_failure: Some(<oldest fail>)`, `last_success: None`. UI renders "Job has never succeeded; failing for <duration>."
+- Job has alternating successes/failures → `streak` is the contiguous prefix of failures ending NOW.
+
+**Test cases:** all four shapes above, asserted on a fixture-populated `job_runs`.
+
+---
+
+## 7. Proposed New Modules / Files
 
 | Path | Purpose | Scope |
 |------|---------|-------|
-| `src/scheduler/control.rs` | `RunControl`, `StopReason`, `StopResult` types + the `HashMap<run_id, RunControl>` extension | ~60 LOC |
-| `src/web/handlers/timeline.rs` | Timeline handler + view model | ~120 LOC |
-| `src/web/stats.rs` | `percentile()` helper with tests | ~40 LOC |
-| `src/cli/health.rs` | `cronduit health` subcommand | ~60 LOC |
-| `templates/pages/timeline.html` | Timeline page | ~80 LOC |
-| `migrations/{sqlite,postgres}/20260415_000000_job_run_number.up.sql` | Add column | — |
-| `migrations/{sqlite,postgres}/20260415_000001_job_run_number_backfill.up.sql` | Backfill | — |
-| `migrations/{sqlite,postgres}/20260415_000002_job_run_number_not_null.up.sql` | Add NOT NULL | — |
-| `migrations/{sqlite,postgres}/20260415_000010_enabled_override.up.sql` | Bulk disable column | — |
+| `src/webhooks/mod.rs` | Worker spawn, `RunFinalized` event, retry loop, HMAC signer | ~150 LOC |
+| `src/webhooks/payload.rs` | JSON body shape + signature header | ~80 LOC |
+| `src/webhooks/retry.rs` (optional) | Exponential-backoff helper | ~30 LOC |
+| `migrations/{sqlite,postgres}/2026MMDD_000005_image_digest_add.up.sql` | Add `image_digest TEXT` to `job_runs` | — |
+| `migrations/{sqlite,postgres}/2026MMDD_000006_jobs_tags_add.up.sql` | Add `tags TEXT NOT NULL DEFAULT '[]'` to `jobs` | — |
+| Templates: failure-context card | `templates/partials/run_detail_failure_context.html` (or inline in `pages/run_detail.html`) | ~40 LOC of HTML |
+| Templates: exit-code histogram card | Inline in `pages/job_detail.html` alongside Duration card | ~30 LOC of HTML |
+| Templates: tag chips + filter | `templates/partials/job_table_tags.html` partial + dashboard chip bar | ~50 LOC of HTML |
 
-**No new modules beyond those.** Everything else is additions inside existing files.
-
----
-
-## 7. What NOT to Change During v1.1
-
-Explicit non-goals to keep the milestone tight and avoid the "refactor-while-we're-here" anti-pattern:
-
-1. **Do not refactor the scheduler loop.** Add the `Stop` match arm; don't split the loop into functions.
-2. **Do not change the writer/reader pool split.** Every query in §3 uses the existing `PoolRef::{Sqlite,Postgres}` pattern.
-3. **Do not add a new templating library.** All new partials are askama templates extending `base.html`.
-4. **Do not introduce a metrics registry change.** The `metrics` facade is already wired; new metrics (e.g. `cronduit_runs_stopped_total`) use the existing bounded-cardinality label scheme in `run.rs::classify_failure_reason`.
-5. **Do not introduce a JS framework for the timeline or sparkline.** Plain inline HTML/CSS only. HTMX is already vendored.
-6. **Do not change the config file schema.** All new state lives in the DB. (Per §3.7 resolution.)
-7. **Do not rework `mark_run_orphaned`** beyond the targeted `status = 'running'` WHERE clause (§5.5).
+**No other new modules.** Webhooks is the ONLY new top-level module. Everything else is additions inside existing files.
 
 ---
 
-## 8. Confidence Assessment
+## 8. What NOT to Change During v1.2
+
+Explicit non-goals to keep the milestone tight:
+
+1. **Do not refactor the scheduler loop.** v1.2 adds a new emit point in `continue_run` (step 7e); does not touch `SchedulerLoop::run`.
+2. **Do not extract a generic `MergeWithDefaults` trait.** Field-by-field manual merge stays. (See §3.2.)
+3. **Do not migrate historical `job_runs.container_id` data.** The pre-existing misnaming is fixed forward; old data ages out via Phase 6 retention.
+4. **Do not introduce a separate `jobs_tags` table.** JSON-array column on `jobs` is the locked choice. (See §3.6.)
+5. **Do not add a config_hash-at-last-success column.** Use `jobs.updated_at` as a proxy. (See §3.4.)
+6. **Do not introduce a project-wide event broadcast bus.** Webhook delivery uses a dedicated `mpsc<RunFinalized>`. (See §3.1 option (c) rejection.)
+7. **Do not promote tags to first-class metric labels.** Tags are UI-only — they MUST NOT touch Prometheus labels (cardinality hazard). Already documented in PROJECT.md ("does NOT affect webhooks, search, or metrics labels").
+8. **Do not change the `[defaults]` merge semantics for existing fields.** Webhook + labels follow the existing pattern; legacy fields stay untouched.
+9. **Do not refactor `serialize_config_json` to handle secrets generically.** The webhook secret follows the existing `env`/`SecretString` pattern: never serialized to `config_json`.
+
+---
+
+## 9. Confidence Assessment
 
 | Area | Level | Basis |
 |------|-------|-------|
-| File/module paths | HIGH | Every path verified by direct Read; line numbers included where nontrivial |
-| Bulk-disable recommendation | HIGH | Derived from reading `sync.rs` + `queries.rs::disable_missing_jobs` + `queries.rs::upsert_job` end-to-end |
-| Stop-a-job design | HIGH | Derived from reading the scheduler loop + all three executors; race analysis grounded in the existing `tokio::select!` structure |
-| Per-job run number option B | HIGH | Derived from the existing `UPDATE … RETURNING` pattern already in `upsert_job` |
-| Log backfill dedupe via id | MEDIUM-HIGH | Requires touching `log_pipeline::LogLine` and the log writer task — both are small and well-isolated, but the dedupe-via-id pattern isn't in the code today |
-| p50/p95 in Rust | HIGH | Cronduit's structural-parity constraint explicitly rejects dialect-specific SQL outside migrations |
-| Timeline as new page | MEDIUM | Design judgment; a reasonable alternative is a collapsible dashboard section |
-| Build order | HIGH | Dependency graph derived from the templating/schema touches, not aesthetic |
-| Orphan/stopped interaction | HIGH | Behavior confirmed by reading `docker_orphan.rs::mark_run_orphaned` |
-| Healthcheck fix (§3.8) | MEDIUM | Root-cause hypothesis needs confirmation by reproducing the chunked-encoding busybox wget failure, but the `cronduit health` subcommand fix path is sound regardless of the exact root cause |
+| File/module paths | HIGH | Every cited path verified by direct `Read`; line numbers cross-checked against the v1.1.0 source tree. |
+| Webhook worker placement (option (a) refined) | HIGH | Derived from reading `continue_run` end-to-end, the per-run `broadcast_tx` lifecycle, and the v1.1 `__run_finished__` sentinel pattern. The "broadcast drops on lag" argument against option (c) is a correctness argument, not preference. |
+| `[defaults]` extraction-vs-duplication | HIGH | Concrete cost analysis at fanouts 5/7/9/12+; argument grounded in the existing 5-layer parity invariant doc-comment. |
+| Image-digest call sequence | HIGH | Verified via direct read of `docker.rs:240–251` — the `inspect_container.image` field is what v1.1.0 already extracts. |
+| Pre-existing run.rs:277 bug | HIGH | Variable name vs assigned value mismatch is unambiguous in the source (`container_id_for_finalize = docker_result.image_digest.clone()`). |
+| Failure-context cardinality (2 queries) | HIGH | Both queries derived from existing query shapes; the streak compute via Rust-side scan mirrors the OBS-04 / OBS-05 structural-parity precedent. |
+| Exit-code histogram pattern | HIGH | Mechanical follow of the v1.1 OBS-04 view-struct + template-card pattern. |
+| Tagging JSON-column choice | HIGH | Argument grounded in cardinality, structural parity (the `LIKE '%"'||tag||'"%'` shape works on both backends), and the v1 "no JSONB ops outside migrations" precedent. |
+| Tagging substring-collision rule | MEDIUM | The right call for v1.2 but a future v1.3 could relax it on Postgres. Documented as a known tradeoff. |
+| Build order (rc.1/rc.2/rc.3) | HIGH | Dependency graph is grounded in the strict dependencies (F2→F4, F3→F6, F1→F7 by precedent) — not aesthetic. |
+| Webhook retry semantics | MEDIUM | Architecture sketch is sound; specific timer/backoff/HMAC parameters belong in stack research. |
+| SEED-001 breadcrumb verification | HIGH | Every line number in the seed re-verified at v1.1.0. |
 
 ---
 
-## 9. Notes for the Roadmap Consumer
+## 10. Notes for the Roadmap Consumer
 
-- **Every v1.1 feature has a specific file/module path.** No hand-wavy "somewhere in the scheduler".
-- **The bulk-disable open question is resolved:** Option (b), new `enabled_override` column, with justification derived from reading the sync code. Phase plan does not need to relitigate.
-- **Build order is justified by strict dependencies**: run numbers before timeline/sparkline (template reuse), stop before everything (risk-front-load), log backfill independent.
-- **Three release candidates map to the three thematic blocks**: rc.1 = bug-fix block (stop + run numbers + log backfill + healthcheck), rc.2 = observability (trend + sparkline + timeline), rc.3 = ergonomics (bulk toggle).
-- **The one architectural pattern v1.1 introduces** that isn't in v1.0 is the `running_handles` map carrying `RunControl`. Keep it minimal and colocated in `src/scheduler/control.rs`.
+- **Every v1.2 feature has a specific file/module path or symbol.** No hand-wavy "somewhere in the scheduler".
+- **The webhook delivery shape is locked: option (a) refined — new module `src/webhooks/`, new `mpsc<RunFinalized>` channel, emission at `continue_run` step 7e.** Phase plan does not need to relitigate.
+- **The `[defaults]` extraction question is locked: do not extract for v1.2.** Field-by-field merge stays; revisit at v1.3 if the field count crosses ~9.
+- **Image-digest is a one-file migration, not a three-file migration.** And in the same wave, fix the run.rs:277 misnaming and add a proper `container_id` capture.
+- **Failure-context is 2 queries, not 5.** Most of the orchestrator's candidates collapse into one CTE-shaped query.
+- **Tags are a JSON column, not a join table.** And the substring-collision rule + LIKE-with-quotes trick gives structural parity without dialect-specific operators.
+- **rc.1 = Foundation (config-schema rev + image_digest), rc.2 = Insight (failure context + histogram + webhook delivery), rc.3 = Organization (tagging) + UAT polish.**
+- **The strict dependencies are F2→F4 (image_digest before failure-context) and F3→F6 (webhook schema before webhook worker).** Everything else is independent and can ship in parallel within an rc.
+- **The pre-existing run.rs:277 bug is a free win.** Mention it in the rc.1 summary so the user knows v1.2 quietly improves data correctness on `job_runs.container_id` going forward.
 
 ---
 
-## 10. Source Files Read
+## 11. Source Files Read
 
 - `/Users/Robert/Code/public/cronduit/.planning/PROJECT.md`
-- `src/scheduler/mod.rs`
-- `src/scheduler/cmd.rs`
-- `src/scheduler/run.rs`
-- `src/scheduler/reload.rs`
-- `src/scheduler/sync.rs`
-- `src/scheduler/command.rs`
-- `src/scheduler/docker.rs`
-- `src/scheduler/docker_orphan.rs`
-- `src/db/queries.rs` (structural scan + L40–L215, L286–L800)
-- `src/web/mod.rs`
-- `src/web/handlers/api.rs`
-- `src/web/handlers/dashboard.rs`
-- `src/web/handlers/job_detail.rs`
-- `src/web/handlers/run_detail.rs`
-- `src/web/handlers/sse.rs`
-- `src/web/handlers/health.rs`
-- `templates/pages/run_detail.html`
+- `/Users/Robert/Code/public/cronduit/.planning/MILESTONES.md`
+- `/Users/Robert/Code/public/cronduit/.planning/seeds/SEED-001-custom-docker-labels.md`
+- `/Users/Robert/Code/public/cronduit/.planning/milestones/v1.1-research/ARCHITECTURE.md`
+- `src/scheduler/mod.rs` (873 lines, full)
+- `src/scheduler/run.rs` (812 lines, full)
+- `src/scheduler/control.rs` (full)
+- `src/scheduler/docker.rs` (567 lines, full)
+- `src/scheduler/docker_orphan.rs` (header)
+- `src/config/mod.rs` (full)
+- `src/config/defaults.rs` (full)
+- `src/config/validate.rs` (full)
+- `src/db/queries.rs` (structural scan: L1–L200, L340–L640, L800–L1100)
+- `src/web/mod.rs` (full)
+- `src/web/stats.rs` (full)
+- `src/web/handlers/dashboard.rs` (full)
+- `src/web/handlers/job_detail.rs` (full)
+- `src/web/handlers/run_detail.rs` (header + view-model section)
+- `src/web/handlers/api.rs` (stop_run + bulk_toggle)
 - `migrations/sqlite/20260410_000000_initial.up.sql`
-- `migrations/postgres/20260410_000000_initial.up.sql`
-- `Dockerfile`
-- `examples/cronduit.toml`
-- `examples/docker-compose.yml`
+- `migrations/sqlite/20260422_000004_enabled_override_add.up.sql`
+- Migration directory listing (both backends)

@@ -108,6 +108,13 @@ pub fn setup_metrics() -> PrometheusHandle {
                 "cronduit_run_failures_total",
                 "Total job run failures, labeled by closed-enum reason"
             );
+            metrics::describe_counter!(
+                "cronduit_webhook_delivery_dropped_total",
+                "Total webhook events dropped because the bounded delivery channel was \
+                 saturated. Closed-cardinality (no labels in P15). Increments correlate \
+                 with WARN-level events on the cronduit.webhooks tracing target. The \
+                 full cronduit_webhook_* family lands in P20 / WH-11."
+            );
             metrics::describe_gauge!(
                 "cronduit_docker_reachable",
                 "1 if the docker daemon was reachable at last ping, 0 otherwise (Phase 8 D-12)"
@@ -123,6 +130,7 @@ pub fn setup_metrics() -> PrometheusHandle {
             metrics::counter!("cronduit_runs_total").increment(0);
             metrics::histogram!("cronduit_run_duration_seconds").record(0.0);
             metrics::counter!("cronduit_run_failures_total").increment(0);
+            metrics::counter!("cronduit_webhook_delivery_dropped_total").increment(0);
             metrics::gauge!("cronduit_docker_reachable").set(0.0);
 
             // Phase 10 / T-V11-STOP-16 / PITFALLS §1.6: pre-declare each

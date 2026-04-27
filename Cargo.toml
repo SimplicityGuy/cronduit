@@ -1,6 +1,6 @@
 [package]
 name = "cronduit"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 rust-version = "1.94.1"
 description = "Self-hosted Docker-native cron scheduler with a web UI"
@@ -64,6 +64,11 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 # Errors
 anyhow = "1.0.102"
 thiserror = "2.0.18"
+
+# Async trait macro — required for `dyn WebhookDispatcher` (Phase 15 D-01).
+# Already transitive via testcontainers + axum-htmx (Cargo.lock:237);
+# promoted to direct so the trait shape is documented at the crate boundary.
+async-trait = "0.1"
 
 # Secrets (serde feature is MANDATORY — D-20)
 secrecy = { version = "0.10.3", features = ["serde"] }

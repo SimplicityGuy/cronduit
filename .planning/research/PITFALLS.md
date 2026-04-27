@@ -1,13 +1,21 @@
-# Cronduit v1.1 — Pitfalls Research
+# Cronduit v1.2 — Pitfalls Research
 
-**Dimension:** Integration Pitfalls (subsequent milestone, not greenfield)
-**Milestone:** v1.1 "Operator Quality of Life"
-**Researched:** 2026-04-14
-**Confidence:** HIGH — every pitfall is grounded in a direct read of the shipped v1.0.1 source tree. Line numbers and file paths included where nontrivial.
+**Dimension:** Integration Pitfalls (subsequent milestone — adding 5 features on top of shipped v1.1.0 codebase)
+**Milestone:** v1.2 "Operator Integration & Insight"
+**Researched:** 2026-04-25
+**Confidence:** HIGH — every pitfall is grounded in a direct read of the shipped v1.1.0 source tree, the v1.1 pitfall log, the SEED-001 design decisions, and the existing `THREAT_MODEL.md`. Line numbers and file paths included where nontrivial.
 
-> This document adapts the default `research-project/PITFALLS.md` template. The standard template is greenfield-oriented ("what domain mistakes should we avoid?"); for v1.1 the interesting pitfalls are **integration pitfalls** — where newly added v1.1 code meets the existing v1.0.1 code surface. Each pitfall below is anchored to a specific file + line in the current tree, with a prevention strategy that can be transformed into a named test case by REQUIREMENTS.md.
+> This document continues the v1.1 PITFALLS.md tone and depth: numbered, ranked Critical → Moderate → Minor per feature, with a phase-mapping summary at the bottom. **Numbering continues from the v1.1 series** — v1.1's last numbered pitfall stub was around #27 (counting Critical + Moderate + Minor entries in v1.1's nine feature sections), so v1.2 numbering starts at **Pitfall 28** and runs through **Pitfall 56** across the five v1.2 features plus a cross-feature section.
 >
-> v1.0's domain pitfalls (`auto_remove` race, `container:<name>` target-gone, log back-pressure, orphan reconciliation, unauthenticated UI + docker.sock) are already mitigated in the shipped code; this document references them rather than re-flagging them. Where a v1.1 feature re-enters one of those hazard zones, the pitfall below calls it out explicitly as a **regression risk**.
+> v1.0 + v1.1 baseline pitfalls (docker socket = root-equivalent, log back-pressure, DST, SQLite write contention, schema parity, openssl cross-compile, secret-leak-into-errors, scheduler clock drift, `mark_run_orphaned WHERE status='running'` guard, preserved `.process_group(0)` instead of `kill_on_drop`) are NOT re-flagged here. Each v1.2 pitfall that re-enters one of those zones calls it out as a 🔗 regression risk.
+>
+> Five v1.2 features ranked by integration risk (highest first):
+>
+> 1. **Webhook notifications** — net-new outbound surface, retry policy, delivery worker isolation. Highest blast-radius expansion of v1.2.
+> 2. **Custom Docker labels (SEED-001)** — design pre-locked, but operator-misuse pitfalls remain.
+> 3. **Failure context (image-digest + config-hash deltas, streak math)** — depends on a per-run column the codebase does not yet record per-run (config_hash is at job-level only).
+> 4. **Per-job exit-code histogram** — additive UI card, but cardinality + window-choice pitfalls are real.
+> 5. **Job tagging / grouping** — UI-only filter chips, but normalization and filter UX have classic pitfalls.
 
 ---
 
@@ -17,1192 +25,1209 @@ Each feature section has the pitfalls ranked **Critical → Moderate → Minor**
 
 - **Where:** the file(s) and (where relevant) line numbers the pitfall touches
 - **What goes wrong:** the failure mode in plain language
-- **Why:** the specific v1.0 code shape or external ecosystem bug that causes it
-- **Prevention:** an actionable fix — ideally a named test case or a specific code pattern
-- **Test case name (T-xxx):** a stable identifier REQUIREMENTS.md can reference
+- **Why:** the specific code shape, ecosystem behavior, or operator-experience driver
+- **When it manifests:** config load? first fire? long-running deployment? upgrade?
+- **Prevention:** an actionable fix — ideally a named test case, a validator, or a doc
+- **Phase hint:** which v1.2 phase should own the mitigation (rough; not binding)
+- **Test case name (T-V12-…):** parallels the v1.1 `T-V11-…` convention
 
-A pitfall marked with 🔗 **v1.0-P#N** indicates it touches a hazard zone already documented in `.planning/milestones/v1.0-research/PITFALLS.md` — fixing it must not re-open that v1.0 pitfall.
-
----
-
-## Feature 1 — Stop a Running Job (new `stopped` status)
-
-### 1.1 CRITICAL — Cancellation-token identity collision (per-run vs shutdown)
-
-**Where:** `src/scheduler/mod.rs` L98, L122, L166, L215 — every spawn site creates `let child_cancel = self.cancel.child_token();`. `src/scheduler/command.rs` L127–L140 and `src/scheduler/docker.rs` L338–L358 both match on `cancel.cancelled()` and return `RunStatus::Shutdown`. `src/scheduler/run.rs` L238–L244 maps `Shutdown → "cancelled"`.
-
-**What goes wrong:** Today there is **one single path** from a cancelled token to a finalized status string: `Shutdown → "cancelled"`. If v1.1 adds `SchedulerCmd::Stop { run_id }` that simply calls `.cancel()` on a per-run child token, the executor has no way to distinguish "operator clicked Stop" from "SIGTERM arrived" — both paths reach the same `cancel.cancelled()` arm and both produce `status="cancelled"`. The user-visible effect: the Stop button writes `cancelled` rows that are indistinguishable from graceful-shutdown rows, the `/metrics` counter `cronduit_runs_total{status="stopped"}` stays flat forever, and the UI run-history badge shows the wrong label.
-
-**Why:** `CancellationToken` carries no payload. Both `self.cancel` (graceful shutdown root) and every `child_token()` derived from it fire on `.cancelled()` with zero context. A naive `SchedulerCmd::Stop` handler that cancels a stored child token is **observationally identical to the shutdown path** from inside the executor.
-
-**Prevention:** Adopt ARCHITECTURE.md §3.1 "Option A" — per-run `Arc<AtomicU8> stop_reason` set by the scheduler **before** calling `.cancel()`. The executor's cancelled-branch reads the reason **after** it fires and returns `RunStatus::Stopped { reason: Operator }` or `RunStatus::Shutdown` based on the atomic. Never infer the cause of cancellation from the token identity.
-
-**Test case:**
-- **T-V11-STOP-01:** Spawn a long-running command job, set `stop_reason = Operator`, cancel, assert `status="stopped"` in DB and `RunStatus::Stopped` returned from executor.
-- **T-V11-STOP-02:** Same setup but instead cancel the **root** `self.cancel`; assert `status="cancelled"` is still produced (no regression for shutdown path).
-- **T-V11-STOP-03:** Cancel with `stop_reason = Operator` **before** spawn completes (pre-insert); assert behavior is safe and the row either never exists or exists as `stopped`, never as `running`.
-
-**Severity:** CRITICAL — breaks the entire feature signal.
+A pitfall marked 🔗 indicates it touches a hazard zone already mitigated in v1.0 or v1.1; the v1.2 fix must NOT re-open that pitfall.
 
 ---
 
-### 1.2 CRITICAL — Stop-vs-natural-completion race (already called out in ARCHITECTURE.md §5.1)
+## Feature 1 — Webhook Notifications
 
-**Where:** `src/scheduler/mod.rs::SchedulerLoop::run` — the main `tokio::select!` arm at L143 (`join_set.join_next()`) runs in the **same event loop** as the `cmd_rx.recv()` arm at L162. Without a dedicated per-run control map, a `SchedulerCmd::Stop { run_id: 42 }` arriving at T=0 can race a `JoinNext → RunResult { run_id: 42, status: "success" }` arriving at T=+1μs.
+The single largest blast-radius expansion in v1.2: cronduit gains an outbound HTTP path. Pitfalls cluster around (a) keeping the scheduler isolated from the network, (b) flood control, (c) cryptographic signing done correctly the first time, (d) SSRF / HTTPS posture, and (e) payload schema stability so receivers don't break on v1.3+.
 
-**What goes wrong:** Three bad outcomes are possible:
+### Pitfall 28 — CRITICAL — Blocking the scheduler loop on outbound HTTP
 
-1. Stop handler cancels the token of an already-finished task (harmless but a race-condition-y API shape).
-2. Stop handler overwrites a `success` / `failed` DB row to `stopped` — a **lie** about what actually happened.
-3. The executor's `cancel.cancelled()` branch fires **after** the task has already moved past the `tokio::select!` and is waiting on `finalize_run`'s DB write, producing an inconsistent dual-write.
+**Where:** New `src/scheduler/webhook/` module + the call site inside the executor finalize path (currently `src/scheduler/run.rs::finalize_run` ≈L260–L295 — the same place that writes terminal status, fires `cronduit_runs_total{status}`, and removes the entry from `running_handles`).
 
-**Why:** The existing executor `tokio::select!` does not have a deterministic ordering between "child exited" and "cancel fired" — whichever arm yields first wins. Once one arm wins, the other is structurally ignored by `select!`. But the scheduler loop has no visibility into which arm won, so a Stop issued at the same wall-clock moment as natural exit is a TOCTOU.
+**What goes wrong:** Naive shape: `finalize_run` does `reqwest::post(url).send().await` (or any blocking-await on an outbound HTTP call) inline. Failure modes:
 
-**Prevention:** Pin the ordering in **the scheduler loop**, not in the executor. Concretely:
+1. **Slow receiver = stalled scheduler.** Operator's Slack receiver takes 30s to ack (network blip, receiver CPU-pinned). The scheduler loop is blocked for 30s — the next job's fire window is missed by 30s, every other in-flight job's `finalize_run` queues up behind, and the entire fire heap drifts.
+2. **Receiver down = drift forever.** A persistently-failing webhook with 3 retries × 30s connect timeout = 90s of dead time per failed job. Five concurrent failed jobs = 7.5 minutes of scheduler stall.
+3. **The healthcheck flips to `unhealthy`.** `/health` is served by the same axum runtime. If the scheduler loop is starved, axum tasks still respond, but `cronduit_scheduler_up` may flap if any scheduler-pulse signal is wired into the health logic.
+4. **Cancellation token doesn't cancel HTTP.** The scheduler's graceful-shutdown `CancellationToken` does NOT propagate into a blocking outbound HTTP call unless the call is wrapped in `tokio::select! { _ = http; _ = cancel.cancelled() => ... }`. SIGTERM hangs for the full HTTP timeout.
 
-1. Every `run_job` spawn registers a `RunControl` into `running_handles: HashMap<i64, RunControl>` before the spawn returns (use a startup barrier).
-2. `join_set.join_next() → RunResult` **removes** the entry from `running_handles` atomically before returning control to the main loop.
-3. `SchedulerCmd::Stop { run_id }` acquires the map entry **once** — if present, sets `stop_reason = Operator` then cancels; if absent, returns `StopResult::AlreadyFinished { final_status }` by reading `job_runs` directly. **No DB write from the Stop handler ever**; only the executor's cancel branch writes `stopped`.
-4. The executor's `stop_reason` read is the **single** authoritative source for "operator stopped this run"; any `success/failed/timeout/error` return path **wins** over a racing Stop because the executor never consults `stop_reason` on those paths.
+**Why:** v1.0/v1.1 chose a hand-rolled scheduler loop precisely so cronduit owned the timing semantics (`@random` + `random_min_gap` + in-flight survival across reload). That ownership is a benefit only if the loop never blocks on something the operator's environment controls. Outbound HTTP is the canonical "operator-environment-controlled latency" surface.
+
+**When it manifests:** First fire after a webhook is configured against a slow/down receiver. Visible as scheduler drift in `cronduit_scheduler_up` flapping, missed fires in `cronduit_runs_total`, or operator-reported "my 1-minute job runs every 90 seconds now."
+
+**Prevention:**
+
+1. **Bounded `mpsc` channel + dedicated delivery worker.** `finalize_run` calls `webhook_tx.try_send(WebhookJob { run_id, terminal_status, payload })` and **always returns immediately**. The `try_send` is non-blocking; on full channel it logs a warn + increments a `cronduit_webhook_dropped_total{reason="queue_full"}` counter and continues. Bounded capacity (recommendation: 1024). The scheduler loop never awaits a network call.
+2. **Delivery worker is a separate `tokio::spawn` task** in `src/scheduler/webhook/worker.rs` owning its own `hyper-util` client (already a transitive dep — see `Cargo.toml` L27–L28). The worker receives `WebhookJob`, looks up the operator URL/secret/state-filter, applies retry policy, and exits cleanly when its `CancellationToken` fires.
+3. **Scheduler-shutdown integration.** On `SIGTERM`, the scheduler's graceful drain (`with_graceful_shutdown` + the existing double-signal SIGINT/SIGTERM state machine, v1.0 Phase 2) waits up to a configurable `webhook_drain_timeout` (default 10s) for the queue to flush; remaining queued webhooks are dropped (counted in `cronduit_webhook_dropped_total{reason="shutdown_drain"}`). Document this as expected behavior — webhooks are best-effort across restart.
+4. **Survive scheduler reload.** `SchedulerCmd::Reload` re-reads webhook URLs/secrets per job; the worker continues running across reload (it's owned by `AppState`, not by `SchedulerLoop`). The bounded channel persists across reload — in-flight queued webhooks are NOT dropped on reload. Lock with a test.
+5. **Decouple from `metrics-exporter-prometheus`.** Add a new gauge `cronduit_webhook_queue_depth` (no labels) and counter `cronduit_webhook_dropped_total{reason}` (closed enum: `queue_full`, `shutdown_drain`, `state_filter_excluded`, `disabled_at_load`). Both eagerly described at boot per the v1.0 bounded-cardinality discipline.
+
+**Phase hint:** Phase 15 (webhook delivery worker — foundation for the entire feature). Lock the isolation pattern in the very first PR; every subsequent webhook PR depends on the worker existing.
 
 **Test cases:**
-- **T-V11-STOP-04:** Use `tokio::time::pause` to spawn a job that exits at T+1ms; send Stop at T+0. Assert the **natural** status wins (no `stopped` overwrite). Run 1000 iterations to catch order-of-operations bugs.
-- **T-V11-STOP-05:** Stop for an unknown `run_id` → API handler returns 404; no DB touch; `running_handles` unchanged.
-- **T-V11-STOP-06:** Stop for a `run_id` that completed 5 minutes ago → API handler returns `AlreadyFinished { final_status: "success" }`; no DB touch.
+- **T-V12-WH-01:** Stall a mock receiver for 60s; fire 5 webhooks; assert scheduler fires the next 5 scheduled jobs on time (no drift > 1s).
+- **T-V12-WH-02:** Mock receiver returns 500 forever; fire a webhook; assert the worker performs 3 attempts, then drops with `delivery_failed`; assert scheduler unaffected.
+- **T-V12-WH-03:** Fill the bounded channel to capacity; fire one more; assert `cronduit_webhook_dropped_total{reason="queue_full"}` increments and the scheduler unaffected.
+- **T-V12-WH-04:** Send SIGTERM during in-flight delivery; assert process exits within `webhook_drain_timeout + 5s`; assert remaining queued webhooks counted as `shutdown_drain`.
+- **T-V12-WH-05:** Trigger `SchedulerCmd::Reload` while a delivery is in-flight; assert delivery completes (worker survives reload).
 
-**Severity:** CRITICAL. This is the highest-risk integration pitfall in v1.1.
-
----
-
-### 1.3 CRITICAL — `FEATURES.md` proposes `kill_on_drop(true)` for command/script — that is a REGRESSION
-
-**Where:** `.planning/research/FEATURES.md` L93 literally says: *"the spawned process is killed via the existing tokio cancellation token + `kill_on_drop(true)` pattern. No process-group walk."*
-
-**What goes wrong:** The current v1.0 code is **strictly better** than the proposed v1.1 pattern. `src/scheduler/command.rs` L203 spawns with `.process_group(0)` and L150–L167 kills the entire process group via `libc::kill(-pid, SIGKILL)`. Same for `src/scheduler/script.rs` L89. This kills **all grandchildren** of a shell pipeline like `sh -c 'curl … | tee log.txt'`. Switching to `kill_on_drop(true)` would:
-
-1. Only kill the direct child (the `sh`), leaving `curl` and `tee` as orphans adopted by PID 1 (inside the container, that's `cronduit` itself — the parent).
-2. Produce zombie processes on long-running shell pipelines — exactly the "zombie processes on local jobs" pitfall the question flagged.
-3. Rely on `Drop` timing which is **not** deterministic when the child future is inside a `JoinSet`.
-
-Also: `kill_on_drop(true)` must be set on the `Command` **before** spawn. You cannot retrofit it onto an existing `Child`. The existing code structure cannot absorb this change without rewriting both executors.
-
-**Prevention:**
-1. **Do NOT adopt `kill_on_drop(true)` for command/script executors.** The existing `.process_group(0)` + `libc::kill(-pid, SIGKILL)` pattern is already correct; the Stop feature just needs a distinct cancel path that reaches the existing `kill_process_group` call with a different `stop_reason`.
-2. **Update FEATURES.md L93** to match the actual implementation pattern before phase planning begins. The architecture doc (§3.1) and the code both already use process-group kill — FEATURES.md is the outlier.
-3. Document in code comments that the existing process-group kill also handles shell-pipeline grandchildren — prevents a future refactor from silently adopting `kill_on_drop`.
-
-**Test case:**
-- **T-V11-STOP-07:** Run a command `sh -c 'sleep 120 | cat | cat'`; issue Stop; assert **all three** of `sh`, `cat`, `cat` are reaped (check via `/proc/<pid>` inspection inside a test container, or use `ps --ppid` in an integration test that mounts `/proc`).
-- **T-V11-STOP-08:** Same test against a script job body that launches a background process (`(sleep 300 &); echo started`); assert the background sleep is also killed by the process-group walk.
-
-**Severity:** CRITICAL (latent regression — correct today, would be broken by FEATURES.md proposal).
+**Severity:** CRITICAL — breaking this breaks the entire core promise ("execute jobs on time").
 
 ---
 
-### 1.4 MODERATE — Bollard `kill_container` race with natural completion
+### Pitfall 29 — CRITICAL — Webhook flooding (no per-URL rate limit, no streak coalescing)
 
-**Where:** `src/scheduler/docker.rs` L265–L358 — the `tokio::select!` over `wait_container`, `sleep(timeout)`, and `cancel.cancelled()`.
+**Where:** Same delivery worker. Triggered by jobs that fail repeatedly on a tight schedule.
 
-**What goes wrong:** Operator clicks Stop at T=0. Scheduler cancels per-run token. `cancel.cancelled()` arm fires and calls `docker.stop_container(t=10)`. Between the cancel firing and the `stop_container` request reaching the daemon, the container naturally exits. `stop_container` returns either:
+**What goes wrong:** Operator has a job `* * * * *` (every minute) with `webhook_states = ["failed"]`. The job starts failing at 03:00. By 03:30, the operator's PagerDuty/Slack receiver has been hit 30 times for the *same* underlying problem. Operator gets paged 30 times overnight; ignores future cronduit alerts entirely; cronduit becomes a known-bad-signal source in the operator's broader observability stack. **The whole point of webhooks is undermined by their own success.**
 
-- `BollardError::DockerResponseServerError { status_code: 304, message: "Container already stopped" }` — the expected case; we should treat it as success.
-- `BollardError::DockerResponseServerError { status_code: 404, message: "No such container" }` — possible if the post-drain remove fired first from another code path (shouldn't happen today because `maybe_cleanup_container` runs **after** the select, but worth testing).
-- Network error mid-request — genuine error.
+Variant: the operator's receiver itself rate-limits (Slack incoming-webhooks: ~1/sec per webhook URL; PagerDuty Events API: ~120/min per service key). Hitting the receiver-side rate limit produces 429s, retries fire, and the cronduit retry storm makes the receiver-side problem worse.
 
-The first case is **not** a failure but today's `cancel.cancelled()` arm calls `.await.ok()`-style on `stop_container` (L341) and ignores the result entirely. That's fine for graceful shutdown but the **Stop feature** needs to confirm the container was reaped before writing `status="stopped"`, otherwise you can get `stopped` rows whose containers are still running.
+**Why:** No flood control is the default behavior of any "fire on terminal status" notifier unless explicitly designed in. v1.2 inherits the default unless we lock the policy now.
 
-**Why:** The v1.0 cancel path assumes the container MUST be stopped because the whole process is exiting. The v1.1 Stop path needs stronger guarantees because the process continues. The daemon-side race is documented in moby#8441 (referenced in v1.0 PITFALLS.md Pitfall #3) and historical bollard issues where `stop_container` on an already-exited container returns 304.
+**When it manifests:** Within minutes of any fast-cadence (≤5min) job entering a sustained failure state. **Universal first-use experience** — every new operator will hit this on day 1 if not mitigated.
 
-**Prevention:**
-1. On operator-initiated stop, after `stop_container` returns, **inspect the container** to confirm state transitioned to `exited` or `dead`. If `stop_container` returned 304/404, treat as success (container already reaped). Only a network/daemon error should surface as an executor `Error`.
-2. Log the 304/404 case at `debug` level with a `cronduit.docker.stop_raced_natural_exit` target so operators can distinguish benign races in post-mortems.
-3. **Do not re-introduce `auto_remove=true`.** The existing `maybe_cleanup_container` runs after the select and must remain the single removal point (🔗 **v1.0-P#3 `auto_remove` race**).
+**Prevention (v1.2 default — lock at requirements time):**
+
+1. **"First failure of new streak" semantics.** The default state-filter is **edge-triggered**, not level-triggered:
+   - `webhook_states = ["failed"]` fires on the **transition** from non-failed→failed, AND on every Nth subsequent failure (default N=10), AND on the recovery transition failed→success.
+   - Equivalent: cronduit emits at most ⌈runs/N⌉ + 2 webhooks during a sustained failure, regardless of run cadence.
+   - The streak boundary is computed from `job_runs` queries (the same data the failure-context feature uses — see Feature 3 below). This creates a phase ordering: failure-context queries should land **before or alongside** webhook delivery.
+2. **Operator override.** Per-job: `webhook_coalesce = "every"` to fire on every failure (legacy / loud setups), `"streak_first"` (default), `"streak_first_and_recovery"` (explicit), `"streak_first_every_n"` with `n` configurable.
+3. **Per-URL rate limit (defense in depth).** Worker enforces a token bucket per destination URL: default 10 deliveries/min/URL. Drops over the bucket count toward `cronduit_webhook_dropped_total{reason="rate_limited"}`. Rationale: even with edge-triggered semantics, a misconfigured fleet (50 jobs all sharing one webhook URL all failing simultaneously) can flood; the per-URL bucket caps the worst case.
+4. **Document the default loudly in the README.** "Cronduit fires webhooks on failure-streak boundaries, not every failure. Set `webhook_coalesce = 'every'` if you want the legacy noisy behavior." This is a discoverability item — operators searching for "cronduit only sent one alert" must find this immediately.
+5. **State coalescing is a webhook-feature concern, NOT a scheduler concern.** The scheduler still runs the job every minute; the executor still writes a `failed` row every minute; metrics still increment. Only the webhook delivery is coalesced. This keeps the observability surface honest while taming the notification surface.
+
+**Phase hint:** Phase 16 (webhook payload + state-filter logic). Land coalescing semantics in the same PR as the state-filter so they can't drift.
 
 **Test cases:**
-- **T-V11-STOP-09:** Stop a docker job whose container has just exited (race window <10ms); assert `status="stopped"`, `exit_code` is captured if available, no orphan left behind.
-- **T-V11-STOP-10:** Stop a docker job whose daemon returns transport error on `stop_container`; assert `status="error"` with a distinct `error_message` (not `"stopped"`).
-- **T-V11-STOP-11:** Verify `cargo tree -i openssl-sys` stays empty after adding the new Stop path (no new crate dep should pull OpenSSL).
+- **T-V12-WH-06:** Job fails 60 consecutive times; assert `streak_first` mode produces exactly 1 + ⌊60/10⌋ = 7 webhooks, with the first carrying `streak_position: "first_failure"` and intermediates carrying `streak_position: "ongoing"`.
+- **T-V12-WH-07:** Job fails 5x then succeeds; assert exactly 2 webhooks (first failure, recovery).
+- **T-V12-WH-08:** 50 jobs share one webhook URL; all fail at the same minute; assert per-URL rate limit drops the overflow with `rate_limited` reason; first 10 deliveries succeed.
+- **T-V12-WH-09:** `webhook_coalesce = "every"` reproduces the noisy legacy behavior (1 webhook per failed run); assert no surprise drop.
 
-**Severity:** MODERATE.
+**Severity:** CRITICAL — silently produces a worse operator experience than no webhooks at all.
 
 ---
 
-### 1.5 MODERATE — `stopped` status vs orphan reconciliation (§5.5 — already covered, pre-fixed)
+### Pitfall 30 — CRITICAL — HMAC verification timing-attack vulnerability (in operator-written receivers)
 
-**Where:** `src/scheduler/docker_orphan.rs::mark_run_orphaned` L114–L142.
+**Where:** Documentation + the example receiver shipped in `examples/webhook-receiver.{py,rs}` (new). HMAC signing itself is in `src/scheduler/webhook/sign.rs` (new); we use `hmac` + `sha2` (already standard rust crypto, no new heavy deps; `sha2` is transitively pulled today via `sqlx`'s SCRAM auth).
 
-**What goes wrong in theory:** Cronduit is killed mid-stop (operator clicks Stop, cronduit crashes before `finalize_run` writes `stopped`). Container is left with label `cronduit.run_id=42`; on next startup, orphan reconciler finds it, stops/removes it, and overwrites the DB row's status to `error` / `orphaned at restart`. The run was **explicitly stopped**, not orphaned.
+**What goes wrong:** The cronduit-side HMAC implementation will be correct (we control it). The pitfall is on the **operator side** — anyone who reads our docs and writes a receiver may use `if signature == expected:` (Python, Go, JS, anywhere) which is timing-attack-vulnerable. A network-adjacent attacker can iterate through signature byte values, measuring response latency, and recover the HMAC byte-by-byte.
 
-**Why it is NOT a pitfall today:** `mark_run_orphaned` already includes `AND status = 'running'` in its WHERE clause (L120, L131). If the row has been finalized to `stopped` by the time reconciliation runs, the UPDATE is a no-op. The worry is inverted: the pitfall is only real if the **Stop path finalizes AFTER** the cancel fires, leaving the row briefly at `running` when cronduit crashes.
+This is a documentation pitfall: cronduit ships the bug if its docs ship a vulnerable example.
+
+**Why:** Constant-time comparison is a footgun across nearly every language. `hmac.compare_digest` (Python), `crypto.timingSafeEqual` (Node), `subtle.ConstantTimeCompare` (Go), `hmac::digest::CtOutput::eq` (Rust) all need to be used explicitly; `==` on bytes/strings is the natural-feeling-and-wrong choice everywhere.
+
+**When it manifests:** The day an attacker with LAN access discovers cronduit (recall: v1 ships unauthenticated; the LAN-attacker model is the documented baseline). Long-running deployment risk.
 
 **Prevention:**
-1. The Stop handler in the scheduler loop **must not** touch the DB. Only the executor's finalize path writes `stopped`. This keeps the atomicity story identical to the existing graceful-shutdown path.
-2. Order of operations inside the executor on operator-stop: `kill container/process` → `wait for child/container exit` → `finalize_run(status="stopped")` → scheduler-loop removes `running_handles[run_id]`. If cronduit crashes at **any** step before `finalize_run`, the row stays at `running` and orphan reconciliation on next boot produces `error`/`orphaned at restart`. **This is acceptable** — a crashed stop becomes an orphan from the operator's perspective.
-3. Make the `status = 'running'` guard a test invariant so future refactors don't drop it.
+
+1. **Cronduit-side signing (LOCK):**
+   - Algorithm: HMAC-SHA256.
+   - Header format: `X-Cronduit-Signature: sha256=<hex>` (matches GitHub webhooks convention — operators already know this shape).
+   - **Signed payload = `<timestamp>.<request_body>`** (timestamp included to prevent replay; same shape as Stripe). `timestamp` = unix seconds, also sent as `X-Cronduit-Timestamp: <seconds>` header. Receivers SHOULD reject if `|now - timestamp| > 5min`.
+   - **Sign body bytes only, NOT the URL.** URL signing is unnecessary (the URL is operator-known) and breaks proxy-rewriting setups.
+   - Secret is opaque to cronduit (operator-owned random string, ≥32 bytes recommended). Cronduit interpolates from env-var via the existing `${ENV_VAR}` + `SecretString` pattern from v1.0 (no plaintext in TOML).
+2. **Documentation MUST ship copy-paste-ready receiver examples in Python + Go + Node** that use the language's constant-time compare:
+   - Python: `hmac.compare_digest(expected.encode(), signature.encode())`
+   - Go: `subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) == 1`
+   - Node: `crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))`
+   - Rust: `subtle::ConstantTimeEq::ct_eq(&expected, &signature).into()` or `hmac::Hmac::<Sha256>::verify_slice`.
+3. **Each example MUST include a one-line comment explaining why the constant-time compare is mandatory.** Operators copy-pasting will leave the comment in; the next reader of the receiver code learns the rule for free.
+4. **Secret rotation story.** Document the rotation procedure: (a) operator adds a new env-var, (b) receiver accepts both old + new signatures during the rotation window, (c) operator updates cronduit config to reference the new env-var, reload, (d) operator removes the old env-var. **Cronduit signs with one secret at a time — no dual-signing.** Keeps the cronduit code small; the multi-secret window lives on the receiver side. (Could revisit if operators ask for cronduit-side dual-signing in v1.3.)
+5. **Test the cronduit-side signing against a known-vector** so future refactors of the signer can't drift silently.
+
+**Phase hint:** Phase 17 (HMAC signing). Document examples in the same PR as the signer.
 
 **Test cases:**
-- **T-V11-STOP-12:** Pre-seed a `job_runs` row with `status='stopped'`, run `reconcile_orphans` against a matching container; assert row stays `stopped` (the existing guard catches this, but lock the invariant in v1.1).
-- **T-V11-STOP-13:** Pre-seed a row with `status='cancelled'`; reconcile; assert row stays `cancelled`.
-- **T-V11-STOP-14:** Pre-seed with `status='running'`; reconcile; assert row transitions to `error` (existing behavior preserved).
+- **T-V12-WH-10:** Known-vector HMAC test: payload `'{"foo":"bar"}'`, timestamp `1700000000`, secret `"test-secret"` → expected signature locked as a constant in the test (recompute once at test-write time, never change).
+- **T-V12-WH-11:** Verify `X-Cronduit-Timestamp` is present and within 60s of the actual delivery time on every request.
+- **T-V12-WH-12:** Doc-coverage test (or PR checklist item): every receiver example file in `examples/webhook-receiver-*/` references the language's constant-time compare function.
+- **T-V12-WH-13:** Receiver examples reject a request with a tampered body (signature mismatch).
+- **T-V12-WH-14:** Receiver examples reject a request whose `X-Cronduit-Timestamp` is older than 5 minutes (replay window).
 
-**Severity:** MODERATE (covered by existing guard; test lock prevents regression).
+**Severity:** CRITICAL — operator-implemented receiver vulnerabilities are still cronduit's reputation problem.
 
 ---
 
-### 1.6 MODERATE — `classify_failure_reason` bounded-cardinality label break
+### Pitfall 31 — CRITICAL — SSRF: webhook URL = arbitrary internal HTTP request
 
-**Where:** `src/scheduler/run.rs::classify_failure_reason` L298–L313. Metric: `cronduit_run_failures_total{reason}`.
+**Where:** `src/scheduler/webhook/worker.rs` outbound HTTP. The webhook URL comes from operator config (TOML) — but in the v1 unauthenticated UI threat model, "operator config" includes "anyone with LAN access who reads the config endpoint or has tampered with the file" (the Config Tamper threat — `THREAT_MODEL.md` § "Threat Model 3").
 
-**What goes wrong:** v1.0's run.rs L270 logs a `cronduit_run_failures_total` counter only when `status_str != "success"`. Adding `stopped` as a new status will, by default, flow through the `match status` branch at L299 and land in `_ => FailureReason::Unknown`, polluting the `reason="unknown"` bucket with every operator-stop. That corrupts the signal Prometheus alerts currently key off of.
+**What goes wrong:** An operator (or an attacker who's gained config access) sets `webhook_url = "http://192.168.1.1/admin/factory-reset"`, or `"http://169.254.169.254/latest/meta-data/iam/"` (cloud metadata endpoint), or `"http://localhost:6379/FLUSHALL\r\n"` (Redis CRLF injection — already mitigated by HTTP client's URL parser, but check), or `"http://internal-jenkins/job/build-prod/build"`. Cronduit's webhook delivery worker dutifully fires the request from within the homelab/VPC trust zone, hitting internal services that would never accept the connection from outside.
 
-Also relevant: the `metrics` facade + `metrics-exporter-prometheus` setup eagerly describes label values at boot (see v1.0 STACK.md). If a new label value `stopped` on `cronduit_runs_total{status}` is not pre-declared in the describe step, Prometheus scrapers may see intermittent label creation — tolerable in practice but worth double-checking.
+This is classic SSRF. Cronduit becomes a **proxy for arbitrary intra-network HTTP requests**.
 
-**Why:** v1.0 explicitly chose bounded-cardinality enums (v1.0 Phase 6 decision) and any new status must be pre-declared; silently falling into `Unknown` also violates the "every failure is classified" discipline.
+**Why:** v1 ships unauthenticated UI by design. The Config Tamper model (`THREAT_MODEL.md` T-T1) acknowledges that an attacker with shell access can inject jobs. v1.2 webhooks expand the blast radius from "jobs that run shell/docker on the host" to "arbitrary HTTP requests to any address the cronduit network can reach." For homelab single-operator the practical risk is low; for shared-infra and cloud (where 169.254.169.254 is sensitive) it is meaningful.
 
-**Prevention:**
-1. **Do NOT count operator-stopped runs in `cronduit_run_failures_total`.** A stopped run is a user action, not a failure. Exclude `status == "stopped"` from the failure-counter branch at `run.rs` L270.
-2. **Do** add `stopped` to the `cronduit_runs_total{status}` counter — increment with `status="stopped"`. Ensure the exporter's describe step lists `stopped` as a possible value alongside `success/failed/timeout/error/cancelled`.
-3. Optional: add a new metric `cronduit_runs_stopped_total{job}` (no labels beyond `job`) so operators can alert on "too many operator-stops" if they want. Keep it behind a documented decision; not required for v1.1.
+**When it manifests:** Latent — the day an attacker compromises the LAN or the config file, the SSRF surface is theirs.
+
+**Prevention (v1.2 stance — must be explicit, not assumed):**
+
+1. **Default behavior: NO SSRF filter.** Consistent with v1's "loopback default + trusted LAN" posture. Adding a filter implies a security boundary that v1 explicitly declines to enforce.
+2. **`THREAT_MODEL.md` MUST gain a new threat model entry** for "Threat Model 5: Webhook Outbound" enumerating:
+   - Webhook URLs are operator-controlled and unfiltered.
+   - The blast radius widens to "any HTTP-reachable address from the cronduit network namespace" (including cloud metadata, internal admin UIs, intra-homelab services).
+   - Mitigation: same as the rest of v1's web UI — keep cronduit on loopback / trusted LAN, or front with reverse proxy + auth.
+   - Recommendation: operators on cloud should explicitly block 169.254.0.0/16 at the cronduit container's network policy.
+3. **Optional v1.2 hardening** (recommended, low cost): a startup-time **warn on suspicious webhook URLs** without blocking:
+   - URL host is in `127.0.0.0/8`, `169.254.0.0/16`, or `::1` → log `WARN target="cronduit.webhook.suspicious_url"` with the offending job.
+   - URL scheme is `http://` (not `https://`) AND host is not in RFC1918 / loopback → also WARN (see Pitfall 32).
+   - **Do NOT block.** v1 doesn't block; v1 informs.
+4. **Future hardening (v1.3+ candidate, NOT v1.2):** a `webhook.allow_loopback`, `webhook.allow_rfc1918`, `webhook.allowlist_hosts` config knob. Out of scope for v1.2 — adding a half-built filter is worse than no filter.
+5. **`cronduit check` MUST surface the same WARN as the runtime startup** so operators validating config see the suspicious URLs before deployment.
+
+**Phase hint:** Phase 18 (THREAT_MODEL.md update + startup warnings). Pair with Pitfall 32 (HTTPS posture).
 
 **Test cases:**
-- **T-V11-STOP-15:** Stop a running job; scrape `/metrics`; assert `cronduit_runs_total{status="stopped"}` incremented and `cronduit_run_failures_total` unchanged.
-- **T-V11-STOP-16:** Enumerate the describe step and assert `stopped` is in the declared set for `cronduit_runs_total`.
+- **T-V12-WH-15:** Configure a webhook URL pointing at `169.254.169.254`; assert startup logs a WARN with `target="cronduit.webhook.suspicious_url"`.
+- **T-V12-WH-16:** Configure `webhook_url = "http://internal-admin/"`; assert delivery succeeds (no block, only warn) — locks the v1.2 "inform-don't-block" posture against accidental future filters.
+- **T-V12-WH-17:** `cronduit check` against a config with a 127.0.0.1 webhook URL emits the same warning text as runtime startup.
+- **T-V12-WH-18:** `THREAT_MODEL.md` contains a "Threat Model 5: Webhook Outbound" section with the four bullet points above (audit-driven test).
 
-**Severity:** MODERATE.
-
----
-
-### 1.7 MINOR — Permission / authorization surface (documentation, not code)
-
-**Where:** `THREAT_MODEL.md` at repo root.
-
-**What goes wrong:** v1 has no auth. Anyone who can reach `:8080` can now kill any running job. This is **not a regression** — anyone who can reach `:8080` can already click "Run Now" on any job, and Run Now has a larger blast radius than Stop. But the threat model currently enumerates Run Now explicitly; Stop must be added to the same enumeration so an operator reading the threat model doesn't feel blindsided.
-
-**Prevention:** Add a one-paragraph entry to `THREAT_MODEL.md` under the "Untrusted Client" section: *"An attacker with LAN access to the Cronduit UI can stop any running job. This is strictly less dangerous than the existing Run Now capability and does not expand the documented blast radius."*
-
-**Test case:** N/A — documentation only. Phase-plan checklist item.
-
-**Severity:** MINOR.
+**Severity:** CRITICAL — failing to document this as an accepted trade-off at v1.2 ship time is worse than the technical risk itself; the threat model gap is the bug.
 
 ---
 
-## Feature 2 — Log Line Ordering (live→static transition)
-
-### 2.1 CRITICAL — Broadcast-before-insert means SSE id-less events cannot dedupe
-
-**Where:** `src/scheduler/run.rs::log_writer_task` L320–L350. Key lines:
-
-```rust
-for line in &batch {
-    let _ = broadcast_tx.send(line.clone());     // L334-L336: broadcast FIRST
-}
-...
-if let Err(e) = insert_log_batch(&pool, run_id, &tuples).await { ... }   // L341: insert SECOND
-```
-
-And `src/scheduler/log_pipeline.rs::LogLine` L22–L29 has only `{stream, ts, line}` — **no id field**.
-
-**What goes wrong:** ARCHITECTURE.md §3.3 proposes adding `id: Option<i64>` to `LogLine` and using it for SSE-backfill dedupe. But the current write path **broadcasts before insert**. At the moment a line reaches the SSE subscriber, the DB row does not yet exist — so no id is available. The architecture's proposed fix requires inverting this ordering: insert first, then broadcast with the assigned id.
-
-Inverting the order has a second-order effect: if the DB insert is slow, SSE subscribers see a visible lag that doesn't exist today. The current broadcast-before-insert is a deliberate latency optimization for live-tail UX.
-
-**Why:** `insert_log_batch` (`src/db/queries.rs` L365) uses a multi-row `INSERT` bulk statement without `RETURNING`. SQLite's `RETURNING` on bulk inserts returns **one row per inserted row** but requires changing the insert shape. Postgres supports it out of the box.
-
-**Prevention:** Two options, pick one and commit:
-
-**Option A (recommended) — Insert-then-broadcast.**
-1. Change `insert_log_batch` to `INSERT … RETURNING id` on both backends, returning `Vec<i64>` matching the input slice order.
-2. `log_writer_task` inserts the batch, populates `line.id = Some(returned_id)` on each line, THEN broadcasts.
-3. Measure insert latency before/after — if above ~50ms on SQLite for 64-line batches, reduce batch size or keep the broadcast path concurrent but tag every broadcast line with a monotonic-per-run counter that does NOT collide with future DB ids (see Option B).
-
-**Option B — Two-id scheme.**
-1. Add a monotonic `seq: u64` to `LogLine`, assigned by the log writer in receive order. Do NOT pretend it's the DB id.
-2. Broadcast carries `seq`; DB insert also writes `seq` into a new column.
-3. Backfill query returns `(seq, stream, ts, line)`; JS dedupes by `seq`. The `job_logs.id` primary key stays as-is.
-
-**Option A is simpler and matches the architecture doc; Option B avoids the latency hit but requires a schema change.** Recommendation: Option A, measure, fall back to Option B only if latency regression is user-visible.
-
-**Test case:**
-- **T-V11-LOG-01:** Produce a burst of 500 log lines; subscribe to SSE and concurrently paginate the static log viewer; assert every line appears exactly once (no duplicates, no gaps) in the SSE-then-static merge using `id`-based dedupe.
-- **T-V11-LOG-02:** Measure log insert latency on SQLite before/after the Option A change; assert p95 stays under 50ms for a 64-line batch.
-
-**Severity:** CRITICAL — blocks the entire §3.3 architecture plan unless resolved.
-
----
-
-### 2.2 CRITICAL — Live→static swap target collision
-
-**Where:** `templates/pages/run_detail.html` L64–L82 (per ARCHITECTURE.md §2 row), the `#log-lines` div that hosts both the live SSE stream and the static partial.
-
-**What goes wrong:** When the SSE `run_complete` event fires today, the client swaps a static partial into the container. But the live SSE stream may still be mid-flight: the last 1–5 lines written just before `close()` are in the broadcast channel's buffer, not yet consumed, and arrive on the SSE socket **after** the static partial has been swapped in. The HTMX swap replaces `#log-lines` with the DB-backed full log, and the trailing SSE events then append inside the new static container — producing duplicates of the last handful of lines.
-
-**Why:** HTMX OOB (out-of-band) swaps and `hx-swap="innerHTML"` target the DOM by selector. The SSE handler writes to `#log-lines` via its own append logic. The static swap writes to `#log-lines` via HTMX. The two writers have no ordering guarantee because SSE is a separate network stream from the HTMX request that fetched the static partial.
-
-**Prevention:**
-1. **Use id-based dedupe (Feature 2.1 Option A).** After the static swap lands, late-arriving SSE events whose id is `<= max_backfill_id` are dropped client-side. The `static_log_viewer.html` partial must carry `data-max-id="{{ max_id }}"` on the container so the SSE listener can read it.
-2. **Alternatively**, close the SSE stream **before** fetching the static partial: listen for `run_complete`, call `sse.close()`, THEN fire `hx-get` for the static partial. Guarantees ordering but adds a blank-frame visual glitch on slow connections. Prefer id-based dedupe.
-3. **Test with a log-flush timing probe:** spawn a job whose final 10 lines are emitted in the last 100ms before exit; assert no duplicates in the DOM after the run-complete swap.
-
-**Test cases:**
-- **T-V11-LOG-03:** Browser-level test (or hand-rolled Playwright) — job completes, SSE `run_complete` fires, static partial swaps in, assert no line appears twice.
-- **T-V11-LOG-04:** Same test with artificial 200ms SSE delivery lag; assert dedupe still holds.
-
-**Severity:** CRITICAL — the feature title says "log lines rendering out of order"; this is the canonical failure mode.
-
----
-
-### 2.3 MODERATE — `broadcast::Sender` ring-buffer lag races static backfill
-
-**Where:** `src/web/handlers/sse.rs` L48–L54. `tokio::sync::broadcast::error::RecvError::Lagged(n)` is handled today by emitting a `[skipped N lines -- reload page for full log]` marker.
-
-**What goes wrong:** The broadcast channel has capacity 256 (`run.rs` L101). A subscriber that's slow for even 500ms during a log burst (network hiccup, browser hidden tab) gets `Lagged(n)` and loses `n` lines. Today's behavior surfaces a marker string. With the v1.1 static-backfill flow, the correct recovery is **different**: on `Lagged`, the client should stop the SSE stream, re-fetch the static partial (which now contains the missed lines from the DB), and **not** attach a fresh SSE subscription unless the run is still running.
-
-Also: today's marker says *"reload page for full log"* — that's a manual step. v1.1 can do better.
-
-**Prevention:**
-1. Change the SSE handler's `Lagged` branch to emit a distinct `log_lag` event (not the current `log_line` with embedded HTML).
-2. Client HTMX handler for `log_lag` fetches `/partials/runs/{id}/static-log` (the existing static-log partial handler at `run_detail.rs::static_log_partial`) and swaps it in, automatically recovering the missed lines.
-3. Only emit the fallback "reload" marker if the static partial fetch fails.
-
-**Test cases:**
-- **T-V11-LOG-05:** Force a broadcast lag (stall a subscriber); assert the `log_lag` event fires and client auto-recovers via static fetch.
-- **T-V11-LOG-06:** Assert the client never gets stuck in a lag-recovery loop (recovery path must be idempotent and must not re-subscribe to SSE if the run has since completed).
-
-**Severity:** MODERATE — improves an existing signal rather than fixing a crash.
-
----
-
-### 2.4 MINOR — Wall-clock timestamps are untrustworthy for ordering
-
-**Where:** `src/scheduler/log_pipeline.rs::make_log_line` L178–L184 — `ts: chrono::Utc::now().to_rfc3339()`.
-
-**What goes wrong:** Naive implementations use `ts` as the ordering key for merge-dedupe. Two lines captured in the **same millisecond** from a log burst get identical timestamps, so any dedupe-by-`(ts, line)` is broken. SSE reconnection adds to the hazard: a reconnected stream does not restart timestamps.
-
-**Why:** RFC3339 strings are not monotonic and cannot be compared as strict-less-than for ordering.
-
-**Prevention:** All ordering and dedupe must use the `id` (or `seq` per Feature 2.1 Option B). The timestamp stays in the UI as a display value only; it is never the dedupe key. Document this in a code comment on `LogLine`.
-
-**Test case:**
-- **T-V11-LOG-07:** Unit test that produces 100 lines in a tight loop; assert none share a `(ts, line)` pair in the output; assert every `id` is unique.
-
-**Severity:** MINOR.
-
----
-
-## Feature 3 — "Error Getting Logs" Transient
-
-### 3.1 CRITICAL — Handler fires before `runs` row is committed (TOCTOU)
-
-**Where:** `src/web/handlers/run_detail.rs::run_detail` L140–L144 queries `get_run_by_id`; the scheduler path is `src/scheduler/run.rs::run_job` L75–L90 which inserts the row FIRST, then dispatches. Combined with `src/scheduler/mod.rs::SchedulerCmd::RunNow` at L164–L187.
-
-**What goes wrong:** Operator clicks "Run Now" in the dashboard. The API handler sends `SchedulerCmd::RunNow { job_id }` on an mpsc channel and returns immediately with a toast. The dashboard then auto-refreshes (HTMX polling). The new run appears in the list. Operator clicks into it. The run_detail handler queries `get_run_by_id(run_id)` — but the dashboard saw a stale copy from a previous poll, and the actual run_id from the most recent Run Now has not yet been inserted because the scheduler loop hasn't scheduled the task yet. Result: `Ok(None)` → 404.
-
-This is the classic TOCTOU: dashboard sees "run 42", user navigates, database doesn't have "run 42" yet.
-
-**Why:** The scheduler loop is single-threaded. Between `cmd_rx.recv()` at L162 and `join_set.spawn(run_job(…))` at L167, time passes. Inside `run_job`, `insert_running_run` at `run.rs` L76 is the commit point. A fast user clicking in under ~5ms can win the race.
-
-**Prevention:**
-1. **Insert the running row on the API thread** before returning from the `run_now` handler. This guarantees the row exists at the moment the dashboard ever sees the id. Pass the pre-inserted `run_id` in the `SchedulerCmd::RunNow` message (`SchedulerCmd::RunNow { job_id, run_id }`), and adjust `run_job` to accept an optional pre-inserted id instead of always calling `insert_running_run`.
-2. Alternatively, **never expose a run_id to the client until the row is committed.** Make the `run_now` handler synchronous on the DB write — the handler awaits a `oneshot::Sender<i64>` reply from the scheduler loop carrying the `run_id`. The toast then includes the id and the dashboard can safely reference it.
-3. As a defensive backstop, `run_detail` on `Ok(None)` should respond with a **retry-friendly 404** that the client transforms into a "still starting, please wait" HTMX partial with `hx-trigger="load delay:500ms"` instead of an error.
-
-**Recommendation:** Option 1 (insert on the API thread) is the cleanest. The run row is trivial (`{job_id, status='running', trigger, start_time}`) and can be written from the web process without touching the scheduler mpsc path at all.
-
-**Test cases:**
-- **T-V11-LOG-08:** Rapid-click "Run Now" then immediately navigate to the run detail; assert no 404 in 1000 iterations (use `tokio::time::pause` + deterministic ordering).
-- **T-V11-LOG-09:** `run_detail` on a non-existent run_id still returns 404 (the fix must not mask genuine 404s).
-
-**Severity:** CRITICAL — root cause of the reported "error getting logs" bug.
-
----
-
-### 3.2 MODERATE — `job_logs` empty at t=0, handler treats "no logs yet" as error
-
-**Where:** `src/web/handlers/run_detail.rs::fetch_logs` L102–L111 wraps `get_log_lines` in `match`, returning `{items: vec![], total: 0}` on `Err`. At L104 it also **logs an error** via `tracing::error!`. The actual bug: the error log is loud, the empty-list case looks like the error case to a casual reader.
-
-**What goes wrong:** When a brand-new running job has zero log lines yet (very common — script hasn't produced output in the first 200ms), the handler path is fine (returns empty vec). But if `get_log_lines` errors for **any** reason (read-pool exhausted, transient SQLite busy, Postgres network blip), the page shows empty logs and the server tracing shows a loud error. A busy operator interprets this as "the system lost my logs."
-
-Additionally: there's no distinction between "no logs yet because the job just started" and "logs failed to load due to an error." The UI should make this clear.
-
-**Prevention:**
-1. Split the error path from the empty path. On `Err`, propagate a 500 (or a structured partial error) instead of an empty list. An empty list must **only** mean "no logs yet."
-2. In the template, render a contextual message when `logs.is_empty() && is_running`: "Waiting for output…" — distinct from "No logs for this run" which is shown for completed runs with no output.
-3. If the error is transient (e.g., pool exhausted), expose a retry via HTMX rather than a hard failure.
-
-**Test cases:**
-- **T-V11-LOG-10:** Brand-new running run with no log rows yet; assert `logs == []` is returned AND the template renders "Waiting for output…" (not an error).
-- **T-V11-LOG-11:** Force `get_log_lines` to `Err`; assert the handler returns an error partial, not an empty-list success.
-
-**Severity:** MODERATE.
-
----
-
-### 3.3 MODERATE — HTMX `sseError` handler wipes content on transient reconnect
-
-**Where:** v1.0 HTMX integration in `templates/pages/run_detail.html`. The existing `hx-on::sse-error` handler (or equivalent) needs review — if it currently `innerHTML`-replaces `#log-lines` with an error, any transient SSE disconnect silently wipes the loaded static logs.
-
-**What goes wrong:** Browser briefly loses network. HTMX SSE extension fires the error event. If the handler clears `#log-lines` to show "connection error," the operator sees their existing logs disappear — even though they're safe in the DB and the next refresh will show them. Feels like a data-loss bug.
-
-**Prevention:**
-1. The SSE error handler must **append** a "reconnecting…" toast to a sibling `#log-status` banner, NEVER modify `#log-lines`.
-2. On `sse-connect` (reconnect success), remove the toast without touching `#log-lines`.
-3. If the error is permanent (run completed, server said close), fire the static-partial fetch flow (Feature 2.2).
-
-**Test case:**
-- **T-V11-LOG-12:** Simulate an SSE network hiccup while viewing a running job; assert existing log content in `#log-lines` is untouched; assert a transient banner appears and then clears on reconnect.
-
-**Severity:** MODERATE.
-
----
-
-### 3.4 MODERATE — SSE endpoint fails when the run transitioned to finished between handler spawn and subscribe
-
-**Where:** `src/web/handlers/sse.rs::sse_logs` L34–L37:
-
-```rust
-let maybe_rx = {
-    let active = state.active_runs.read().await;
-    active.get(&run_id).map(|tx| tx.subscribe())
-};
-```
-
-Followed by L40–L65 which emits `run_complete` immediately if `maybe_rx` is `None`.
-
-**What goes wrong:** Page loads, renders `is_running=true`, template attaches SSE. Network latency is 100ms. Meanwhile the run completes on the server and `run.rs::run_job` L276 removes the entry from `active_runs`. The SSE handler acquires the read lock, finds nothing, and immediately sends `run_complete`. The client triggers its run_complete handler, which fetches the static partial. **This is actually the correct behavior today** — the page self-heals.
-
-**However:** the v1.1 backfill flow (§3.3) needs to render the existing `logs` inside `#log-lines` on the initial page load. If the run is actually still running at page-render time but completes before the SSE subscribe, the sequence becomes: render static backfill → attach SSE → SSE immediately says `run_complete` → fetch static partial again → duplicate render. Without id-based dedupe (Feature 2.1), the operator briefly sees log lines rendered twice.
-
-**Prevention:**
-1. The static-partial fetch triggered by `run_complete` must be **idempotent on the client side** — replacing `#log-lines` innerHTML is safe because the static partial contains the full log. The flash of duplicate content lasts <1 frame but is visible.
-2. Alternatively: if the SSE handler's first event is `run_complete` with no prior `log_line` events, the client should treat that as "already finished" and trigger the static fetch **without** any intermediate state.
-3. Race test: deterministically ensure the transition doesn't produce a visible duplicate render.
-
-**Test case:**
-- **T-V11-LOG-13:** Start a short-lived job; navigate to its detail page; assert the page settles to the static state without visible duplication of any line.
-
-**Severity:** MODERATE.
-
----
-
-## Feature 4 — Log Backfill on Navigate-Back
-
-### 4.1 CRITICAL — Gap between backfill and SSE subscribe
-
-**Where:** The sequence in the proposed §3.3 flow:
-1. `run_detail` handler queries `get_log_lines` → returns rows `[0..N]`
-2. Handler returns HTML; browser parses; SSE client attaches to `/events/runs/{id}/logs`
-3. SSE stream delivers lines `[M..]` where M is whatever was in the broadcast ring at subscribe time
-
-**What goes wrong:** If steps 1→3 span 50ms and 10 lines are written in that window, they're persisted to DB (visible at step 1's `max_id + 1..max_id + 10`) but NOT in the broadcast buffer at step 3 (already shifted out). The client sees a gap: DB lines `[0..N]`, then SSE lines `[N+11..]`, missing `[N+1..N+10]`.
-
-Alternatively: broadcast channel re-delivers lines `[N-5..]` (they're still in the ring); client sees 5 duplicates at the seam.
-
-**Why:** `tokio::sync::broadcast` has no replay-from-id semantics. A new subscriber gets whatever happens to be in the ring buffer at subscribe time, bounded by capacity (256).
-
-**Prevention:**
-1. **Id-based dedupe and gap detection.** Client records `max_backfill_id` (see Feature 2.1). On every SSE event:
-   - If `event.id <= max_backfill_id` → drop (duplicate).
-   - If `event.id == last_seen_id + 1` → append.
-   - If `event.id > last_seen_id + 1` → **gap detected**; re-fetch `/partials/runs/{id}/static-log?after={last_seen_id}` to fill the hole, then update `last_seen_id`.
-2. The gap-fill partial handler is new — add `fetch_logs_after(run_id, after_id) -> Vec<LogLineView>` to the DB layer.
-3. Log gap-detection events at `debug` level so operators can track how often they happen.
-
-**Test cases:**
-- **T-V11-BACK-01:** Navigate back to a running job in the middle of a 500-line burst; assert exactly 500 lines rendered at the end (no gaps, no duplicates). Run against both SQLite and Postgres.
-- **T-V11-BACK-02:** Force a deliberate gap (subscribe 10ms after backfill, inject 50 DB-only lines in between); assert the client auto-fills via `?after=` refetch.
-
-**Severity:** CRITICAL.
-
----
-
-### 4.2 MODERATE — Duplicate lines on navigate-back (covered by Feature 2.1 + 4.1)
-
-**Where:** Same as 4.1. Covered by id-based dedupe.
-
-**Test case:**
-- **T-V11-BACK-03:** Load run detail twice in quick succession (simulating back-button navigation); assert both loads show identical line counts and identical last-id.
-
-**Severity:** MODERATE (covered by dedupe).
-
----
-
-### 4.3 MINOR — Retention pruner race with backfill
-
-**Where:** `src/scheduler/retention.rs` (daily pruner) + `src/db/queries.rs::get_log_lines`.
-
-**What goes wrong:** Retention pruner runs at 03:00 and deletes old log rows. Operator opens a run-detail page at 03:00:00.500 for a run whose logs are about to be pruned. Backfill query runs at 03:00:00.600 during the prune batch, returns partial results, SSE attaches, and on refresh the static partial now shows 500 lines where the last page showed 1000.
-
-**Why:** v1.0 retention is batched with WAL checkpoint (see v1.0 STACK.md), so an in-progress prune can partially overlap a concurrent read.
-
-**Prevention:**
-1. Retention is a **background maintenance** task, not a user-facing guarantee. Document in code comments that log-line visibility for pruned runs is best-effort.
-2. If a job's start_time is within the retention window, its log rows must not be pruned. Double-check the prune query's WHERE clause.
-3. Test retention pruning concurrent with a read flow; assert the reader either sees old lines or sees pruned-empty — never an inconsistent mid-state (this is inherent to SQLite MVCC read snapshots via the reader pool, but worth an explicit test).
-
-**Test case:**
-- **T-V11-BACK-04:** Concurrently run the retention pruner and `get_log_lines` against the same run (before its retention cutoff); assert the reader always sees a consistent snapshot.
-
-**Severity:** MINOR.
-
----
-
-## Feature 5 — Per-Job Run Numbers Migration
-
-**This is the single highest-risk migration in v1.1.** Deep pitfall coverage follows.
-
-### 5.1 CRITICAL — Migration step ordering (three-step split is mandatory)
-
-**Where:** New migrations in `migrations/{sqlite,postgres}/20260415_00000{0,1,2}_job_run_number*.up.sql`.
-
-**What goes wrong:** Combining "add column + backfill + add NOT NULL constraint" in a single migration creates multiple failure modes:
-
-1. **SQLite `ALTER TABLE ADD COLUMN` with `NOT NULL DEFAULT`** requires a default expression. A literal `DEFAULT 0` is wrong (not a real run number). A subquery default is not supported. You must add as nullable first.
-2. **Postgres DDL inside a transaction** can combine all three, but if the backfill fails mid-statement, the whole migration rolls back, leaving the column absent — which is the least bad outcome but still requires a re-run.
-3. **Resume after crash:** if the process is killed between the backfill UPDATE and the `ALTER TABLE … SET NOT NULL`, the partially-applied schema is inconsistent on Postgres (column exists, some nulls, no constraint) and **SQLx migration tracking will mark the migration as applied** because it's all one file.
-
-**Why:** SQLx applies each migration file atomically based on filename. An in-file crash leaves the tracking table in whatever state it was in at crash time — usually "not applied" if the transaction rolled back, but the failure mode depends on the backend.
-
-**Prevention:** Split into **three separate migration files** per backend:
-
-```
-20260415_000000_job_run_number_add_column.up.sql       -- ALTER TABLE ADD COLUMN job_run_number INTEGER (nullable)
-20260415_000001_job_run_number_backfill.up.sql         -- UPDATE … SET job_run_number = ROW_NUMBER() … WHERE job_run_number IS NULL
-20260415_000002_job_run_number_not_null.up.sql         -- ALTER TABLE … SET NOT NULL (Postgres) / table-rewrite (SQLite)
-```
-
-**Rationale:**
-- SQLx tracks each file separately. A crash in file 1 rolls back cleanly; re-run picks up where it left off.
-- The backfill file is idempotent (`WHERE job_run_number IS NULL`) — rerunning is safe.
-- The NOT NULL file can only succeed if the backfill completed; if not, the migration fails loudly and operators get a clear error instead of a silently corrupt schema.
-
-**Test cases:**
-- **T-V11-RUNNUM-01:** Start with a DB at migration file 0 (column exists, all nulls); run migrate; assert files 1+2 apply in order.
-- **T-V11-RUNNUM-02:** Start with a DB at migration file 1 partially applied (some rows backfilled); run migrate; assert remaining rows get backfilled and file 2 succeeds.
-- **T-V11-RUNNUM-03:** Start with a DB where file 1 was applied but file 2 failed mid-way; re-run migrate; assert the NOT NULL constraint applies cleanly.
-
-**Severity:** CRITICAL.
-
----
-
-### 5.2 CRITICAL — SQLite `ALTER TABLE` restrictions vs Postgres `UPDATE … FROM`
-
-**Where:** The backfill migration SQL.
-
-**What goes wrong:** SQLite 3.33+ supports `UPDATE … FROM` (which is what ARCHITECTURE.md §3.2 recommends), but:
-
-1. **SQLite `ALTER TABLE … SET NOT NULL` does not exist.** The only way to add NOT NULL to an existing column is the 12-step table-rewrite pattern (`CREATE new table → INSERT SELECT → DROP old → RENAME`). This is documented in the SQLite "making other kinds of table schema changes" docs.
-2. **`sqlx-sqlite` 0.8.6 bundles SQLite ~3.46.** 3.33 is the minimum for `UPDATE … FROM`, so the bundled version is fine — but verify in CI via `SELECT sqlite_version()` to lock the assumption.
-3. **Postgres `UPDATE … FROM`** is standard and works cleanly; `ALTER TABLE … ALTER COLUMN … SET NOT NULL` is also standard.
-
-**Why:** SQLite's `ALTER TABLE` is intentionally limited. The table-rewrite pattern is mechanical but easy to get wrong (`PRAGMA foreign_keys` must be disabled during the rewrite; indexes must be recreated on the new table; triggers must be preserved).
-
-**Prevention:**
-1. **SQLite NOT NULL migration must use the table-rewrite pattern verbatim from the SQLite docs:**
-   ```sql
-   PRAGMA foreign_keys=OFF;
-   BEGIN TRANSACTION;
-   CREATE TABLE job_runs_new ( ... job_run_number INTEGER NOT NULL ...);
-   INSERT INTO job_runs_new SELECT id, job_id, status, trigger, start_time, end_time, duration_ms, exit_code, container_id, error_message, job_run_number FROM job_runs;
-   DROP TABLE job_runs;
-   ALTER TABLE job_runs_new RENAME TO job_runs;
-   -- Recreate indexes
-   CREATE INDEX idx_job_runs_job_id_start ON job_runs(job_id, start_time DESC);
-   CREATE INDEX idx_job_runs_start_time ON job_runs(start_time);
-   COMMIT;
-   PRAGMA foreign_keys=ON;
-   ```
-2. **Assert SQLite version in a test** (`SELECT sqlite_version()`) so the `UPDATE … FROM` syntax requirement is locked.
-3. **Recreate every index** listed in the initial migration (`idx_job_runs_job_id_start`, `idx_job_runs_start_time`). Missing an index here silently regresses dashboard query performance.
-4. **Run the migration against a fixture database** with realistic data (≥100k rows) in CI before merging the migration.
-
-**Test cases:**
-- **T-V11-RUNNUM-04:** Unit test that runs the full migration chain against a seeded SQLite DB with 100k `job_runs` rows across 20 distinct `job_id`s; assert post-migration row count unchanged, all indexes present via `PRAGMA index_list`.
-- **T-V11-RUNNUM-05:** Same test against `testcontainers` Postgres.
-- **T-V11-RUNNUM-06:** Regression test that asserts `SELECT sqlite_version()` from the bundled sqlx-sqlite is `>= 3.33.0`.
-
-**Severity:** CRITICAL.
-
----
-
-### 5.3 CRITICAL — Long-running migration vs container healthcheck timeout
-
-**Where:** `src/db/mod.rs::migrate` is called before `scheduler::spawn` — migrations run synchronously at startup. The Docker healthcheck (Feature 10) polls `/health` but the HTTP server isn't up until migrations complete.
-
-**What goes wrong:** On a homelab SQLite DB with 2M `job_runs` rows and slow spinning-rust storage, the backfill migration's `UPDATE … FROM (ROW_NUMBER() …)` could take 30+ seconds. Meanwhile:
-
-1. Docker healthcheck `start-period` defaults to `0s` unless explicitly set, so the container is marked `(unhealthy)` the moment the first check fires.
-2. `docker compose up -d` with `depends_on: { cronduit: { condition: service_healthy } }` deadlocks other services.
-3. SQLite's `UPDATE … FROM` with `ROW_NUMBER()` is effectively `O(N log N)` because the window function sorts. On 2M rows this is meaningful.
-
-**Why:** v1.0 never had a long-running startup migration; the initial migration was empty-table-only. v1.1 introduces the first migration that can take non-trivial wall time proportional to existing data.
-
-**Prevention:**
-1. **Dockerfile `HEALTHCHECK` must set `start-period` generously** — e.g., `--start-period=60s` (or higher) to accommodate realistic backfill times. Document the exact number in the compose example with a comment explaining why.
-2. **Chunk the backfill** if the table size exceeds a threshold. Instead of one giant UPDATE, loop in 10k-row batches with a `WHERE job_run_number IS NULL LIMIT 10000` clause. Preserves progress across crashes, reduces WAL pressure on SQLite, and keeps the write lock short on Postgres.
-3. **Log progress at INFO level** during the backfill (`backfilled 10000/2000000 rows`). Operators watching `docker logs` see activity and don't assume the process is hung.
-4. **Add a `cronduit_migration_progress` gauge** (bounded-cardinality, label `migration_name`) for Prometheus observability during upgrade windows.
-
-**Test cases:**
-- **T-V11-RUNNUM-07:** Seed a DB with 500k rows; run migration; assert it completes under 30s on CI hardware.
-- **T-V11-RUNNUM-08:** Kill the process after 1s during backfill; restart; assert migration resumes cleanly without losing rows.
-- **T-V11-RUNNUM-09:** Assert INFO log lines appear at regular intervals during a long backfill.
-
-**Severity:** CRITICAL — a failed upgrade for an existing operator is the worst possible rc.1 signal.
-
----
-
-### 5.4 MODERATE — Scheduler-startup race (pre-resolved, must be test-locked)
-
-**Where:** `src/cli/run.rs` startup ordering: `DbPool::connect → pool.migrate() → reconcile_orphans → sync_config_to_db → scheduler::spawn`.
-
-**What goes wrong:** ARCHITECTURE.md §5.2 confirms migrations run strictly before the scheduler spawns, so **no race exists**. But this is a structural invariant that could be easily broken by a future refactor — someone moving the migrate call inside `scheduler::spawn` would silently reintroduce the race.
-
-**Prevention:**
-1. Lock the invariant in a test that asserts `pool.migrate()` is called before `scheduler::spawn` in the startup path. Use a spy/mock if necessary.
-2. Code comment in `src/cli/run.rs`: `// INVARIANT: pool.migrate() must complete before scheduler::spawn — the job_run_number backfill migration (v1.1) depends on this ordering.`
-3. Document in `src/db/mod.rs::migrate` that callers must not spawn scheduler tasks concurrently.
-
-**Test cases:**
-- **T-V11-RUNNUM-10:** Integration test that asserts the migration observed zero concurrent writes during backfill (count rows at start of backfill and end, ensure delta is zero).
-
-**Severity:** MODERATE.
-
----
-
-### 5.5 MODERATE — Option B (dedicated counter on `jobs`) requires its own migration
-
-**Where:** ARCHITECTURE.md §3.2 recommends Option B: a new column `jobs.next_run_number BIGINT NOT NULL DEFAULT 1`, with insert becoming `UPDATE … RETURNING next_run_number - 1`.
-
-**What goes wrong:** The counter column needs its own migration **and must be initialized correctly for existing jobs**. `DEFAULT 1` means a job with existing runs would get the next id = 1, colliding with backfilled run numbers. The migration must:
-
-1. Add the column with `DEFAULT 1`.
-2. Backfill: `UPDATE jobs SET next_run_number = (SELECT COALESCE(MAX(job_run_number), 0) + 1 FROM job_runs WHERE job_runs.job_id = jobs.id)`.
-3. Order relative to the `job_runs.job_run_number` migrations is critical: the `jobs.next_run_number` backfill must run **AFTER** `job_runs.job_run_number` is backfilled.
-
-**Prevention:**
-1. Order migration files so the `jobs.next_run_number` backfill is strictly after `job_runs.job_run_number` backfill. Use the filename timestamp to enforce.
-2. Use a correlated subquery in the backfill as shown above.
-3. Test that a fresh install (empty `job_runs`) results in `next_run_number = 1` for new jobs.
-
-**Test case:**
-- **T-V11-RUNNUM-11:** Insert 5 runs for a job, run full migration chain, assert `jobs.next_run_number = 6` for that job.
-- **T-V11-RUNNUM-12:** Insert new run post-migration; assert `job_run_number = 6`; assert `jobs.next_run_number` was incremented to 7.
-
-**Severity:** MODERATE.
-
----
-
-### 5.6 MODERATE — URL stability: do NOT rekey `/jobs/{job_id}/runs/{run_id}` by `job_run_number`
-
-**Where:** Routes in `src/web/mod.rs`, the `run_detail` handler, and the SSE handler.
-
-**What goes wrong:** Tempting to expose nicer URLs like `/jobs/foo/runs/42` where `42` is the per-job number. But this collides with:
-
-1. **Orphan reconciliation:** containers are labelled `cronduit.run_id=<global_id>`; the label is the global id, not the per-job number. The reconciler cannot look up a container by `(job_id, job_run_number)`.
-2. **The SSE handler:** `active_runs` is keyed by global `run_id` (see `src/scheduler/mod.rs` L56). Changing the URL key to per-job number adds a lookup layer and a new 404 surface.
-3. **Historical URLs:** bookmarks from v1.0 use the global id path. Rekeying silently breaks them.
-
-**Prevention:**
-1. URLs stay on the global id: `/jobs/{job_id}/runs/{run_id}` where `run_id` is the global `job_runs.id`. **Non-negotiable.**
-2. The per-job number is a **display** value only, shown in breadcrumbs and titles as `Run #{{ run.job_run_number }}` while the URL and internal identifiers use the global id.
-3. Code-review checklist item: no handler may accept a `job_run_number` path parameter in v1.1.
-
-**Test case:**
-- **T-V11-RUNNUM-13:** Assert every route matching `/runs/{id}` uses the global id via a macro or router introspection test.
-
-**Severity:** MODERATE.
-
----
-
-## Feature 6 — Run Timeline (Gantt)
-
-### 6.1 CRITICAL — N+1 query on the timeline handler
-
-**Where:** Proposed `src/db/queries.rs::get_timeline_runs` (new). ARCHITECTURE.md §3.4 recommends a single query with `WHERE end_time >= $since OR status = 'running'`.
-
-**What goes wrong:** A naive implementation iterates over `get_enabled_jobs()` and queries runs for each job: `for job in jobs { get_job_runs(job.id, since, until) }`. For 50 jobs and a 7-day window this is 50 round-trips to SQLite, each requiring a read-pool acquire. Total latency: 50 × (5ms acquire + 10ms query) = ~750ms page load.
-
-Also: the dashboard query (`get_dashboard_jobs` L474–L597 of `queries.rs`) is already a complex LEFT JOIN — reusing that shape verbatim for the timeline compounds the cost.
-
-**Prevention:**
-1. **Single SELECT** shape:
-   ```sql
-   SELECT jr.id, jr.job_id, j.name AS job_name, jr.status, jr.start_time, jr.end_time
-   FROM job_runs jr
-   JOIN jobs j ON j.id = jr.job_id
-   WHERE (jr.end_time >= ?1 OR jr.status = 'running')
-     AND j.enabled = 1
-   ORDER BY j.name, jr.start_time
-   LIMIT 10000;
-   ```
-2. **Limit the result set** with a hard cap (`LIMIT 10000`). A 7-day window for 50 jobs running every minute is ~500k runs — rendering the full set in HTML would OOM the page. Document the cap in the UI ("Showing first 10000 runs in this window").
-3. **Index usage:** the query must hit `idx_job_runs_start_time` (already exists per the initial migration at `migrations/sqlite/20260410_000000_initial.up.sql` L46). Verify via `EXPLAIN QUERY PLAN` in a test.
-
-**Test cases:**
-- **T-V11-TIME-01:** Seed 10 jobs × 1000 runs each; query the timeline for the full window; assert single query executed (use sqlx query counter middleware), under 100ms on CI.
-- **T-V11-TIME-02:** `EXPLAIN QUERY PLAN` on the timeline query contains `USING INDEX idx_job_runs_start_time`.
-
-**Severity:** CRITICAL.
-
----
-
-### 6.2 MODERATE — Rendering long-running "now" bars
-
-**Where:** Template `templates/pages/timeline.html` (new).
-
-**What goes wrong:** A run that started 8 hours ago and is still running has `end_time IS NULL`. The template must render its bar as extending to "now." Options:
-
-1. **Server-side substitution**: handler computes `end_time_or_now` via `COALESCE(end_time, strftime('now'))`. Works but the rendered HTML is stale the moment the page is loaded — the bar doesn't extend as time passes.
-2. **Client-side animation**: render a CSS `width: calc(... * (now - start))` with a JS ticker. Works but adds custom JS, violating the "no JS framework" rule. A tiny 10-line vanilla JS ticker is acceptable.
-3. **Polling the partial**: re-fetch the timeline partial every 5s while the window contains running runs (ARCHITECTURE.md §3.4 already proposes this).
-
-**Prevention:**
-1. Adopt option 3 (polling) as the primary mechanism. The 5s cadence is visually sufficient for "now" bars and reuses the existing HTMX polling pattern.
-2. Server computes `end_time_or_now` in Rust from `chrono::Utc::now()`, NOT from SQLite `strftime('now')` — this ensures timezone consistency with the rest of the UI (see 6.3).
-
-**Test case:**
-- **T-V11-TIME-03:** Render the timeline with a running run; assert `end_time_or_now` in the output equals `start_time + (now - start_time)` within a 1s tolerance.
-
-**Severity:** MODERATE.
-
----
-
-### 6.3 MODERATE — Timezone rendering consistency
-
-**Where:** Timeline handler + template.
-
-**What goes wrong:** Three candidate timezones:
-1. **Server UTC** — consistent with `job_runs.start_time` storage format (RFC3339 TEXT, usually UTC).
-2. **Operator timezone from config** — cronduit has a `tz` config field used by croner for schedule evaluation (`src/scheduler/mod.rs` L50). This is the "natural" operator timezone.
-3. **Browser local** — rendered client-side via JS.
-
-Mixing these is visible: "my job fired at 3am UTC" vs "my job fired at 10pm PDT" for the same run. The dashboard already renders in operator tz via Rust-side formatting; the timeline must match.
-
-**Prevention:**
-1. Use **the operator timezone from `self.tz`** throughout the timeline (matching the dashboard). Compute bar positions server-side in that tz.
-2. Label the X axis with the tz abbreviation (`"PDT"`) so operators know what they're looking at.
-3. Do NOT mix wall-clock labels from one tz with duration offsets computed in another.
-
-**Test case:**
-- **T-V11-TIME-04:** Set operator tz to `America/Los_Angeles`; seed a run at UTC 2026-04-14T10:00:00Z; assert the timeline label shows `03:00` (PDT) not `10:00`.
-
-**Severity:** MODERATE.
-
----
-
-### 6.4 MODERATE — Color-only status coding fails accessibility audit
-
-**Where:** Timeline bar rendering in the template.
-
-**What goes wrong:** Using only the `cd-status-*` CSS color tokens (success=green, failed=red, timeout=orange) to distinguish bars is colorblind-hostile. Roughly 8% of men and 0.5% of women have red-green colorblindness; green/red bars are indistinguishable.
-
-**Prevention:**
-1. Encode status with **pattern + color**: diagonal stripes for `failed`, solid for `success`, checkerboard for `timeout`, pulsing outline for `running`, cross-hatch for `stopped`. Implement via inline SVG `<pattern>` elements or CSS `background-image: repeating-linear-gradient(...)`.
-2. Add ARIA labels to each bar: `aria-label="Backup job run #42: failed, lasted 3m 12s"`.
-3. Design system reference: check `design/DESIGN_SYSTEM.md` for any existing pattern tokens before inventing new ones.
-
-**Test case:**
-- **T-V11-TIME-05:** Visual regression test that asserts distinct patterns for each status value (not just color). Screenshot-diff against a reference image.
-- **T-V11-TIME-06:** Automated accessibility audit (axe-core or pa11y) run against the timeline page in CI.
-
-**Severity:** MODERATE.
-
----
-
-## Feature 7 — Sparkline + Success Rate
-
-### 7.1 CRITICAL — Sample-size honesty
-
-**Where:** Proposed `get_dashboard_job_sparks` in `queries.rs` and `dashboard.rs::to_view`.
-
-**What goes wrong:** A job with exactly 1 run ever, which failed, renders "success rate: 0%". A job with 1 successful run renders "100%". Neither number is meaningful. Operators see "50% success rate" on a 2-run job and over-interpret.
-
-**Prevention:**
-1. **Minimum sample threshold**: N < 5 renders "—" or "n/a" for the success rate.
-2. The threshold is a **constant** in code (`const MIN_SAMPLES_FOR_RATE: usize = 5;`) with a doc comment explaining the rationale.
-3. Sparkline can still render with <5 samples (it's an individual-run view, not a rate), but pad the visual so 1 cell doesn't span the full sparkline width.
-4. Tooltip on the badge shows the raw count: `"12 successes / 15 runs over last 20"` so operators can reason about signal strength.
-
-**Test cases:**
-- **T-V11-SPARK-01:** Job with 0 runs → sparkline renders empty, badge shows `"—"`.
-- **T-V11-SPARK-02:** Job with 3 runs → badge shows `"—"` (below threshold).
-- **T-V11-SPARK-03:** Job with 5 successful runs → badge shows `"100%"`.
-- **T-V11-SPARK-04:** Job with 20 runs (15 success, 5 failed) → badge shows `"75%"`.
-
-**Severity:** CRITICAL.
-
----
-
-### 7.2 MODERATE — Rolling window boundary effects
-
-**Where:** Same handler.
-
-**What goes wrong:** A job that always fails at the top of the hour and succeeds otherwise will show 0% right after the hourly failure, then slowly climb to 95%, then drop to 0% again. The user sees oscillating numbers that look scary but aren't signal.
-
-**Prevention:**
-1. Rolling window of **last N runs** (e.g., N=20) not "last N hours." Makes the signal independent of the job's cadence.
-2. Document the window size visibly in the UI (hover tooltip: "Last 20 runs").
-3. Consider an EWMA (exponentially weighted moving average) if N-based looks choppy; but start with the simpler window and see if operators complain.
-
-**Test case:**
-- **T-V11-SPARK-05:** Job with 20 runs in a pattern `success*19 + failed*1`; assert sparkline shows 19 green + 1 red; assert rate = 95%.
-
-**Severity:** MODERATE.
-
----
-
-### 7.3 MINOR — SVG pixel snapping at small sizes
-
-**Where:** Template sparkline rendering.
-
-**What goes wrong:** An inline SVG sparkline rendered at 16px height with `<rect>` elements positioned by floating-point `x` values gets anti-aliased blur at non-integer pixel positions. Looks fuzzy at low DPI.
-
-**Prevention:**
-1. Use integer pixel positions (round x/width to the nearest pixel).
-2. Or render the sparkline as a row of fixed-width `<span>` elements with CSS classes, not inline SVG. ARCHITECTURE.md §3.5 already recommends this approach.
-3. Test the rendered output at 1x and 2x DPI.
-
-**Test case:**
-- **T-V11-SPARK-06:** Rendered sparkline HTML contains only integer coordinates (or fixed-width spans, no SVG).
-
-**Severity:** MINOR.
-
----
-
-## Feature 8 — Duration Trend p50/p95
-
-### 8.1 CRITICAL — Percentile computation parity between SQLite and Postgres
-
-**Where:** ARCHITECTURE.md §3.6 recommends computing in Rust for parity. Proposed `src/web/stats.rs::percentile`.
-
-**What goes wrong:** A "compute in Rust" implementation is trivial but easy to get subtly wrong:
-
-1. **Index rounding**: `samples[len * 0.95]` vs `samples[ceil(len * 0.95)]` vs `samples[floor(len * 0.95)]` — different choices produce different values for small N. Document the chosen rounding and match NumPy's `percentile` convention (`method='linear'`) for familiarity.
-2. **Empty input**: `samples.is_empty()` → panic on index. Must return `None` / `"—"`.
-3. **Single-element input**: both p50 and p95 collapse to the same value. Correct but the UI needs to communicate it.
-4. **Unsorted input**: computing on an unsorted slice is wrong. The helper must sort (or assert sorted).
-
-**Prevention:**
-1. Write the `percentile(samples: &mut [i64], q: f64) -> Option<i64>` helper in a new `src/web/stats.rs` module with exhaustive unit tests covering empty/one/two/odd/even/boundary cases.
-2. Document the rounding convention: "linear interpolation between adjacent samples, matching NumPy's default".
-3. Make the helper take `&mut [i64]` (it sorts in place) to force callers to commit to the allocation.
-4. NEVER use SQL-side percentile (even on Postgres) — the structural-parity constraint mandates Rust-side computation.
-
-**Test cases:**
-- **T-V11-DUR-01:** `percentile(&mut [], 0.5)` returns `None`.
-- **T-V11-DUR-02:** `percentile(&mut [100], 0.5)` returns `Some(100)`.
-- **T-V11-DUR-03:** `percentile(&mut [1,2,3,4,5,6,7,8,9,10], 0.5)` returns `Some(5)` or `Some(6)` depending on convention — lock the chosen value.
-- **T-V11-DUR-04:** `percentile(&mut [1,2,3,...,100], 0.95)` returns a documented, stable value.
-
-**Severity:** CRITICAL.
-
----
-
-### 8.2 MODERATE — Minimum sample size for percentile meaningfulness
-
-**Where:** `job_detail.rs` handler.
-
-**What goes wrong:** p95 on 3 runs is meaningless (effectively the max). Operators see a scary spike after one slow run.
-
-**Prevention:**
-1. Same minimum-sample threshold as Feature 7.1 (`N >= 20`). Below that, render `"—"` with a tooltip `"Need at least 20 runs for percentile analysis"`.
-2. Consider a distinct threshold for p95 vs p50: p50 can be meaningful at N=10, p95 needs N=20+.
-
-**Test case:**
-- **T-V11-DUR-05:** Job with 10 runs → p50 shown, p95 shown as `"—"` with tooltip.
-
-**Severity:** MODERATE.
-
----
-
-### 8.3 MODERATE — Outlier contamination of p95
+### Pitfall 32 — CRITICAL — HTTP-vs-HTTPS posture (forced HTTPS? loopback exception?)
 
 **Where:** Same.
 
-**What goes wrong:** A backup job normally runs in 5 seconds but had one bad day at 30 minutes. That single run dominates the p95 for the visible window. The chart is dominated by one outlier.
+**What goes wrong:** Operator sets `webhook_url = "http://my-receiver.example.com/hook"`. The HMAC-signed body is now sent in cleartext over the LAN/internet. A passive observer (Wi-Fi sniffer, ISP, intermediate router) sees the entire payload — which includes job names, run IDs, exit codes, and (depending on payload schema) potentially the failure error message verbatim. Even with HMAC signing, the body is **not confidential**, only authenticated.
 
-**Prevention:**
-1. **Do not trim outliers.** The p95 is designed to expose them — that's the signal. Trimming hides the problem the metric exists to find.
-2. **Use a logarithmic Y axis** for the duration trend chart so both 5s and 1800s are visible.
-3. Add a separate "max in window" display so the outlier is called out explicitly.
+Conversely: operator's receiver runs on `http://localhost:8080/hook` or `http://192.168.1.5:8080/hook` (homelab common case). Forcing HTTPS would block the most common homelab pattern.
 
-**Test case:**
-- **T-V11-DUR-06:** Chart rendering with outlier present doesn't crash the SVG viewbox computation.
+**Why:** Same tension as Pitfall 31. Cronduit's posture is "trust the LAN, document the trade-off." Forcing HTTPS by default would break legitimate homelab use; allowing HTTP everywhere silently weakens the security story.
 
-**Severity:** MODERATE.
+**When it manifests:** Configuration time (operator picks a URL). Latent unless monitored.
 
----
+**Prevention (v1.2 stance — lock at requirements):**
 
-## Feature 9 — Bulk Enable/Disable
+1. **Allow HTTP and HTTPS at the URL level.** No scheme enforcement. Consistent with the SSRF stance.
+2. **Startup warn (the same WARN as Pitfall 31):**
+   - URL scheme is `http://` AND host is **not** loopback (`127.0.0.0/8`, `::1`) AND **not** RFC1918 (`10/8`, `172.16/12`, `192.168/16`) → `WARN target="cronduit.webhook.suspicious_url"` with reason `"http_to_public_address"`.
+   - URL scheme is `http://` AND host **is** loopback or RFC1918 → silent (this is the homelab default, no warn).
+   - URL scheme is `https://` → silent.
+3. **Document the policy in the webhook README section.** Three-line decision table:
+   - `https://anywhere` → quiet, recommended.
+   - `http://localhost`, `http://192.168.x.x`, `http://10.x.x.x` → quiet, common homelab.
+   - `http://public.example.com` → WARN at startup (still works).
+4. **TLS implementation: rustls-only.** v1.0's "no openssl-sys in `cargo tree -i`" invariant must be preserved. The `hyper-util` client in cronduit health (Phase 12) already uses rustls; reuse the same client builder for the webhook worker. Lock with the existing CI guard.
 
-### 9.1 CRITICAL — Config reload unsets `enabled_override` by accident
-
-**Where:** `src/scheduler/sync.rs::sync_config_to_db` L102–L216, `src/db/queries.rs::upsert_job` L57–L123 (hardcodes `enabled = 1` on conflict), `disable_missing_jobs` L129–L169.
-
-**What goes wrong:** Feature 9's whole point is that `enabled_override` is **orthogonal** to config reload (ARCHITECTURE.md §3.7 Option B). But `upsert_job` currently runs `ON CONFLICT DO UPDATE … SET enabled = 1, …` on every config reload. If the new `enabled_override` column is added to the same UPDATE by accident, the override gets reset on every reload and bulk-disable is useless.
-
-**Prevention:**
-1. **Absolute rule:** `upsert_job` must NOT touch `enabled_override` in its SET clause. The override is only written by the new `set_enabled_override_bulk` API handler.
-2. **Lock this with a code-search test**: grep the codebase for `enabled_override` and assert it only appears in specific allowed places (migration, bulk-toggle handler, query filters).
-3. `disable_missing_jobs` must **clear** the override when disabling (per ARCHITECTURE.md §3.7 step 1 "one-line addition") so a later re-add doesn't leave a stale override. But for jobs that remain in the config, the override must be preserved across reloads.
+**Phase hint:** Phase 18 (with Pitfall 31).
 
 **Test cases:**
-- **T-V11-BULK-01:** Set `enabled_override = 0` on a job; trigger `SchedulerCmd::Reload`; assert override is still `0` after reload.
-- **T-V11-BULK-02:** Delete a job from the config file; reload; assert the job's `enabled_override` is cleared (NULL) in addition to `enabled = 0`.
-- **T-V11-BULK-03:** Re-add the deleted job to the config; reload; assert it's `enabled = 1, enabled_override = NULL` (clean slate).
-- **T-V11-BULK-04:** Grep-based test: `enabled_override` appears only in the specific allowed modules/files.
+- **T-V12-WH-19:** `https://example.com/hook` → no warn.
+- **T-V12-WH-20:** `http://192.168.1.5/hook` → no warn (RFC1918 silent).
+- **T-V12-WH-21:** `http://example.com/hook` → WARN with `reason="http_to_public_address"`.
+- **T-V12-WH-22:** `cargo tree -i openssl-sys` empty after webhook worker addition (regression lock against pulling reqwest with default-features-on).
 
-**Severity:** CRITICAL.
-
----
-
-### 9.2 CRITICAL — Heap + `enabled_override` filter must both live in the reload path
-
-**Where:** `src/scheduler/reload.rs::do_reload` and `src/db/queries.rs::get_enabled_jobs`.
-
-**What goes wrong:** `do_reload` rebuilds the in-memory heap from `get_enabled_jobs()`. If `get_enabled_jobs` doesn't include the `enabled_override` filter, a bulk-disabled job keeps firing from the heap until the process restarts — because the scheduler loop's view of the jobs is the heap, not the DB.
-
-**Why:** v1.0's `get_enabled_jobs` filters on `WHERE enabled = 1` only. ARCHITECTURE.md §3.7 proposes changing it to `WHERE enabled = 1 AND (enabled_override IS NULL OR enabled_override = 1)`.
-
-**Prevention:**
-1. Change `get_enabled_jobs` filter in the same PR that adds the column.
-2. `bulk_toggle` API handler MUST fire `SchedulerCmd::Reload` after updating the DB. Without this, the heap is stale.
-3. Integration test: bulk-disable a job that's about to fire; assert it does NOT fire within 10s.
-
-**Test cases:**
-- **T-V11-BULK-05:** Seed a job with schedule `* * * * *`; bulk-disable via the API; `tokio::time::advance` 2 minutes; assert zero new runs for that job.
-- **T-V11-BULK-06:** Bulk-enable a disabled job; assert reload fires; assert next scheduled fire produces a run.
-
-**Severity:** CRITICAL.
+**Severity:** CRITICAL (posture clarity required at ship; technical implementation is small).
 
 ---
 
-### 9.3 MODERATE — Bulk-disable does NOT stop already-running runs
+### Pitfall 33 — CRITICAL — Webhook payload schema must declare a version field on day 1
 
-**Where:** ARCHITECTURE.md §5.4 documents this.
+**Where:** New `src/scheduler/webhook/payload.rs`. The JSON shape is the public contract operator-built receivers will depend on for years.
 
-**What goes wrong:** Operator bulk-disables 5 jobs for maintenance; 2 of them are currently running. The operator expects "all these jobs stop now." Reality: bulk disable only affects **future** fires; the 2 running jobs complete naturally. If the operator wanted them stopped, they should use the Stop button from Feature 1.
+**What goes wrong:** Cronduit ships v1.2 with payload:
 
-**Prevention:**
-1. UI toast after bulk-disable: `"3 jobs disabled; 2 currently-running jobs will complete normally. Use the Stop button to terminate them immediately."`
-2. Surface the running-vs-disabled count in the toast so it's unambiguous.
-3. Do NOT extend bulk-disable to also issue Stop — separation of concerns. Stop is per-run, bulk-disable is per-job future-fires.
-
-**Test case:**
-- **T-V11-BULK-07:** Start a long-running job; bulk-disable it; assert the run completes with its natural status; assert the next scheduled fire does NOT happen.
-
-**Severity:** MODERATE.
-
----
-
-### 9.4 MODERATE — Operator forgets jobs are disabled, discovers 3 months later
-
-**Where:** UI discoverability.
-
-**What goes wrong:** Operator disables 5 jobs for maintenance, forgets, 3 months later realizes their backups haven't run. The v1 UI surface must make the "currently disabled for non-config reason" set highly visible.
-
-**Prevention:**
-1. Settings page shows an explicit list: `"3 jobs forced-disabled: backup-postgres, backup-redis, backup-mongo"` with a prominent "Re-enable all" button.
-2. Dashboard card for a bulk-disabled job shows a distinct badge: `"DISABLED (override)"` not just `"DISABLED"` — operators need to tell the two disabled-states apart.
-3. Optional: `/metrics` exposes `cronduit_jobs_override_disabled{job}` gauge so Prometheus alerts can fire on "backup job disabled for >24h". Nice-to-have.
-
-**Test cases:**
-- **T-V11-BULK-08:** Settings page rendering contains the overridden-jobs list when any job has `enabled_override = 0`.
-- **T-V11-BULK-09:** Dashboard card badge distinguishes "config-disabled" from "override-disabled".
-
-**Severity:** MODERATE.
-
----
-
-### 9.5 MODERATE — Bulk-disable race with config reload mid-selection
-
-**Where:** The new `bulk_toggle` API handler and the config file-watcher.
-
-**What goes wrong:** Operator selects 5 jobs in the UI at T=0. Between T=0 and T=+3s (user clicks "Disable"), the file-watcher detects a config edit and triggers `SchedulerCmd::Reload`. The reload runs `disable_missing_jobs`, which for Feature 9 also clears `enabled_override` for any job removed from the config. If one of the 5 selected jobs was simultaneously removed from the config file, the bulk-disable runs AFTER the reload, the override fires on a job whose row is already `enabled=0`, and the override is set on a disappeared-from-config job — confusing state.
-
-**Prevention:**
-1. `bulk_toggle` operates by `job_id`. If a `job_id` in the request no longer exists (or is already in the "missing from config" state), skip it and include that in the response for the operator: `"Updated 4 of 5 jobs; job 'foo' was removed from the config."`
-2. Document the resolution in the API response so the UI can show it in the toast.
-3. Integration test that exercises this exact race deterministically.
-
-**Test case:**
-- **T-V11-BULK-10:** Start a bulk toggle for 3 jobs; concurrently fire a config reload that removes one of them; assert the toggle affects the remaining 2 and reports the skipped one.
-
-**Severity:** MODERATE.
-
----
-
-## Feature 10 — Docker Healthcheck (NEW)
-
-### 10.1 CRITICAL — Root-cause verification: Dockerfile has NO `HEALTHCHECK` today
-
-**Where:** `/Users/Robert/Code/public/cronduit/Dockerfile` (verified — no `HEALTHCHECK` directive). `examples/docker-compose.yml` and `examples/docker-compose.secure.yml` (verified — no `healthcheck:` stanza).
-
-**What goes wrong:** The reported `(unhealthy)` symptom **cannot** come from the shipped examples alone — the shipped images + compose files define no healthcheck at all. The operator's failing deployment is using an **operator-authored** healthcheck stanza (almost certainly `wget --spider` against `/health`). This changes the fix-path calculus:
-
-1. **The shipped artifacts do not have the bug today.** They have no healthcheck at all, so the container reports `Up N hours` without a health suffix.
-2. **The operator's problem is in their own compose file.** Fixing the shipped artifacts doesn't fix their deployment — they must update their compose file to use whatever v1.1 ships.
-3. **Any v1.1 fix that adds a default HEALTHCHECK to the Dockerfile is a behavior change**: containers that used to report `Up N hours` will now report `Up N hours (healthy)` or `(unhealthy)`. Some operators may have tooling that keys off the current "no status suffix" shape.
-
-**Why:** The original hypothesis in the scope question was "busybox wget chunked-encoding bug in the shipped compose". Grep confirms there is no wget healthcheck in the shipped compose. The bug is in operator-authored overrides that v1 never documented as a supported pattern.
-
-**Prevention:**
-1. **Reproduce the exact failing stanza from the operator's compose file before writing any code.** Ask the operator (or recover from the report if it has their compose) — do NOT guess the wget pattern.
-2. **Ship a `cronduit health` subcommand** (per ARCHITECTURE.md §3.8) so the canonical fix is *"use `test: ['CMD', '/cronduit', 'health']` instead of whatever you had"*. This works regardless of the root cause of the wget bug.
-3. **Add a default `HEALTHCHECK` to the Dockerfile** using `cronduit health` — conservative intervals documented below. This makes the default shipped image healthy without operator action.
-4. **Leave compose examples `healthcheck`-free OR add a documented example that uses `cronduit health`.** Either works; both reinforce the canonical pattern.
-5. **Verify the reported root cause** by running the operator's exact wget invocation against cronduit's `/health` in a reproducer; the chunked-encoding theory is plausible but unconfirmed.
-
-**Test cases:**
-- **T-V11-HEALTH-01:** Build the default Docker image; `docker run` it; `docker inspect` shows `Health.Status == healthy` within 30s.
-- **T-V11-HEALTH-02:** Reproduce the reported busybox `wget --spider https://localhost:8080/health` against the shipped image; capture the exact exit code and stderr for the record (either confirms chunked-encoding theory or surfaces a different root cause).
-
-**Severity:** CRITICAL (scope clarification — the fix still ships but the rationale changes).
-
----
-
-### 10.2 CRITICAL — `cronduit health` subcommand must NOT share state with the running server
-
-**Where:** New `src/cli/health.rs` module.
-
-**What goes wrong:** A naive implementation imports `AppState`, reads the pool, and queries the DB directly. This is wrong for three reasons:
-
-1. **Two connections to the same SQLite file from two processes is allowed, but the healthcheck running `SELECT 1` while the main server is mid-write can trip `SQLITE_BUSY` and return false-negative unhealthy.**
-2. **The whole point of a healthcheck is to verify the running server is serving requests** — that's an HTTP-level check, not a DB check. A sub-process that queries the DB directly doesn't prove the server is alive.
-3. **Sharing state pulls in every dependency** (bollard, sqlx, etc.) so the healthcheck binary is as big as the main binary. Fine since it IS the main binary (`/cronduit health`), but reinforces that it should make an HTTP call, not a DB call.
-
-**Prevention:**
-1. **Implementation:** `cronduit health` spawns a minimal HTTP client (`ureq` or hand-rolled `hyper::Client`), makes `GET http://$bind/health`, parses the JSON body, exits 0 if `status == "ok"`, exits 1 otherwise. That's it. ~60 LOC.
-2. **Do NOT use reqwest** — it pulls a huge dep tree. Use `ureq` (pure Rust, rustls-compatible, tiny) or a hand-rolled `hyper::Client` (already a transitive dep via axum).
-3. **Config discovery**: the subcommand needs to know the bind address. Options:
-   - `--config /etc/cronduit/config.toml` (same as `run` subcommand) and re-parse TOML → picks up operator customizations.
-   - `--bind http://127.0.0.1:8080` explicit flag → simpler, no TOML dependency.
-   - Default to `127.0.0.1:8080` if neither is provided → matches the documented v1 default.
-4. **Verify `cargo tree -i openssl-sys` stays empty** after adding the HTTP client dep (v1.0 security gate must hold).
-
-**Test cases:**
-- **T-V11-HEALTH-03:** Run `cronduit health` against a running server; assert exit 0.
-- **T-V11-HEALTH-04:** Run `cronduit health` when no server is running; assert exit 1 within 5 seconds (no indefinite retry).
-- **T-V11-HEALTH-05:** Run against a server whose `/health` returns `{"status": "degraded"}`; assert exit 1 (partial failure is failure for Docker healthcheck purposes).
-- **T-V11-HEALTH-06:** `cargo tree -i openssl-sys` empty post-addition.
-
-**Severity:** CRITICAL.
-
----
-
-### 10.3 CRITICAL — `cronduit health` must fail fast, not retry indefinitely
-
-**Where:** New `src/cli/health.rs`.
-
-**What goes wrong:** A naive HTTP client with default timeouts might hang for 30+ seconds waiting for a response. Docker's healthcheck has its own `timeout=5s` policy; if `cronduit health` takes 30s to fail, Docker marks the check as "unhealthy" simultaneously from the outer timeout AND from the inner subprocess failure. The Docker daemon logs look weird.
-
-**Prevention:**
-1. **Hard connect timeout**: 2 seconds.
-2. **Hard read timeout**: 2 seconds.
-3. **No retries inside `cronduit health`**: one attempt only. Docker's `retries=3` is the retry policy.
-4. **Exit fast** (<3 seconds total) whether success or failure.
-
-**Test cases:**
-- **T-V11-HEALTH-07:** Run `cronduit health` against an unreachable address (`--bind http://127.0.0.1:9`); assert exit 1 within 3 seconds.
-- **T-V11-HEALTH-08:** Run against a hanging server (returns data extremely slowly); assert exit 1 within 3 seconds.
-
-**Severity:** CRITICAL.
-
----
-
-### 10.4 MODERATE — Dockerfile HEALTHCHECK interval vs start_period
-
-**Where:** New `HEALTHCHECK` directive in `Dockerfile`.
-
-**What goes wrong:** Aggressive healthcheck settings produce false negatives during startup (migration) or on slow hardware. Conservative settings produce slow unhealthy-detection.
-
-**Prevention:** Conservative defaults derived from realistic cronduit startup times:
-
-```dockerfile
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD ["/cronduit", "health"]
+```json
+{ "job": "backup", "status": "failed", "exit_code": 1, "duration_ms": 5234 }
 ```
 
-Rationale:
-- `--interval=30s`: cronduit is a long-running scheduler, 30s health resolution is plenty.
-- `--timeout=5s`: 2.5× the internal 2s connect+read timeout, gives slack for Docker's process-spawn overhead.
-- `--start-period=60s`: covers the v1.1 migration backfill on mid-size DBs (§5.3). Document that operators with very large DBs (>1M runs) may need to override this.
-- `--retries=3`: matches Docker defaults; with interval=30s this is a 90s window before unhealthy.
+Operator builds a Slack receiver against it. v1.3 wants to add `image_digest` and `streak_position`. Receiver continues to work (tolerant JSON parsing — additive). v1.4 wants to rename `status` to `terminal_status` to disambiguate from the running-status concept. Now every operator receiver breaks. v1.4 maintainer hesitates to make the change because "we never declared a version"; the schema ossifies; breaking changes pile up; eventually a v2.0 must ship with `payload_v2` URL-keyed AND `payload_v1` for back-compat. **All of this is preventable by shipping a `payload_version` field on day one.**
+
+**Why:** Public webhooks are an API. Every long-lived API regrets not versioning from day 1. (Stripe, GitHub, Slack — all have learned this lesson.)
+
+**When it manifests:** v1.3 or v1.4, when the first additive-but-renaming change is proposed.
+
+**Prevention:**
+
+1. **Lock the v1.2 payload as v1:**
+   ```json
+   {
+     "payload_version": "v1",
+     "cronduit_version": "1.2.0",
+     "delivered_at": "2026-04-25T12:34:56Z",
+     "job": {
+       "name": "backup-postgres",
+       "tags": ["backup", "weekly"]
+     },
+     "run": {
+       "id": 42,
+       "job_run_number": 3,
+       "trigger": "scheduled",
+       "start_time": "2026-04-25T12:34:00Z",
+       "end_time": "2026-04-25T12:34:56Z",
+       "duration_ms": 5234,
+       "status": "failed",
+       "exit_code": 1,
+       "error_message": "container exited with status 1",
+       "image_digest": "sha256:abc123...",
+       "streak_position": "first_failure"
+     },
+     "context": {
+       "consecutive_failures": 1,
+       "last_success_run_id": 41,
+       "last_success_at": "2026-04-25T11:34:56Z"
+     }
+   }
+   ```
+2. **Future schema rules (document at ship time):**
+   - **Additive changes** keep `payload_version: "v1"`. Operators tolerate unknown fields (standard JSON parsing).
+   - **Breaking changes** (rename, type change, semantic shift) bump to `"v2"` and the v1 shape is preserved on a parallel code path for at least one full milestone.
+   - The `payload_version` field is a **string** ("v1", "v2"), not a number — easier to grep, less error-prone in semver-style comparisons.
+3. **Document the contract in the README** under a `## Webhooks` section with the full v1 schema as a code block. The `payload_version` field is bullet point 1.
+4. **Anti-feature: NO Jinja-style payload templating.** Operators may want `payload_template = "${run.status} for ${job.name}"`. Refuse: every templating engine is a footgun (XSS, injection, surprise type coercion), and "let the receiver shape its own messages from the canonical payload" is the right separation of concerns. Document this as out-of-scope in the v1.2 requirements doc and link from the webhook README.
+
+**Phase hint:** Phase 16 (payload schema). Lock the schema before any receiver implementation in tests.
 
 **Test cases:**
-- **T-V11-HEALTH-09:** Build shipped image, run `docker compose up`, assert container reaches `healthy` within 90s.
-- **T-V11-HEALTH-10:** Build image with a synthetic 120s migration delay; assert operators get a clear error message (or the start_period is sufficient — pick and document).
+- **T-V12-WH-23:** Snapshot test of the v1 payload shape: load a fixture run, render the payload, assert byte-for-byte equality with a checked-in `tests/fixtures/webhook_payload_v1.json`. Future schema additions update the fixture in the same PR; future schema breaks fail the test loudly.
+- **T-V12-WH-24:** `payload_version` field is present and equal to `"v1"` on every webhook delivery.
+- **T-V12-WH-25:** Anti-feature test (or doc audit): grep `examples/cronduit.toml` for "payload_template" → must not appear.
+
+**Severity:** CRITICAL — preventable now, expensive forever after.
+
+---
+
+### Pitfall 34 — CRITICAL — Retry storm without jitter
+
+**Where:** Webhook delivery worker retry policy (3 attempts, exponential backoff per the v1.2 milestone scope).
+
+**What goes wrong:** Naive exponential backoff: attempts at +1s, +5s, +25s. 50 jobs all fire at the top of the minute, all webhooks fail (receiver overloaded). Without jitter, all 50 retries fire simultaneously at +1s — *making the receiver-side overload worse*. At +5s, all 50 fire again. Thundering herd against the operator's webhook receiver, which would have recovered if the load had been spread.
+
+**Why:** This is the canonical "thundering herd against a struggling backend" pattern. Every retry library that doesn't include jitter by default is a footgun.
+
+**When it manifests:** Any sustained outage of the operator's webhook receiver. Operator reports "my Slack receiver crashed and now cronduit is the reason it can't recover."
+
+**Prevention:**
+
+1. **Jitter from day 1, not as a post-incident patch.**
+2. **Algorithm: full jitter** (the AWS architecture-blog recommendation):
+   - Attempt N back-off = `random(0, base * 2^N)` where base = 1 second, N ∈ {0, 1, 2}.
+   - Bounded total wait < 4s + 8s + 16s = 28s worst case across 3 retries.
+3. **Use `rand 0.9`** (already in the dep tree from v1.1's bump). `rand::thread_rng().gen_range(0..max)`.
+4. **Document the policy in the README**: "Cronduit retries failed webhooks 3 times with full-jitter exponential backoff (max 28s total). After 3 failed attempts, the webhook is dropped — cronduit does NOT queue webhooks across restart."
+5. **`cronduit_webhook_attempts_total{outcome}`** counter (`outcome ∈ {success, retry, exhausted}`) so operators can dashboard their retry rate.
+
+**Phase hint:** Phase 15 (in the same PR as the worker).
+
+**Test cases:**
+- **T-V12-WH-26:** Stress-test 100 simultaneous failures against a counting mock receiver; assert delivery times are spread across the backoff windows (not clustered at exact second boundaries).
+- **T-V12-WH-27:** Single-failure test: assert 3 attempts then exhaustion; assert `cronduit_webhook_attempts_total{outcome="exhausted"}` increments by 1.
+- **T-V12-WH-28:** Recovery test: receiver returns 500 once then 200 on retry; assert delivery succeeds in 2 attempts.
+
+**Severity:** CRITICAL.
+
+---
+
+### Pitfall 35 — MODERATE — Webhook delivery success ≠ end-to-end notification success
+
+**Where:** Documentation. The webhook delivery returns 200 OK; cronduit logs success; operator never sees the alert because the receiver dropped the message internally (Slack rate limit, PagerDuty deduplication, receiver-side bug).
+
+**What goes wrong:** Operator runs incident post-mortem: "why didn't I get paged?" Cronduit logs say `webhook_delivered: true, status_code: 200`. Operator assumes cronduit failed. Cronduit didn't fail — the receiver swallowed the alert.
+
+**Why:** Cronduit's contract terminates at the HTTP response code. End-to-end delivery (the human getting paged) is the receiver's responsibility. Without explicit documentation, operators conflate the two.
+
+**When it manifests:** First incident where the operator expected a webhook page that didn't materialize.
+
+**Prevention:**
+
+1. **README `## Webhooks` § "What cronduit guarantees" — explicit promise:**
+   - **Promised:** the HTTP request was made; the response code was N; the body was the payload above; the headers included `X-Cronduit-Signature` and `X-Cronduit-Timestamp`.
+   - **NOT promised:** the operator's receiver delivered the alert; the operator saw it; rate limits / dedup / receiver bugs are out of scope.
+2. **Guidance in the troubleshooting section:** "If you didn't get paged, check (a) cronduit's `cronduit_webhook_attempts_total{outcome}` metric — did the delivery succeed at the HTTP layer? (b) your receiver's logs — did it process the message? (c) your downstream paging system."
+3. **Threat model addition (with Pitfall 31):** add to "Threat Model 5: Webhook Outbound" — "cronduit's delivery contract is HTTP-level; end-to-end delivery is the receiver's responsibility."
+
+**Phase hint:** Phase 19 (webhook docs + threat model finalization).
+
+**Test cases:** N/A — documentation. Phase plan checklist item.
 
 **Severity:** MODERATE.
 
 ---
 
-### 10.5 MODERATE — Backward compat: operator-authored healthcheck overrides must still work
+### Pitfall 36 — MODERATE — Webhook drop on shutdown is silent unless surfaced
 
-**Where:** Operator compose files with their own `healthcheck:` stanza.
+**Where:** Same delivery worker.
 
-**What goes wrong:** Docker compose YAML semantics: a `healthcheck:` stanza in the service definition **replaces** the Dockerfile's `HEALTHCHECK` entirely. So operators who already have their own healthcheck (even a broken one) will NOT pick up the new default. Their deployment continues to be broken until they update their compose file.
+**What goes wrong:** Operator runs `docker compose down`; cronduit drains for `webhook_drain_timeout` (10s); 3 webhooks are still queued; they're dropped. The operator never sees them. Worse: the operator might ASSUME cronduit either delivered them or persisted them to retry on next boot. **Cronduit does neither** — and that needs to be obvious.
 
-**Conversely:** operators who have NO healthcheck in their compose will pick up the new default automatically (via Dockerfile) — that's the win.
+**Why:** Webhook deliveries are not persisted to the DB (deliberate — adds a write path that competes with the log pipeline + retention pruner). v1.2 ships best-effort delivery only.
+
+**When it manifests:** Restart / upgrade / crash during a webhook burst.
 
 **Prevention:**
-1. **Release notes MUST call out the new default explicitly** and show the recommended compose stanza for operators who want to override: `test: ["CMD", "/cronduit", "health"]`.
-2. **Troubleshooting section in README**: "If your container reports unhealthy with busybox wget, update your compose healthcheck to use `cronduit health`."
-3. **Do NOT silently break existing overrides** — the Dockerfile directive is additive. Operators who override continue to override.
 
-**Test case:**
-- **T-V11-HEALTH-11:** Start the shipped image with an operator compose override that uses wget (broken pattern); assert container starts but health is controlled by the broken check; assert release notes call this out as an operator action item.
+1. **`cronduit_webhook_dropped_total{reason="shutdown_drain"}`** is logged at INFO at shutdown with the count: `"webhook drain: delivered N, dropped M to shutdown_drain"`.
+2. **README section "Webhook delivery is best-effort":** "Cronduit does not persist webhook deliveries to disk. Webhooks queued at shutdown / crash are lost. If you need at-least-once webhook delivery, your receiver should be the source of truth (poll cronduit's `/api/runs` instead of relying on the push)."
+3. **Future v1.3 candidate:** persist webhook queue to disk. Out of scope for v1.2 — explicitly note in the requirements doc.
+
+**Phase hint:** Phase 19.
+
+**Test cases:**
+- **T-V12-WH-29:** Send SIGTERM with N=5 queued webhooks against a mock receiver that takes 100s; assert log line `"webhook drain: delivered X, dropped Y to shutdown_drain"` with X+Y=5.
 
 **Severity:** MODERATE.
 
 ---
 
-### 10.6 MINOR — Response Content-Length fix is a band-aid, not a fix
+### Pitfall 37 — MODERATE — Per-job HMAC secret rotation requires reload
 
-**Where:** `src/web/handlers/health.rs` L12–L28 — returns `(StatusCode, Json(...))`.
+**Where:** Same.
 
-**What goes wrong:** One proposed fix (ARCHITECTURE.md §3.8 option 3) is to hand-build a Response with an explicit `Content-Length` header so chunked encoding is avoided. This is a **local fix for a specific client bug** and does not generalize — a different tool (netcat, curl with weird flags) could hit a different parse issue. The `cronduit health` subcommand is a superior fix because it owns the client side.
+**What goes wrong:** Operator rotates the env var that backs `webhook_hmac_secret = "${WEBHOOK_SECRET}"`. The new secret is in the env; the running cronduit process holds the old `SecretString` from its last config-load. Until SIGHUP / file-watch / `POST /api/reload` fires, cronduit signs with the old secret. The receiver (which now expects the new secret) rejects the signatures. Webhooks silently fail until the operator reloads.
+
+**Why:** v1.0's `${ENV_VAR}` interpolation happens at config-load time, not per-request. Same pattern as DB credentials, image registry secrets, etc. Operators may not realize webhook secrets follow the same rule.
+
+**When it manifests:** Secret rotation procedure.
 
 **Prevention:**
-1. Do **not** muck with the `/health` handler's response shape. Leave it as the idiomatic axum `(StatusCode, Json(...))`.
-2. The canonical health check is `cronduit health`; all other patterns are operator responsibility.
-3. Document in `health.rs` that changing the response shape is not the fix path.
 
-**Test case:**
-- **T-V11-HEALTH-12:** `/health` endpoint response is unchanged from v1.0 (regression lock).
+1. **Document in the README "Secret rotation" section:**
+   - "Secrets are interpolated at config-load time. After updating an env var, run `kill -HUP $(pidof cronduit)` or `POST /api/reload` to pick up the new value."
+   - "Cronduit signs with one secret at a time. During rotation, your receiver SHOULD accept both old and new signatures for a brief window (see receiver examples)."
+2. **`cronduit health`** does NOT verify webhook secrets (out of scope for healthcheck — consistent with v1.1's "health = HTTP availability" stance).
+3. **Optional v1.3 candidate:** per-secret cache invalidation on env-var change. Out of scope for v1.2.
+
+**Phase hint:** Phase 19.
+
+**Test cases:**
+- **T-V12-WH-30:** Change the env var backing a webhook secret; fire a webhook; assert it's signed with the OLD secret (regression lock for the documented behavior). Then reload; fire another; assert it's signed with the NEW secret.
+
+**Severity:** MODERATE.
+
+---
+
+### Pitfall 38 — MINOR — Webhook URL gets logged at ERROR on transport failure (secret leak risk)
+
+**Where:** `tracing::error!` calls inside the webhook worker.
+
+**What goes wrong:** Naive logging: `tracing::error!(url = %webhook.url, "webhook delivery failed: {e}")`. If the operator embedded a credential in the URL (`https://user:pass@receiver/hook` — bad practice but possible), the credential lands in cronduit's logs. v1.0's `strip_db_credentials` (T-I1) handled this for DB URLs; webhook URLs need the same treatment.
+
+**Why:** URL-embedded credentials are a footgun; cronduit must defend against operator self-pwn.
+
+**When it manifests:** Any error path that logs the webhook URL. Long-running deployment risk.
+
+**Prevention:**
+
+1. **`strip_url_credentials(url: &str) -> String`** helper in `src/util/url.rs` (or extend the existing `strip_db_credentials` in `src/db/mod.rs` with a generic version). Strips `userinfo` from the URL before logging.
+2. **Lock with a code-search test:** every `tracing::error!` / `tracing::warn!` mention of a webhook URL must go through `strip_url_credentials`. Same shape as the v1.0 `strip_db_credentials` lock.
+3. **`SecretString` for webhook URLs?** Probably overkill — the URL itself isn't secret, only the userinfo portion. Strip rather than wrap.
+
+**Phase hint:** Phase 17 (alongside HMAC signing — both are "secret-handling" PRs).
+
+**Test cases:**
+- **T-V12-WH-31:** Log capture test: configure `webhook_url = "https://user:pass@example.com/hook"`; trigger a delivery error; assert the captured log does NOT contain `pass`.
+
+**Severity:** MINOR (footgun defense, not a known live bug).
+
+---
+
+## Feature 2 — Custom Docker Labels (SEED-001)
+
+The design is mostly locked at seed time (merge semantics, reserved namespace, type-gating). Pitfalls below are about ENFORCEMENT — making sure the locked design actually executes correctly under all the operator-misuse paths.
+
+### Pitfall 39 — CRITICAL — `cronduit.*` reserved-namespace validator must run at config-load, not runtime
+
+**Where:** New validator in `src/config/validate.rs` (parallels `check_cmd_only_on_docker_jobs` at `validate.rs:89`); call site in `validate_jobs` per-job loop (`validate.rs:22`); seed point at `src/scheduler/docker.rs` L146–L149 where `cronduit.run_id` and `cronduit.job_name` are inserted.
+
+**What goes wrong:** Operator config:
+```toml
+[[jobs]]
+name = "evil"
+type = "docker"
+labels = { "cronduit.run_id" = "999999" }
+```
+
+If the validator runs only at runtime (when the executor builds the Bollard `Config::labels` HashMap), the label collision is detected per-fire — too late, and the executor either (a) lets the operator value win and **breaks orphan reconciliation** (`src/scheduler/docker_orphan.rs:48` reads `cronduit.run_id` to map back to the DB row; an operator-supplied collision makes reconciliation update the wrong row OR fail to update any row), or (b) cronduit's value wins and the operator silently loses their label without an error (the SEED-001-locked behavior is "fail validation," not "silently override").
+
+**Why it's CRITICAL not just MODERATE:** orphan reconciliation is the safety net that prevents `job_runs` rows from being stuck in `status='running'` forever after a crash. The `mark_run_orphaned WHERE status='running'` guard (v1.1 Research Correction #4, locked by `tests/docker_orphan_guard.rs`) protects against the *opposite* race; an operator-injected `cronduit.run_id="999999"` could mark the wrong row as orphaned during reconciliation, which DOES match `WHERE status='running'` if row 999999 happens to be a real running run. That's a data-integrity bug.
+
+**When it manifests:** Config-load — IF the validator is in the right place. Otherwise: at first fire of the misconfigured job, with downstream reconciliation corruption.
+
+**Prevention:**
+
+1. **Validator runs in `validate_jobs` BEFORE any executor sees the job.** Same call site as `check_cmd_only_on_docker_jobs`. Job upsert into the DB happens AFTER `validate_jobs` returns OK.
+2. **Validation is case-insensitive on the prefix check, AND trims whitespace.** Operators could write `Cronduit.run_id`, `cronduit.run_id `, `cronduit.run_id\t`. The Docker labels API itself is case-sensitive on label keys, but the *intent* of "cronduit.* is reserved" must be defended against accidental case variation. Concretely:
+   ```rust
+   let key_lower = key.trim().to_lowercase();
+   if key_lower.starts_with("cronduit.") {
+       return Err(...);
+   }
+   ```
+   Note: this rejects `Cronduit.foo` as well; that's deliberate. If an operator legitimately needs `Cronduit.foo` (some other tool's namespace that happens to capitalize), they can use `cronduit_foo.bar` or any other prefix.
+3. **Trailing-whitespace edge case:** TOML deserialization of `labels = { "cronduit.foo " = "x" }` — verify whether `serde-toml` strips trailing whitespace on map keys (it should NOT, as TOML keys are explicit). Test it directly. Update validator to handle.
+4. **Reserved key list MUST be the source of truth** — store as a `const RESERVED_LABEL_PREFIXES: &[&str] = &["cronduit."]` in a single module so both the validator and the runtime label-builder reference it. Future additions (`cronduit-internal.*`?) update one place.
+5. **Validator runs from `cronduit check`** so operators catch the error before deployment.
+
+**Phase hint:** Phase 20 (Custom Docker labels — the SEED-001 implementation).
+
+**Test cases:**
+- **T-V12-LBL-01:** `labels = { "cronduit.run_id" = "x" }` on a docker job → `cronduit check` exits non-zero with a GCC-style error pointing at the offending key.
+- **T-V12-LBL-02:** `labels = { "Cronduit.foo" = "x" }` (capitalized) → same rejection.
+- **T-V12-LBL-03:** `labels = { "cronduit.foo " = "x" }` (trailing space) → same rejection.
+- **T-V12-LBL-04:** `labels = { "my.cronduit.foo" = "x" }` (cronduit. is NOT a prefix here) → ACCEPTED. Validator must check `starts_with`, not `contains`.
+- **T-V12-LBL-05:** Runtime regression: even if validator drift introduces a bypass, the runtime `Config::labels` builder MUST still refuse to insert operator labels with the reserved prefix (defense in depth — a `tracing::error!` + skip the label, do NOT panic).
+
+**Severity:** CRITICAL.
+
+---
+
+### Pitfall 40 — CRITICAL — Type-gate validator must reject `labels` on command/script jobs
+
+**Where:** Same validator module. Parallels v1.0.1's `check_cmd_only_on_docker_jobs` validator (the patch shipped after v1.0.0 to prevent `cmd = ["..."]` on a non-docker job from silently being ignored — same pattern, same risk class).
+
+**What goes wrong:**
+```toml
+[[jobs]]
+name = "backup"
+type = "script"
+script = "..."
+labels = { "team" = "platform" }
+```
+Operator expects... what, exactly? There's no container; the labels have nowhere to go. If cronduit silently ignores the labels, the operator believes their `team=platform` cost-allocation tag is in place — but `docker ps --filter label=team=platform` returns nothing. **Silent semantic drop.** v1.0.1 hit the exact same shape with `cmd` on non-docker jobs and shipped a validator; v1.2 must do the same for `labels`.
+
+**Why:** Same root cause as v1.0.1's `cmd` pitfall — TOML schema permissiveness lets fields land anywhere; the type-gate validator is the only guard.
+
+**When it manifests:** Config load — IF the validator exists. Otherwise: silent forever.
+
+**Prevention:**
+
+1. **Validator in `validate_jobs` enforces:** `labels` is non-empty → `type` must be `"docker"`. Other types: `labels` must be unset OR empty map.
+2. **Error message format matches v1.0.1's `cmd` validator** exactly (operators have already learned the shape). E.g., `error: 'labels' is only valid for jobs with type = "docker", but job 'backup' has type = "script"`.
+3. **Validator runs BEFORE upsert.** Same enforcement timing as Pitfall 39.
+
+**Phase hint:** Phase 20.
+
+**Test cases:**
+- **T-V12-LBL-06:** `type = "command"` + non-empty `labels` → reject at config-load.
+- **T-V12-LBL-07:** `type = "script"` + non-empty `labels` → reject.
+- **T-V12-LBL-08:** `type = "docker"` + non-empty `labels` → accept.
+- **T-V12-LBL-09:** `type = "command"` + empty `labels = {}` → accept (trivial).
+
+**Severity:** CRITICAL (data-integrity / silent-misconfig — exactly the class of bug v1.0.1 already shipped a fix for; v1.2 must not regress the principle).
+
+---
+
+### Pitfall 41 — MODERATE — Label value size limits + total label-set size
+
+**Where:** Same validator + runtime safety net.
+
+**What goes wrong:** Operator does `labels = { "annotations" = "<100KB JSON blob>" }`. Docker has practical (not strict in spec) limits on label values; in practice:
+- Docker daemon accepts up to ~256KB total per container's `inspect` payload, including labels.
+- Some downstream tooling (Watchtower, some Traefik versions) chokes on individual label values >4KB.
+- The operator's intent is almost certainly an error, not a deliberate giant value.
+
+If cronduit accepts arbitrarily large values:
+1. Bollard's `Config::labels` HashMap insertion proceeds.
+2. `create_container` may fail with a poorly-mapped error from the daemon — or succeed but produce a container the operator's other tooling can't read.
+3. The cronduit DB stores the resolved config (`config_json`) including the giant blob — bloating the `jobs` table.
+4. The error surfaces at first fire, far from the operator's edit.
+
+**Why:** Docker label limits are not standardized but practical; cronduit should defend at config-load with a conservative cap.
+
+**When it manifests:** Config edit by an operator pasting in a large block. Or by an operator using `${ENV_VAR}` interpolation on a large env var.
+
+**Prevention:**
+
+1. **Per-label cap at config-load:** value size ≤ 4096 bytes (UTF-8 byte length, not chars). Reject above with a clear error pointing at the offending key.
+2. **Total label-set cap per job:** sum of all (key + value) lengths ≤ 32 KB. Reject above.
+3. **Runtime defense-in-depth:** if a value somehow slipped past validation (e.g., env-var interpolation after validator? Check.), the runtime label-builder logs `WARN target="cronduit.labels.oversized"` and SKIPS the label; container creation proceeds with the rest.
+4. **Bollard error mapping:** capture the daemon's error response on `create_container` failures involving labels and surface as `RunStatus::Error` with a clear message — don't let it become a generic "create container failed."
+
+**Phase hint:** Phase 20.
+
+**Test cases:**
+- **T-V12-LBL-10:** `labels = { "x" = "<4097-byte string>" }` → reject at config-load.
+- **T-V12-LBL-11:** 10 labels each 4 KB → 40 KB total → reject (above 32 KB total cap).
+- **T-V12-LBL-12:** Config with `${BIG_ENV}` where `BIG_ENV=<5KB>` at runtime → if interpolation happens before validation, rejected; if after, runtime WARN + skip. Document which.
+
+**Severity:** MODERATE.
+
+---
+
+### Pitfall 42 — MODERATE — `[defaults] + per-job` merge: insertion order must be deterministic and tested
+
+**Where:** `src/config/defaults.rs::apply_defaults` (line 112 per SEED-001) — extended for the labels case, parallel to existing override fields.
+
+**What goes wrong:** Bollard's `Config::labels` is `Option<HashMap<String, String>>`. HashMap iteration order in Rust is randomized per-run (hash DoS protection). If anything in cronduit's path or in downstream tooling depends on insertion order:
+- Test snapshots of `Config::labels` JSON serialization will be flaky.
+- Some daemon-side tools that hash-stamp labels may produce different stamps run-to-run.
+
+In practice: Docker labels are unordered semantically. The risk is in **tests** (snapshot tests of the JSON sent to bollard) and in **cronduit's own logging** (label dumps in error messages that operators grep).
+
+**Why:** HashMap iteration randomization is correct behavior, but tests and logs both implicitly assume order.
+
+**When it manifests:** CI flake on snapshot tests; operator reports "the order keeps changing in the logs."
+
+**Prevention:**
+
+1. **Use `BTreeMap<String, String>` for the merged label set** (keys sorted alphabetically, deterministic order). Bollard's `Config::labels` is `HashMap<String, String>` so the final `into()` conversion is unavoidable, but the merge step itself uses `BTreeMap` for determinism.
+2. **Snapshot tests sort keys before comparison:** any test that checks the resolved labels for a job sorts the keys explicitly before assert.
+3. **Log output sorts labels:** `tracing::info!` lines that include label dumps use a sorted iterator.
+4. **Override priority lock:** the merge is `defaults ∪ per-job`, with per-job winning on key collision. Document and lock with tests parallel to `apply_defaults_use_defaults_false_disables_merge` (`defaults.rs:316`).
+5. **`use_defaults = false`** REPLACES the entire defaults map (per SEED-001 lock) — test the replace semantics with an explicit check that defaults labels are absent in the resolved config.
+
+**Phase hint:** Phase 20.
+
+**Test cases:**
+- **T-V12-LBL-13:** `defaults.labels = { "team" = "ops", "env" = "prod" }`, `[[jobs]] labels = { "team" = "platform" }`, `use_defaults = true` → resolved labels = `{ "team" = "platform", "env" = "prod" }`.
+- **T-V12-LBL-14:** Same setup with `use_defaults = false` → resolved labels = `{ "team" = "platform" }` only.
+- **T-V12-LBL-15:** Snapshot test of resolved labels for a job with 5 labels asserts sorted-key-order JSON output (deterministic).
+
+**Severity:** MODERATE.
+
+---
+
+### Pitfall 43 — MINOR — Label keys with TOML-special characters (dots, dashes, slashes)
+
+**Where:** TOML parser + label-key validation.
+
+**What goes wrong:** `labels = { "com.centurylinklabs.watchtower.enable" = "false" }` — TOML allows quoted keys with dots, but if the operator forgets quotes (`com.centurylinklabs.watchtower.enable = "false"`), TOML parses it as a NESTED TABLE, not a single key. The error message can be cryptic.
+
+**Why:** TOML's bare-key vs quoted-key rules are subtle.
+
+**When it manifests:** Operator edits config to add a Traefik/Watchtower label and forgets quotes.
+
+**Prevention:**
+
+1. **Examples in `examples/cronduit.toml`** show quoted keys: `"com.centurylinklabs.watchtower.enable" = "false"`. Operators copy-paste from examples.
+2. **README `## Configuration` § "Custom Docker labels"** explicitly notes: "Label keys with dots must be quoted. The TOML parser otherwise treats them as nested tables."
+3. **`cronduit check` error message** for a config that accidentally produced a nested table where labels were expected — surface a hint: `"hint: label keys with dots must be quoted"` if a `labels.com` table is detected anywhere.
+
+**Phase hint:** Phase 20 (with examples).
+
+**Test cases:**
+- **T-V12-LBL-16:** Config with quoted dot-key → parsed correctly.
+- **T-V12-LBL-17:** Config with unquoted dot-key under `labels` → `cronduit check` emits the hint message.
 
 **Severity:** MINOR.
+
+---
+
+## Feature 3 — Failure Context (image-digest + config-hash + streak)
+
+**Largest schema-impact feature in v1.2** because it adds a per-run column (`image_digest`) that doesn't exist today, AND it surfaces a config-hash semantic gap: `jobs.config_hash` is per-JOB only, not per-run, so "config changed between two successful runs" is invisible without a schema change.
+
+### Pitfall 44 — CRITICAL — `config_hash` is recorded per-JOB, not per-RUN — hot-reload is invisible
+
+**Where:** `migrations/sqlite/20260410_000000_initial.up.sql` L23 — `jobs.config_hash`. There is NO `job_runs.config_hash` column. Verified via grep — `config_hash` appears only in `jobs` schema and in `src/config/hash.rs` (compute), never on `job_runs`.
+
+**What goes wrong:** The v1.2 failure-context feature wants to render: "config changed since last successful run." Naive implementation queries `jobs.config_hash` and compares to... what? The previous run's config_hash isn't recorded. Two failure modes:
+
+1. **Hot reload between two successful runs is invisible.** Job runs at 12:00 with hash A → success. Operator hot-reloads with a new value → hash B. Job runs at 13:00 with hash B → success. UI shows "no config change since last success" (wrong — config DID change between the two runs).
+2. **Reload mid-failure-streak collapses the streak signal.** Job fails at 12:00 (hash A). Operator changes the config to fix it (hash B). Job runs at 12:01 with hash B → success. UI shows "1 failure, recovered" but doesn't tell the operator that the recovery was due to a config change, not a flake. Important diagnostic context is lost.
+
+**Why:** `jobs.config_hash` was introduced in v1.0 for the upsert-on-change path (`sync_config_to_db` uses it to detect "did this job's config change between reloads"). It was never wired into `job_runs` because no v1.0/v1.1 feature needed per-run config provenance. v1.2 is the first feature that does.
+
+**When it manifests:** Any deployment with config reloads. The longer the deployment, the more reloads, the more invisible config-change events.
+
+**Prevention:**
+
+1. **New column: `job_runs.config_hash TEXT NULL`** (nullable for backfill compatibility). Three-file migration per backend, parallel to v1.1's `job_run_number` migration:
+   - `20260501_000001_job_runs_config_hash_add.up.sql` — ADD COLUMN nullable.
+   - `20260502_000002_job_runs_config_hash_backfill.up.sql` — `UPDATE job_runs SET config_hash = (SELECT j.config_hash FROM jobs j WHERE j.id = job_runs.job_id)` — best-effort backfill from the *current* job's hash. Document that backfilled values represent "the config_hash at backfill time," not "at run time" — backfilled rows should be visually distinguished in the UI ("config history not available before upgrade").
+   - **Skip the NOT NULL step.** Old runs may legitimately lack `config_hash` (if backfill was skipped or partial); keep nullable forever. UI shows "—" for null. Same pattern as v1.1's image-digest column will use (see Pitfall 45).
+2. **Write site:** `insert_running_run` in `src/db/queries.rs` (≈L286–L313) takes `config_hash: &str` from the resolved job config at fire time. The hash is captured BEFORE the executor spawns, so even if a reload happens mid-fire, the row reflects the config that the run was based on.
+3. **UI rendering:** failure-context card on run detail compares `this_run.config_hash` to `last_success_run.config_hash` — same hash = "no config change since last success"; different hash = "config changed since last success" with a link or hover-text showing the high-level diff (or just "config changed at $reload_time" if we can't render diff easily).
+4. **Test the backfill carefully** — large DB scenarios (≥100k runs) take time, parallel to v1.1's `job_run_number` backfill. Re-use the chunked-backfill pattern from v1.1 (`UPDATE … WHERE config_hash IS NULL LIMIT 10000` loop with INFO progress logs; see v1.1 Pitfall 5.3).
+
+**Phase hint:** Phase 21 (failure context — schema + queries). The migration must land BEFORE the UI card in the same milestone.
+
+**Test cases:**
+- **T-V12-FCTX-01:** Migration: empty DB → all migrations run → `job_runs.config_hash` exists nullable.
+- **T-V12-FCTX-02:** Backfill: seed 1000 runs across 3 jobs; run backfill migration; assert all 1000 rows have `config_hash` set to their job's current hash.
+- **T-V12-FCTX-03:** Write site: fire a run → assert `job_runs.config_hash` matches the resolved job's `config_hash` at fire time.
+- **T-V12-FCTX-04:** Reload between fires: fire run A, reload config (changing hash), fire run B → assert run A and run B have different `config_hash` values.
+- **T-V12-FCTX-05:** UI: render failure-context card with `last_success.config_hash != this_run.config_hash` → text says "config changed since last success."
+- **T-V12-FCTX-06:** Backfilled-row UI: render a row whose `config_hash` was set by backfill (use a marker or just "—" if uncertain) → distinguishable from real per-run captures.
+
+**Severity:** CRITICAL — without this, the "config changed since last success" signal is fundamentally unreliable.
+
+---
+
+### Pitfall 45 — CRITICAL — Image-digest capture: which call yields the digest of the container that ACTUALLY ran?
+
+**Where:** `src/scheduler/docker.rs` L240–L250 currently captures `image_digest` via `inspect_container(&container_id)` AFTER `start_container` (the existing v1.0 capture from `DockerExecResult.image_digest`). The captured field is `info.image` — confirmed at `docker.rs:241`. Per-run write site for v1.2 will be in `finalize_run` or earlier.
+
+**What goes wrong (subtle):** Operator pulls `nginx:latest` Tuesday morning → digest A locally. Tuesday-night cron pulls `nginx:latest` again → digest B. Wednesday morning's run starts: `ensure_image` sees the image is already present (cache hit at digest B), runs the container, `inspect_container` returns digest B. Cronduit reports "ran at digest B." Correct.
+
+But the failure-context card asks: "what was the digest at the LAST successful run?" — and that data point comes from `job_runs.image_digest` of the previous row, which was captured at THAT run's `inspect_container` call. So if Tuesday morning's run reported A and Wednesday morning's reported B, the failure-context card correctly shows "image changed from A to B between runs" — even though the operator just sees "nginx:latest" both times.
+
+**Where it goes wrong:**
+
+1. **`inspect_container` returns the IMAGE the container was created from**, not the image the daemon currently has at that tag. So if the cache evolves between create and inspect, you still capture the create-time digest. Good — but only if cronduit captures BEFORE the container is removed. v1.0's existing capture happens after `start_container` but BEFORE `remove_container`. Lock that ordering.
+2. **`info.image` field** — verify the bollard 0.20 ContainerInspectResponse schema. The field is the image-by-id (not by-name) — i.e., the SHA256 digest cronduit needs. `image_id` is the alternate field (older bollard versions). Confirm in the test.
+3. **Pre-flight pull race:** if `ensure_image` (`docker_pull.rs`) returns one digest but the daemon caches a different one between pull and `create_container`, you have a digest mismatch. v1.0's pre-flight returns its own digest (`docker.rs:129–144` `_image_digest` is captured but unused — note the `_` prefix). v1.2 should USE that pre-flight digest as the authoritative value, not the post-create inspect, because pre-flight is closer to the actual pull event.
+4. **For images with `image = "alpine:latest"` and no registry digest at all** (rare but possible — operator built locally), `info.image` is the local content-hash sha256 (still a valid sha256:... string, just not from a registry). UI must accept any sha256 prefix and not break on "looks weird."
+
+**Why:** Multiple capture sites with subtly different timings; the right one is "what did `docker create` use," and that's `inspect_container.info.image` if invoked after create.
+
+**When it manifests:** Any environment with a moving tag (`nginx:latest`, `node:lts`) and a sustained job. Probably immediate on first deployment.
+
+**Prevention:**
+
+1. **Authoritative capture site:** the existing `inspect_container(&container_id)` post-`start_container` at `docker.rs:240`. Plumb the captured digest through to `job_runs.image_digest` via the executor's return path (`DockerExecResult.image_digest` already exists — wire it to the DB write).
+2. **Schema:** `job_runs.image_digest TEXT NULL` (nullable; command/script jobs have no digest, write NULL).
+3. **Format:** raw sha256 string from bollard (e.g., `"sha256:abc123..."`). Don't reformat or truncate at write time. UI may truncate to 12-char short form for display.
+4. **Migration shape** (parallel to Pitfall 44):
+   - File 1: ADD COLUMN nullable.
+   - File 2: NO backfill — old rows stay NULL. Document: "Image digests are captured for runs after upgrade; pre-upgrade runs show '—' in the failure-context card."
+   - File 3: NOT NULL step is **NEVER added.** Keep nullable forever — command/script jobs legitimately lack a digest.
+5. **UI:** when a row's `image_digest` is NULL, render "—". When two consecutive successful docker runs have different digests, render "image changed: <short-A> → <short-B>" in the failure-context card.
+
+**Phase hint:** Phase 21 (with config-hash; same migration block).
+
+**Test cases:**
+- **T-V12-FCTX-07:** Docker job → run → inspect `job_runs.image_digest` is non-null and starts with `sha256:`.
+- **T-V12-FCTX-08:** Command job → run → `job_runs.image_digest` is NULL.
+- **T-V12-FCTX-09:** Same docker job + image but different daemon pulls → digest changes captured correctly across runs (testcontainers integration test).
+- **T-V12-FCTX-10:** Locally-built image (`docker build -t local-app .`, no registry) → cronduit captures the local content-hash sha256 without error; UI renders without crashing.
+- **T-V12-FCTX-11:** Backfill is NOT performed; pre-upgrade rows have `image_digest = NULL`; UI shows "—".
+
+**Severity:** CRITICAL.
+
+---
+
+### Pitfall 46 — MODERATE — Streak math + last-success queries: query plan + retention interaction
+
+**Where:** New `src/db/queries.rs::get_failure_context(run_id) -> FailureContext` returning `{ first_failure_ts, consecutive_failures, last_success_run_id, last_success_at, image_digest_delta, config_hash_delta }`.
+
+**What goes wrong (multiple sub-cases):**
+
+1. **Naive streak query is O(N).** "How many consecutive failures ending at run X?" → `SELECT * FROM job_runs WHERE job_id = $1 AND start_time <= $2 ORDER BY start_time DESC LIMIT 1000` and walk in Rust until status='success'. For a job that succeeds every minute, the streak is always 1 — wasted query. For a backup job that runs daily and has been failing for 90 days = 90 rows. Fine. But for a 1-minute job that's been failing for an hour = 60 rows. Still fine. Edge case: a daily job that's been failing forever (3+ years of retention) = 1095+ rows. Still fine but the query plan must use the index.
+2. **`idx_job_runs_job_id_start` index** (from v1.0 initial migration L46) covers `(job_id, start_time DESC)` — perfect for this. Verify with `EXPLAIN QUERY PLAN`.
+3. **Last-success query** is similar: `SELECT * FROM job_runs WHERE job_id = $1 AND status = 'success' AND start_time < $2 ORDER BY start_time DESC LIMIT 1`. Same index.
+4. **Retention interaction:** if retention has pruned old rows, `last_success` may legitimately be unknown (last success was 95 days ago, retention is 90 days). UI must render "—" or "older than retention" rather than crash.
+5. **Failure-context for a command/script job** has no `image_digest` field; the streak math still works.
+
+**Why:** Standard "walk back from this row" queries. The risk is in the query plan and the retention edge case, not the math itself.
+
+**When it manifests:** First render of the failure-context card on any run-detail page.
+
+**Prevention:**
+
+1. **Two queries (not one big one):**
+   ```sql
+   -- Streak (count consecutive non-success runs ending at this one)
+   SELECT id, status, start_time FROM job_runs
+   WHERE job_id = $1 AND start_time <= $2
+   ORDER BY start_time DESC
+   LIMIT 1000;
+   ```
+   In Rust, walk the result and count until first non-failure (or 1000-row safety cap). Document the cap; in practice no real streak should reach 1000.
+
+   ```sql
+   -- Last success
+   SELECT id, start_time, image_digest, config_hash FROM job_runs
+   WHERE job_id = $1 AND status = 'success' AND start_time < $2
+   ORDER BY start_time DESC
+   LIMIT 1;
+   ```
+2. **`EXPLAIN QUERY PLAN` lock** in tests for both queries — must use `idx_job_runs_job_id_start`. CI regression on both SQLite and Postgres.
+3. **Null-safe rendering:** if `last_success` query returns 0 rows (retention pruned, or no successes ever), UI renders "—" with hover text "no successful runs in retention window."
+4. **Same query is used by webhooks (Pitfall 29 streak coalescing)** — extract into a shared helper. See cross-feature Pitfall 54.
+
+**Phase hint:** Phase 21 (queries before UI).
+
+**Test cases:**
+- **T-V12-FCTX-12:** `get_failure_context` against a job with 5 consecutive failures → returns `consecutive_failures = 5`, correct first-failure timestamp.
+- **T-V12-FCTX-13:** Job with 0 successes ever → `last_success` is None; UI renders "—".
+- **T-V12-FCTX-14:** Retention pruned: simulate via DELETE; assert query is graceful.
+- **T-V12-FCTX-15:** EXPLAIN: both queries use `idx_job_runs_job_id_start` on SQLite + Postgres.
+
+**Severity:** MODERATE.
+
+---
+
+### Pitfall 47 — MODERATE — Backfill of `image_digest` post-upgrade (decision: don't)
+
+**Where:** Migration `20260502_000002_job_runs_image_digest_*.up.sql`.
+
+**What goes wrong:** Operator upgrades from v1.1.0 to v1.2.0 with 100k existing `job_runs` rows, none of which have `image_digest`. Tempting to backfill by hitting `inspect_container` for old rows... but the containers are long gone (especially if `delete = true`, which is the default). Backfill is impossible for completed runs.
+
+If we attempt backfill (e.g., setting `image_digest = "unknown"` or copying from `jobs.config_json` parsed image-name), we're writing wrong-or-meaningless data. Worse: the UI then has to distinguish "real digest" from "backfill placeholder," adding complexity.
+
+**Why:** Past container state is lost. There's no source of truth for old rows.
+
+**When it manifests:** Upgrade time.
+
+**Prevention:**
+
+1. **Decision (lock):** NO backfill for `image_digest`. Old rows stay NULL forever.
+2. **UI shows "—" for NULL `image_digest`** in the failure-context card. Document in the README v1.2 release notes: "Image-digest tracking begins at v1.2.0 upgrade. Pre-upgrade runs show '—'."
+3. **Same approach is used for `config_hash` if backfill is risky** — but Pitfall 44 recommends a conservative backfill (current job hash) for config_hash because at least the `jobs.config_hash` column has a current value to copy. Image digest has no such fallback.
+4. **Document the divergent backfill stance** between the two columns clearly in the migration files' comment headers.
+
+**Phase hint:** Phase 21 (migration design — lock the no-backfill decision).
+
+**Test cases:**
+- **T-V12-FCTX-16:** Migration migrates 1000 v1.1-style rows; assert all 1000 still have `image_digest = NULL` after migration completes.
+- **T-V12-FCTX-17:** Render failure-context card for a pre-upgrade row; assert "—" rendered, no crash.
+
+**Severity:** MODERATE.
+
+---
+
+## Feature 4 — Per-Job Exit-Code Histogram
+
+Smallest schema-impact feature (no new columns; queries existing `job_runs.exit_code`). Pitfalls cluster around (a) cardinality control, (b) null handling for stopped/timeout, (c) window choice.
+
+### Pitfall 48 — CRITICAL — Exit-code cardinality explosion
+
+**Where:** New `src/db/queries.rs::get_exit_code_histogram(job_id, window) -> Vec<(ExitCodeBucket, u32)>` and the UI card renderer.
+
+**What goes wrong:** Exit code is `i32`. A misbehaving program can return any value (0..127, 128..255, also negative depending on shell semantics). A job whose script does `exit $RANDOM % 256` produces ~256 distinct exit codes over time. Naive histogram = 256 buckets. UI card becomes a wall of single-bar columns. Worse: if cronduit also exposes the histogram via `/metrics` (it shouldn't, see below), Prometheus cardinality blows up — exact case v1.0 explicitly designed against (FOUND-04: bounded-cardinality labels).
+
+**Why:** Exit codes have no enforced range. Cronduit is at the mercy of operator code.
+
+**When it manifests:** Any deployment with a job whose exit-code distribution is wide. Visible immediately on first card render for that job.
+
+**Prevention:**
+
+1. **Bucket strategy (LOCK):**
+
+   | Bucket | Range | Semantic | Color |
+   |--------|-------|----------|-------|
+   | `success` | 0 | success | green |
+   | `1` | 1 | catch-all error | red |
+   | `2` | 2 | usage / mis-invocation | red |
+   | `3-9` | 3..=9 | small custom error codes | red |
+   | `10-126` | 10..=126 | other custom codes | red |
+   | `127` | 127 | "command not found" (shell convention) | red |
+   | `128-143` | 128..=143 | killed by signal (128 + signal_num for 1..=15) | orange (`stopped`-like) |
+   | `144-254` | 144..=254 | other / app-defined | red |
+   | `255` | 255 | sentinel "exit code -1" or generic | red |
+   | `null` | NULL | timeout / stopped (no exit code) | distinct color |
+
+2. **No `/metrics` exposure of the histogram.** UI card only. Rationale: Prometheus cardinality discipline (v1.0 lock) — `cronduit_runs_total{job, status}` already covers the broad-strokes count; per-bucket exit-code counters would add `~10 buckets × ~50 jobs = 500 series` for limited operational benefit.
+3. **Window choice (LOCK):** last 100 ALL runs (NOT just successful). Exit codes are most useful for diagnosing failures, so failed/stopped/timeout rows must be in the window. Distinct from v1.1's p50/p95 card which uses last 100 SUCCESSFUL.
+4. **Minimum sample threshold:** N ≥ 10 to render the card; below, render "—" with a tooltip "histogram needs at least 10 runs." Parallel to v1.1's sparkline `MIN_SAMPLES_FOR_RATE` constant; pull both into a single `src/web/stats.rs::MIN_SAMPLES_*` namespace.
+5. **Bucket constants in code, not magic numbers.** A `const EXIT_CODE_BUCKETS: &[ExitCodeBucket]` that the histogram query and the UI card both consume. Future bucket changes update one place.
+
+**Phase hint:** Phase 22 (exit-code histogram).
+
+**Test cases:**
+- **T-V12-EXIT-01:** 100 runs spread randomly across exit codes 0..255; assert histogram returns exactly 10 buckets (per the table above).
+- **T-V12-EXIT-02:** Job with all `exit_code = 137` (SIGKILL'd) → renders in `128-143` bucket (orange).
+- **T-V12-EXIT-03:** Job with `status = 'timeout'` (exit_code NULL) → counted in `null` bucket.
+- **T-V12-EXIT-04:** Job with 5 runs → card shows "—" (below threshold).
+- **T-V12-EXIT-05:** `/metrics` does NOT include exit-code histogram families (regression lock — `cronduit_exit_code_*` must not appear).
+
+**Severity:** CRITICAL (cardinality discipline is a v1.0 invariant).
+
+---
+
+### Pitfall 49 — MODERATE — Null exit codes (timeout, stopped, error) need explicit bucket UX
+
+**Where:** Same.
+
+**What goes wrong:** Operator looks at the histogram for a job that has 30 `success` runs, 10 `failed (exit 1)` runs, and 5 `timeout` runs. If `null` exit codes are silently excluded (returning Some-only values), the histogram total is 40 — operator wonders "why doesn't this match my run count of 45?"
+
+If `null` rows are bucketed as "0" or "—" without distinct visual treatment, they're confusable with success.
+
+**Why:** `status = 'timeout'` and `status = 'stopped'` (v1.1) and `status = 'error'` rows have `exit_code IS NULL` because the process was killed before exit. They're a real and operationally-distinct outcome.
+
+**When it manifests:** First render of a histogram for a job with any timeout/stopped runs.
+
+**Prevention:**
+
+1. **`null` bucket from Pitfall 48 is rendered as a distinct visual column** (e.g., diagonal-stripe pattern, distinct color from both green and red — purple/yellow/cyan). Hover text: "killed (no exit code): timeout, stopped, or error".
+2. **Tooltip on the bucket** breaks down by status: `"timeout: 3, stopped: 1, error: 1"` so operators can dig deeper.
+3. **Total at the top of the card:** "Last 100 runs, 5 with no exit code." Avoids the "where did 5 runs go?" surprise.
+
+**Phase hint:** Phase 22.
+
+**Test cases:**
+- **T-V12-EXIT-06:** Card with 3 timeout + 1 stopped + 1 error runs → null bucket count = 5; tooltip breakdown shows "timeout: 3, stopped: 1, error: 1".
+
+**Severity:** MODERATE.
+
+---
+
+### Pitfall 50 — MINOR — Window-edge effects on exit-code distribution
+
+**Where:** Same.
+
+**What goes wrong:** Window is "last 100 ALL runs." For a job that runs every minute, that's 100 minutes of history. For a daily backup, that's 100 days. Operator looking at the same UI card learns very different things from very different time windows. Without labeling, the card is misleading.
+
+**Why:** Inherent to fixed-N rolling windows.
+
+**When it manifests:** First reading of the card by an operator unfamiliar with the window.
+
+**Prevention:**
+
+1. **Card title** explicitly says "Last 100 runs" — no ambiguity.
+2. **Hover/tooltip** shows the actual time span: "spanning 2026-04-22 to 2026-04-25" so operators can map to wall-clock.
+3. **Empty-window edge:** if the job has no runs at all in retention, render "—" with "no runs available." Same UX as Pitfall 48 minimum-sample.
+
+**Phase hint:** Phase 22.
+
+**Test cases:**
+- **T-V12-EXIT-07:** Card title contains "Last 100 runs" exactly (string assertion).
+- **T-V12-EXIT-08:** Tooltip includes the actual time span.
+
+**Severity:** MINOR.
+
+---
+
+## Feature 5 — Job Tagging / Grouping
+
+UI-only feature (per v1.2 scope: tags do NOT affect webhooks, search, or metrics). Pitfalls cluster around normalization, charset, and filter UX.
+
+### Pitfall 51 — MODERATE — Tag normalization (case + whitespace) collapses
+
+**Where:** New `tags: Option<Vec<String>>` field on `JobConfig`. Normalization happens in `src/config/validate.rs` or a dedicated `src/config/tags.rs`.
+
+**What goes wrong:**
+```toml
+[[jobs]]
+name = "backup-1"
+tags = ["Backup", "Daily"]
+
+[[jobs]]
+name = "backup-2"
+tags = ["backup", "daily "]  # trailing space, lowercase
+
+[[jobs]]
+name = "backup-3"
+tags = ["BACKUP", "DAILY"]
+```
+
+If cronduit treats these as 6 distinct tags, the dashboard filter chip bar renders 6 chips: `Backup`, `backup`, `BACKUP`, `Daily`, `daily `, `DAILY`. Operator clicks `Backup` and sees only 1 job. Confusing, immediate UX failure.
+
+**Why:** Hand-written config + multiple operators editing → case-and-whitespace drift is inevitable.
+
+**When it manifests:** Config edit by a second operator (or the same operator on a different day). Visible immediately on dashboard render.
+
+**Prevention (LOCK at requirements):**
+
+1. **Normalization at config-load:**
+   ```rust
+   fn normalize_tag(raw: &str) -> String {
+       raw.trim().to_lowercase()
+   }
+   ```
+   Apply during validation. Store the normalized value in the resolved job.
+2. **Canonical form: lowercase + trimmed.** Document explicitly in the README and the requirements doc.
+3. **Empty-after-normalize is rejected:** `tags = [""]` or `tags = ["   "]` → config-load error: `"empty tag in job 'backup'"`.
+4. **Alternative considered + rejected:** preserve original case for display, normalize for filter matching. Rejected because it adds two-form complexity (display vs match) and operators get confused when "Backup" displays but `?tag=backup` filters — the URL form must match what they see. Lowercase-everywhere is simpler and more predictable.
+5. **Lock with a config-load test** that asserts the normalized form is stored.
+
+**Phase hint:** Phase 23 (tagging — TOML schema + normalization).
+
+**Test cases:**
+- **T-V12-TAG-01:** Job 1 with `tags = ["Backup", "Daily"]`, job 2 with `tags = ["backup", "daily "]` → both jobs resolve to `tags = ["backup", "daily"]`.
+- **T-V12-TAG-02:** `tags = [""]` → config-load error.
+- **T-V12-TAG-03:** `tags = ["  "]` (whitespace-only) → config-load error after trim.
+
+**Severity:** MODERATE.
+
+---
+
+### Pitfall 52 — MODERATE — Tag charset + length validation
+
+**Where:** Same validator.
+
+**What goes wrong:**
+```toml
+tags = ["my very long tag with spaces and 🎉 emojis"]
+```
+Or:
+```toml
+tags = ["tag\nwith\nnewlines"]
+```
+Or:
+```toml
+tags = ["<script>alert(1)</script>"]
+```
+
+Three concerns:
+1. **Display:** spaces/newlines/emojis render in the chip bar. Newlines break layout. Emojis are fine technically but inconsistent across browsers.
+2. **URL safety:** `?tag=my+very+long+tag+with+spaces` works (URL encoding) but is ugly to share.
+3. **XSS:** if the tag is rendered without HTML-escaping anywhere (e.g., in a URL `<a href="?tag=...">`), the `<script>` form is an XSS vector. **Cronduit's askama_web auto-escapes by default** (HIGH confidence — askama compile-time enforces this), so this is mitigated, but it's worth a regression-lock test.
+
+**Why:** Tags are operator-controlled strings rendered into HTML and URLs.
+
+**When it manifests:** Operator edit with a "fancy" tag.
+
+**Prevention:**
+
+1. **Charset (LOCK at requirements — restrictive but practical):** `^[a-z0-9][a-z0-9_-]{0,30}$` post-normalization.
+   - Lowercase letters, digits, hyphen, underscore.
+   - First character must be alphanumeric (no leading hyphen — avoids `--something` which looks like a CLI flag).
+   - Length 1–31 characters.
+   - No spaces, no dots, no emojis, no slashes, no special chars.
+2. **Reject at config-load** with a clear error: `"tag 'my long tag' contains invalid characters (allowed: a-z, 0-9, hyphen, underscore; max 31 chars)"`.
+3. **Trim + lowercase first** (Pitfall 51), THEN charset-validate.
+4. **Defense-in-depth template escaping:** every template render of a tag uses askama's auto-escape (default). Lock with a test: `{{ tag }}` in templates, never `{{ tag|safe }}`.
+5. **Document the rule in the README** under `## Tagging`.
+
+**Phase hint:** Phase 23.
+
+**Test cases:**
+- **T-V12-TAG-04:** Valid tags (`backup`, `daily`, `prod-east`, `cost_center_42`) → accepted.
+- **T-V12-TAG-05:** Invalid tags (`my tag`, `tag.with.dot`, `🎉`, `<script>`, `-leadinghyphen`, `verylongtagnamethatexceedsthirtyonechars`) → rejected at config-load.
+- **T-V12-TAG-06:** XSS regression: tag like `<b>x</b>` (impossible after charset validation, but lock the template behavior) — render in template, assert literal text appears in HTML, not parsed `<b>` tag.
+
+**Severity:** MODERATE.
+
+---
+
+### Pitfall 53 — MODERATE — Filter UX: AND vs OR + URL state + empty-tag-set jobs
+
+**Where:** Dashboard handler `src/web/handlers/dashboard.rs` — the filter logic. URL parsing in axum extractors.
+
+**What goes wrong (multiple sub-cases — lock at requirements):**
+
+1. **Multiple selected tags: AND or OR?**
+   - **AND** (`?tag=backup&tag=weekly` → jobs with BOTH backup AND weekly): more useful for "show me my weekly backups." Smaller result set. Standard Jira/GitHub-issues behavior.
+   - **OR** (jobs with ANY of backup, weekly): "show me anything tagged backup or weekly." Bigger result set, less useful for narrowing.
+   - **Recommendation: AND.** Matches existing operator intuition from issue trackers; narrowing is the more common need than broadening; if operator wants OR they can clear and re-pick one tag.
+
+2. **URL state format:** `?tag=backup&tag=weekly` (repeated query param) is the most universally-parsed shape across HTTP frameworks. Avoid `?tags=backup,weekly` (comma-split is fine but axum-extra needs config). Avoid cookies (not shareable).
+
+3. **Empty-tag-set jobs (`tags = []` or unset):** when ANY tag filter is active, jobs without tags are HIDDEN. Rationale: operator clicks `backup` → expects to see only backup-tagged jobs; an untagged "backup-postgres" job not having the tag is the operator's config bug to fix, not cronduit's bug to surface. **Document in the dashboard "0 jobs match this filter" empty state with hint: "If a job is missing here, it may not have the matching tag."**
+
+4. **Filter persistence:** URL only. No cookie, no localStorage. Bookmarkable, shareable, no client-state magic.
+
+5. **"Clear filters" link:** must be clearly present when any filter is active.
+
+**Why:** Filter UX is the entire feature surface. Getting it wrong makes the feature feel broken.
+
+**When it manifests:** First operator interaction with filters.
+
+**Prevention:**
+
+1. **AND semantics + repeated `?tag=` param + URL-only state + hidden-untagged on filter active.** Lock all four.
+2. **Document on the dashboard page itself:** small icon next to the chip bar with a hover-tooltip: "Filters combine with AND. Click a chip to add/remove."
+3. **Test the parse + render path end-to-end.**
+
+**Phase hint:** Phase 24 (tagging UI — filter chips + URL state).
+
+**Test cases:**
+- **T-V12-TAG-07:** `?tag=backup&tag=weekly` → only jobs with BOTH tags shown.
+- **T-V12-TAG-08:** `?tag=backup` only → only jobs with `backup` shown; jobs with no tags are hidden.
+- **T-V12-TAG-09:** No filter → all jobs shown (including untagged).
+- **T-V12-TAG-10:** "Clear filters" link clears the URL state to no params.
+- **T-V12-TAG-11:** Bookmark a filtered URL → reload → filter restored.
+
+**Severity:** MODERATE.
 
 ---
 
 ## Cross-Feature Pitfalls
 
-### X.1 CRITICAL — Two migrations land in rc.1; one must precede the other
+### Pitfall 54 — CRITICAL — `[defaults] + per-job override + use_defaults = false` shared helper for webhooks AND labels
 
-**Where:** Feature 5 (`job_run_number`, 3 files) + Feature 9 (`enabled_override`, 1 file) both land in v1.1. Feature 5 is in rc.1 (bug-fix block); Feature 9 is in rc.3 (ergonomics).
+**Where:** Webhooks (Pitfalls 28–38) and Custom Docker Labels (Pitfalls 39–43) both replicate the same `[defaults] + per-job + use_defaults = false` override pattern that v1.0 introduced for `image`, `cmd`, `env`, etc. and v1.1 didn't extend.
 
-**What goes wrong:** If the Feature 9 migration file is authored with a timestamp that sorts **earlier** than the Feature 5 files, an operator upgrading from v1.0 to rc.3 directly gets the migrations in the wrong order: `enabled_override` is added first, but then the per-job-run-number migration tries to read `job_runs` rows in a way that assumed the v1.0 schema.
+**What goes wrong:** Each feature implements the override logic independently. Three months later, a bug fix in the webhook override logic (e.g., "use_defaults = false should also clear webhook_states") doesn't propagate to the labels override. Drift accumulates.
+
+OR: a shared helper is extracted but its behavior isn't tested for both features — a refactor that breaks one's contract silently breaks the other.
+
+**Why:** Code duplication with high structural similarity is the textbook breeding ground for drift.
+
+**When it manifests:** Second feature's bug fix, or third feature's addition (v1.3+).
 
 **Prevention:**
-1. Migration filenames use `YYYYMMDD_HHMMSS_description` format. Feature 5 files should be `20260415_*` and Feature 9 file should be `20260420_*` or later. The rc build cadence naturally gives this ordering.
-2. **Assert migration monotonicity in CI**: the CI job that runs migrations against a fixture DB must process them in filename order and all must succeed. Any out-of-order issue surfaces as a test failure.
-3. Document the migration ordering requirement in `migrations/README.md` (create if it doesn't exist).
+
+1. **Extract `apply_defaults_for_field<T>(defaults: Option<&T>, per_job: Option<&T>, use_defaults: bool, merge: F) -> Option<T>` into `src/config/defaults.rs`** as a generic helper. v1.0's existing `apply_defaults` (`defaults.rs:112`) becomes one of the callers.
+2. **Test matrix locked across both features:**
+
+   | Case | Defaults | Per-job | use_defaults | Expected |
+   |------|----------|---------|--------------|----------|
+   | Both unset | None | None | true | None |
+   | Defaults only | Some(D) | None | true | Some(D) |
+   | Per-job only, use_defaults=true | None | Some(P) | true | Some(P) |
+   | Both, use_defaults=true | Some(D) | Some(P) | true | Some(merge(D, P)) |
+   | Both, use_defaults=false | Some(D) | Some(P) | false | Some(P) |
+   | Defaults only, use_defaults=false | Some(D) | None | false | None |
+
+3. **Test the matrix for each consumer feature:**
+   - Webhooks: `webhook_url`, `webhook_states`, `webhook_hmac_secret` — three independent applications.
+   - Labels: `labels` — one application.
+   - Future: any new override field re-uses the helper + adds a row to its consumer's test.
+4. **Each consumer feature gets its own test file** (`tests/v12_webhook_overrides.rs`, `tests/v12_label_overrides.rs`) running the matrix. Helper has unit tests in `defaults.rs`.
+
+**Phase hint:** Phase 15 OR Phase 20, whichever lands first. The helper is extracted in that phase; the second feature consumes the existing helper.
 
 **Test cases:**
-- **T-V11-MIG-01:** CI test: run full migration chain from empty DB; assert all migrations applied; verify monotonic filename ordering.
-- **T-V11-MIG-02:** Run migration chain from a v1.0.1 DB snapshot fixture; assert all v1.1 migrations apply cleanly.
+- **T-V12-XCUT-01:** Helper unit tests for the 6-row matrix above.
+- **T-V12-XCUT-02:** Webhook consumer test runs the matrix for each of the three webhook fields.
+- **T-V12-XCUT-03:** Label consumer test runs the matrix for `labels`.
 
-**Severity:** CRITICAL.
-
----
-
-### X.2 CRITICAL — rc.1 ships stop-a-job WITHOUT the §2.1 log-writer ordering change
-
-**Where:** Build-order in ARCHITECTURE.md §4 places Stop-a-Job before Log-Backfill in rc.1, but they share the `LogLine` struct change.
-
-**What goes wrong:** If stop-a-job lands first and the engineer doesn't do the `LogLine.id` refactor proactively, the log-backfill feature (Feature 2) won't have the id field available and the dedupe path has to be bolted on later. That creates a second, redundant pass through the SSE handler.
-
-**Prevention:**
-1. Land the `LogLine.id` schema + writer-order change as its own micro-PR **before** either Feature 1 or Feature 3. It's mechanical, independent, and unblocks both downstream features.
-2. Sequence: (pre-rc.1) `LogLine.id` refactor → (rc.1.a) Stop-a-Job → (rc.1.b) Log backfill → (rc.1.c) Run numbers → (rc.1.d) Healthcheck.
-
-**Test case:**
-- **T-V11-SEQ-01:** Commit graph / PR dependency test: the `LogLine.id` PR merges before any PR touching SSE backfill.
-
-**Severity:** CRITICAL (process, not code).
+**Severity:** CRITICAL (foundation for two features; bug-once-affects-twice).
 
 ---
 
-### X.3 MODERATE — Testcontainers integration tests are expensive; keep them gated
+### Pitfall 55 — CRITICAL — Phase ordering: failure-context queries land BEFORE webhook payload
 
-**Where:** `tests/` directory (integration), `just test` wiring, CI config.
+**Where:** Phase plan ordering. Webhook payload (Pitfall 33) includes `streak_position` and `consecutive_failures` (failure context). Webhook coalescing (Pitfall 29) uses streak math. Both depend on the failure-context queries (Pitfall 46).
 
-**What goes wrong:** Feature 1 (stop-a-job) integration tests spawn real alpine containers via bollard+testcontainers. Feature 5 (migration) integration tests seed realistic DBs. Running them on every local `cargo test` slows developer inner loop from ~5s to ~60s. Developers start skipping integration tests entirely.
+**What goes wrong:** If webhooks land in Phase 15–19 and failure-context lands in Phase 21, the webhook payload either:
+- Ships with `streak_position: "unknown"` placeholder, requiring a second pass to fill it in (and a v1 → v1 schema change which violates Pitfall 33's promise) — or
+- Webhooks block on failure-context completing first, blowing the iterative-rc cadence.
 
-**Prevention:**
-1. Gate integration tests behind a feature flag `#[cfg(feature = "integration")]` (v1.0 already does this per STACK.md).
-2. `just test` runs unit tests only; `just test-integration` runs both.
-3. CI runs both in separate jobs so local iteration stays fast.
+**Why:** Cross-feature data dependency wasn't surfaced in the v1.2 milestone scope; the natural phase ordering (webhooks first because they're the "headline" feature) inverts the dependency.
 
-**Test case:** N/A — process.
+**When it manifests:** During roadmap construction OR during Phase 16 implementation when the engineer realizes streak data isn't available.
 
-**Severity:** MODERATE.
+**Prevention (PHASE ORDERING — must be in the roadmap):**
 
----
+1. **Phase 15 — Webhook delivery worker (foundation, isolation pattern, no payload yet).**
+2. **Phase 21 — Failure-context schema + queries (config_hash + image_digest columns, streak query helper).**
+   - **Land EARLIER if possible** — make this Phase 16 or split it.
+3. **Phase 16 — Webhook payload (depends on Phase 21's streak helper).**
+4. **Subsequent phases** can land in any order.
+5. **Alternative ordering (also viable):** rename the phases so failure-context schema comes immediately after the webhook delivery worker. Requirements doc must lock the dependency.
 
-### X.4 MODERATE — `active_runs` map becomes `running_handles` map (rename risk)
+**Phase hint:** N/A — this IS the phase-ordering pitfall. Roadmap step needs to know.
 
-**Where:** `src/scheduler/mod.rs` L56, `src/web/mod.rs` L40, `src/cli/run.rs` L133.
+**Test cases:**
+- **T-V12-XCUT-04:** Webhook payload integration test (which depends on the failure-context helper) is in the test suite for Phase 16, not Phase 15. Build-order check: `cargo build` in the Phase 16 commit MUST pass — if it fails, the schema dependency was forgotten.
 
-**What goes wrong:** ARCHITECTURE.md §3.1 introduces `running_handles: HashMap<i64, RunControl>` as a new field. But the existing `active_runs: HashMap<i64, broadcast::Sender<LogLine>>` serves a similar "map of in-flight runs" role. Tempting to merge the two into `RunControl { broadcast: broadcast::Sender<LogLine>, cancel: CancellationToken, stop_reason: Arc<AtomicU8>, container_id: Arc<RwLock<Option<String>>> }`. **Merging is fine**, but two separate maps kept in sync is a drift hazard.
-
-**Prevention:**
-1. **Merge** `active_runs` and `running_handles` into one `HashMap<i64, RunControl>` where `RunControl` contains both the broadcast sender (for SSE) and the cancel token + stop_reason (for Stop). Update `AppState` to expose `active_runs.read().get(&id).map(|rc| rc.broadcast.clone())`.
-2. This is the cleanest design; ARCHITECTURE.md's two-map suggestion can be simplified at implementation time.
-3. Test that adding/removing runs happens atomically (single map = single lock acquisition).
-
-**Test case:**
-- **T-V11-MAP-01:** Concurrent insert/remove/read on the active-runs map stress-test; assert no dropped entries.
-
-**Severity:** MODERATE.
+**Severity:** CRITICAL (process/ordering, not code).
 
 ---
 
-### X.5 MINOR — Clippy lint drift from new `async fn` signatures
+### Pitfall 56 — CRITICAL — `THREAT_MODEL.md` MUST gain a Threat Model 5 + Threat Model 6 entry
 
-**Where:** CI clippy gate (`cargo clippy -D warnings`).
+**Where:** `/Users/Robert/Code/public/cronduit/THREAT_MODEL.md` — currently 4 threat models (Docker Socket, Untrusted Client, Config Tamper, Malicious Image). v1.1 added "Stop button blast radius" and "Bulk toggle blast radius" inline within Threat Model 2 (Untrusted Client). v1.2 needs more than inline mentions — webhooks introduce a brand-new outbound surface.
 
-**What goes wrong:** New code in `src/scheduler/control.rs`, `src/web/handlers/timeline.rs`, `src/cli/health.rs`, `src/web/stats.rs` may introduce lints that the existing codebase hasn't seen (e.g., `clippy::module_name_repetitions`, `clippy::doc_markdown`). The `-D warnings` gate fails the build on any new lint.
+**What goes wrong:** v1.2 ships without explicit threat-model treatment of:
+1. **Outbound webhooks** (SSRF via webhook URL — Pitfall 31; HTTPS posture — Pitfall 32; HMAC verification on receiver side — Pitfall 30).
+2. **Custom Docker labels** (operator-supplied data flowing into Docker daemon API; reserved-namespace abuse — Pitfall 39 — could corrupt orphan reconciliation).
 
-**Prevention:**
-1. Run `cargo clippy --all-targets --all-features -- -D warnings` locally before pushing any of the new modules.
-2. If a new lint fires, fix it (don't `#[allow]`).
-3. If a lint is genuinely wrong for the project, add to a `clippy.toml` or an `allow` at the module level with a comment explaining why.
+External users reading the threat model think v1.2 is no different from v1.1 in security posture. Audit fails. Operators relying on the threat model for risk assessment get a stale picture.
 
-**Test case:** Covered by existing CI.
+**Why:** The threat model is the operator's contract for "what cronduit defends against, what it doesn't." Every blast-radius expansion needs a doc update.
 
-**Severity:** MINOR.
+**When it manifests:** First external security review post-v1.2.
+
+**Prevention (LOCK as a Phase 26 close-out gate):**
+
+1. **New Threat Model 5: Webhook Outbound** with the structure of the existing 4:
+   - **Threat:** cronduit becomes an SSRF proxy / outbound HTTP source for whoever controls the config.
+   - **Attack vector:** operator config / config-file tamper (T-T1) defines `webhook_url` pointing at internal services or cloud metadata; cronduit fires the request.
+   - **Mitigations:** loopback-default UI; startup WARN on suspicious URLs (loopback+non-LAN HTTP, RFC1918 metadata addresses); HMAC signing of payload with timestamp anti-replay; rustls-only TLS (no openssl-sys regression).
+   - **Residual risk:** any URL the cronduit container can reach is reachable. Operator must use network controls (firewall, network policies) to restrict cronduit's egress.
+   - **Recommendations:** front the UI with reverse proxy + auth; deny-list cloud metadata endpoints (`169.254.169.254`) at the container's egress; consider separate cronduit instance for prod-vs-dev networks.
+2. **New Threat Model 6: Operator-supplied Docker labels** (smaller surface but explicit):
+   - **Threat:** operator supplies labels under `cronduit.*` reserved namespace, corrupting orphan reconciliation.
+   - **Attack vector:** config edit (intentional or malicious).
+   - **Mitigations:** validator at config-load (Pitfall 39); runtime defense-in-depth refuses to overwrite cronduit's own labels.
+   - **Residual risk:** labels are otherwise unrestricted; an attacker with config write can label cronduit-spawned containers however they want, which can confuse operator tooling (Watchtower, etc.) but not corrupt cronduit state.
+   - **Recommendations:** read-only config mount.
+3. **STRIDE table updates:**
+   - New row T-S3 (Spoofing): "Attacker forges webhook payload" → mitigated by HMAC signing; out-of-scope: receiver-side verification (operator's responsibility).
+   - New row T-T4 (Tampering): "Attacker injects label collision into `cronduit.*` namespace" → mitigated by validator.
+   - New row T-I4 (Information disclosure): "Webhook URL embeds credentials in `userinfo`" → mitigated by `strip_url_credentials` (Pitfall 38).
+   - New row T-D4 (DoS): "Webhook receiver outage stalls scheduler loop" → mitigated by bounded mpsc + delivery worker isolation (Pitfall 28).
+4. **Inline mention in Threat Model 2 (Untrusted Client):** "Webhook configuration (v1.2+ blast radius): an attacker with Web UI access can [in v1.3+ when the UI gains write access to webhook URLs; for v1.2 this is config-file-only] direct cronduit to fire HTTP requests at any address. Pair with Threat Model 5."
+   Note: v1.2's webhook URL is config-file-only; the UI does NOT expose write access to webhook URLs. This narrows the v1.2 blast radius — call out explicitly so v1.3 planners see the constraint.
+
+**Phase hint:** Phase 26 (milestone close-out — threat model finalization).
+
+**Test cases:**
+- **T-V12-XCUT-05:** Audit: `THREAT_MODEL.md` contains "Threat Model 5: Webhook Outbound" and "Threat Model 6: Operator-supplied Docker labels" sections.
+- **T-V12-XCUT-06:** Audit: STRIDE table contains rows T-S3, T-T4, T-I4, T-D4.
+- **T-V12-XCUT-07:** README links to the new threat-model sections from the security overview.
+
+**Severity:** CRITICAL (audit gate; non-technical but ship-blocking).
+
+---
+
+## "Looks Done But Isn't" Checklist (v1.2)
+
+Quick smoke list for the executor + UAT phases. Each item is a real failure mode where the feature looks complete in the unit tests but isn't.
+
+- [ ] Webhook delivery worker survives `SchedulerCmd::Reload` without dropping in-flight queued webhooks (Pitfall 28).
+- [ ] Webhook coalescing default is `streak_first` and it's tested under sustained-failure cadence (Pitfall 29).
+- [ ] HMAC signing test uses a known-vector that future refactors must reproduce byte-for-byte (Pitfall 30).
+- [ ] Receiver examples (Python, Go, Node) all use language-native constant-time compare with explanatory comments (Pitfall 30).
+- [ ] `THREAT_MODEL.md` has Threat Model 5 + Threat Model 6 + STRIDE updates (Pitfall 56).
+- [ ] `payload_version: "v1"` is on every webhook delivery and locked in a snapshot test (Pitfall 33).
+- [ ] Webhook retry uses full jitter, not zero jitter (Pitfall 34).
+- [ ] `cargo tree -i openssl-sys` empty after webhook + HTTP-client additions (Pitfall 32).
+- [ ] `cronduit.*` reserved-namespace validator is case-insensitive on the prefix and trims whitespace; runs at `cronduit check` (Pitfall 39).
+- [ ] Type-gated `labels` validator rejects command/script jobs with non-empty labels at config-load (Pitfall 40).
+- [ ] `job_runs.config_hash` AND `job_runs.image_digest` columns exist nullable; UI renders "—" for NULLs (Pitfalls 44, 45).
+- [ ] Config-hash backfill DOES happen (current job hash); image-digest backfill does NOT (Pitfall 47).
+- [ ] Exit-code histogram uses bucket strategy; `null` bucket distinct from green/red; minimum N=10 enforced (Pitfalls 48, 49).
+- [ ] No exit-code `/metrics` cardinality leak (Pitfall 48).
+- [ ] Tags lowercase + trimmed at config-load; charset validator rejects spaces/special chars (Pitfalls 51, 52).
+- [ ] Dashboard tag filter is AND; URL state via repeated `?tag=`; untagged jobs hidden when filter active (Pitfall 53).
+- [ ] `apply_defaults_for_field` shared helper has 6-row matrix test; webhooks and labels both consume it (Pitfall 54).
+- [ ] Failure-context schema migration lands BEFORE webhook payload includes streak data (Pitfall 55).
 
 ---
 
 ## Phase-Specific Warnings (for the Roadmapper)
 
-| Phase | Likely Pitfall | Mitigation |
-|-------|---------------|------------|
-| rc.1 Spike (Stop) | 1.1, 1.2, 1.3 — cancellation-identity + race + FEATURES.md regression | Spike the `RunControl` + `stop_reason` design first; validate test T-V11-STOP-01..07 before promoting to rc.1 feature work. |
-| rc.1 LogLine.id refactor | X.2, 2.1 — writer ordering blocks everything | Land as its own micro-PR **before** either stop-a-job or log-backfill PRs. |
-| rc.1 Log backfill | 2.2, 4.1 — dedupe + gap-detection | Id-based dedupe is the single fix for multiple pitfalls; implement client-side once and reuse. |
-| rc.1 Per-job run number migration | 5.1, 5.2, 5.3 — three-step split + SQLite table-rewrite + long migration | Biggest risk in v1.1. Ship as its own multi-file PR with a 100k-row fixture test. |
-| rc.1 Healthcheck | 10.1 — verify operator's actual compose first | Reproduce operator's failing invocation against the shipped image before writing code. |
-| rc.2 Timeline | 6.1, 6.3 — N+1 + tz consistency | Single-query design reviewed; tz matches dashboard. |
-| rc.2 Duration trend | 8.1 — percentile rounding convention | Write `src/web/stats.rs::percentile` with exhaustive tests first, then plug into handler. |
-| rc.2 Sparkline | 7.1 — sample-size honesty | Lock `MIN_SAMPLES_FOR_RATE` constant; show "—" below threshold. |
-| rc.3 Bulk toggle | 9.1, 9.2 — override sync semantics | Code-search test for `enabled_override` usage; test `disable_missing_jobs` clears override. |
+| Phase (suggested) | Feature block | Likely Pitfalls | Mitigation |
+|-------------------|---------------|-----------------|------------|
+| Phase 15 | Webhook delivery worker (foundation) | 28, 34, 38, 54 | Lock isolation pattern + jitter + url-credential stripping in the very first PR. Extract `apply_defaults_for_field` helper here OR in Phase 20 (whichever lands first). |
+| Phase 16 | Webhook payload + state-filter + coalescing | 29, 33, 35 | Lock `payload_version: "v1"` snapshot test. Lock `streak_first` default. Document the delivery-vs-notification contract. **DEPENDS on Phase 21 for streak helper.** |
+| Phase 17 | HMAC signing + receiver examples | 30, 37 | Known-vector test. Ship Python + Go + Node receivers with constant-time compare. Document secret rotation. |
+| Phase 18 | SSRF + HTTPS posture + threat model placeholder | 31, 32 | No filter; startup WARN; document loopback/RFC1918 silent + public HTTP warn. |
+| Phase 19 | Webhook docs + drain accounting | 35, 36, 37 | README `## Webhooks` complete; drain log line; secret rotation procedure. |
+| Phase 20 | Custom Docker labels (SEED-001) | 39, 40, 41, 42, 43, 54 | Both validators (reserved + type-gate). BTreeMap for determinism. Cap label sizes. Quoted-key examples. **Extract `apply_defaults_for_field` here if not in Phase 15.** |
+| Phase 21 | Failure context schema + queries | 44, 45, 46, 47, 55 | Two-column nullable migration. Config-hash backfill from current job hash; image-digest no backfill. EXPLAIN-locked queries. **MUST land before Phase 16's payload work consumes streak data.** |
+| Phase 22 | Failure-context UI + exit-code histogram | 48, 49, 50 | Bucket constants in code. Null bucket distinct color. N≥10 minimum sample. No `/metrics` cardinality leak. |
+| Phase 23 | Job tagging — TOML schema + normalization | 51, 52 | Lowercase + trim at load. Charset regex. Reject empty/whitespace-only. |
+| Phase 24 | Job tagging — dashboard filter chips + URL state | 53 | AND semantics. Repeated `?tag=`. Untagged hidden on filter active. |
+| Phase 25 | rc cuts + iterative UAT | (all UAT-surfaced) | Reuse v1.1's rc.N → fix-PR cadence. Each rc surfaces a gap; fix in-cycle. |
+| Phase 26 | Milestone close-out: THREAT_MODEL.md, README, docs | 56 | New Threat Model 5 + 6. STRIDE updates. README cross-links. Receiver examples published. |
+
+**Sequencing summary:** the dependency graph forces this rough ordering:
+
+```
+Phase 15 (worker isolation) ──┬──> Phase 16 (payload, depends on 21)
+                              │
+Phase 21 (failure-context schema) ──┴──> Phase 16
+                                    └──> Phase 22 (UI consumes failure-context queries)
+
+Phase 17 (HMAC) — independent, can run parallel to 18, 19, 20
+
+Phase 20 (labels) — independent (modulo helper extraction with 15)
+
+Phase 23 (tag schema) ──> Phase 24 (tag UI)
+
+Phase 26 (THREAT_MODEL.md, docs) — close-out, runs last
+```
 
 ---
 
 ## Sources
 
-- `/Users/Robert/Code/public/cronduit/src/scheduler/mod.rs` (L56, L98–L250)
-- `/Users/Robert/Code/public/cronduit/src/scheduler/cmd.rs` (enum shape)
-- `/Users/Robert/Code/public/cronduit/src/scheduler/run.rs` (L65–L350)
-- `/Users/Robert/Code/public/cronduit/src/scheduler/command.rs` (L58–L218 — process-group kill pattern)
-- `/Users/Robert/Code/public/cronduit/src/scheduler/script.rs` (L89 — matching process-group kill)
-- `/Users/Robert/Code/public/cronduit/src/scheduler/docker.rs` (L250–L409)
-- `/Users/Robert/Code/public/cronduit/src/scheduler/docker_orphan.rs` (entire file — `mark_run_orphaned` guard at L120, L131)
-- `/Users/Robert/Code/public/cronduit/src/scheduler/log_pipeline.rs` (entire file — `LogLine` lacks `id`)
-- `/Users/Robert/Code/public/cronduit/src/web/handlers/sse.rs` (entire file)
-- `/Users/Robert/Code/public/cronduit/src/web/handlers/run_detail.rs` (entire file — `fetch_logs` L97–L132)
-- `/Users/Robert/Code/public/cronduit/src/web/handlers/health.rs` (entire file — `(StatusCode, Json)` shape)
-- `/Users/Robert/Code/public/cronduit/src/db/queries.rs` (L286–L313 `insert_running_run`, L365 `insert_log_batch`, L783 `get_log_lines`)
-- `/Users/Robert/Code/public/cronduit/migrations/sqlite/20260410_000000_initial.up.sql` (schema baseline)
-- `/Users/Robert/Code/public/cronduit/Dockerfile` (no HEALTHCHECK directive)
-- `/Users/Robert/Code/public/cronduit/examples/docker-compose.yml` (no healthcheck stanza)
-- `/Users/Robert/Code/public/cronduit/examples/docker-compose.secure.yml` (no healthcheck stanza)
-- `/Users/Robert/Code/public/cronduit/.planning/research/ARCHITECTURE.md` (§3.1 — §5.6)
-- `/Users/Robert/Code/public/cronduit/.planning/research/FEATURES.md` (L92–L94 — flags the `kill_on_drop` regression proposal)
-- `/Users/Robert/Code/public/cronduit/.planning/milestones/v1.0-research/PITFALLS.md` (referenced as "v1.0-P#N" throughout)
-- Docker/moby ecosystem: moby#8441 (auto_remove race, already cited in v1.0 research), moby#50326 (container:<name> ns race, v1.0 P#2), SQLite docs on "Making Other Kinds Of Table Schema Changes" (12-step table-rewrite pattern), docker-py#2655 (wait vs auto_remove), Docker healthcheck docs (`--start-period`, `--retries`).
+**Codebase (read directly during research):**
+
+- `/Users/Robert/Code/public/cronduit/src/scheduler/docker.rs` (entire file — label-build site at L146–L171, image-digest capture at L240–L250, cancel/operator-stop branches at L341–L406)
+- `/Users/Robert/Code/public/cronduit/src/scheduler/docker_orphan.rs` (entire file — `mark_run_orphaned WHERE status='running'` guard at L120, L131, justifies `cronduit.*` reserved namespace)
+- `/Users/Robert/Code/public/cronduit/migrations/sqlite/20260410_000000_initial.up.sql` (L23 `jobs.config_hash`; L46 `idx_job_runs_job_id_start`; verifies `job_runs.config_hash` does NOT exist — drives Pitfall 44)
+- `/Users/Robert/Code/public/cronduit/migrations/sqlite/{20260416..20260422}_*.up.sql` (v1.1 migration shapes — three-file pattern referenced for v1.2 parallel migrations)
+- `/Users/Robert/Code/public/cronduit/THREAT_MODEL.md` (entire file — basis for Threat Model 5 + 6 additions; Stop + Bulk-toggle blast-radius mentions at L113, L115 are the tone reference)
+- `/Users/Robert/Code/public/cronduit/Cargo.toml` (L27–L28 — `hyper-util` already present; reuse for webhook delivery worker, no new heavy HTTP client dep needed)
+- `/Users/Robert/Code/public/cronduit/.planning/seeds/SEED-001-custom-docker-labels.md` (entire file — design pre-locked; Pitfalls 39–43 enforce the lock)
+- `/Users/Robert/Code/public/cronduit/.planning/PROJECT.md` (v1.2 milestone scope confirmation)
+- `/Users/Robert/Code/public/cronduit/.planning/MILESTONES.md` (v1.0 + v1.1 history; v1.0.1 `cmd`-on-non-docker validator pitfall, the precedent for Pitfall 40)
+- `/Users/Robert/Code/public/cronduit/.planning/milestones/v1.1-research/PITFALLS.md` (tone, depth, ranking convention; v1.1 numbering ends ~#27 → v1.2 starts at #28)
+- `/Users/Robert/Code/public/cronduit/.planning/milestones/v1.0-research/PITFALLS.md` (baseline pitfalls referenced as "v1.0-P#N" where re-entered)
+- `/Users/Robert/Code/public/cronduit/src/config/hash.rs` (verifies `compute_config_hash` is per-job and currently not wired into `job_runs`)
+
+**Ecosystem references:**
+
+- Stripe webhooks signing convention: timestamp + body, header `Stripe-Signature: t=<ts>,v1=<sig>` — basis for the `X-Cronduit-Signature` + `X-Cronduit-Timestamp` shape in Pitfall 30.
+- GitHub webhooks: `X-Hub-Signature-256: sha256=<hex>` header convention.
+- AWS architecture blog "Exponential Backoff and Jitter" (full jitter recommendation) — basis for Pitfall 34 algorithm choice.
+- moby#8441 (auto_remove vs wait_container race) — referenced at v1.0 Pitfall #3, still load-bearing for the image-digest capture site.
+- SQLite docs "Making Other Kinds Of Table Schema Changes" — table-rewrite pattern, reused for any v1.2 NOT NULL tightening if needed (none planned).
 
 ---
 
@@ -1210,13 +1235,17 @@ Rationale:
 
 | Area | Level | Basis |
 |------|-------|-------|
-| Stop-a-job pitfalls | HIGH | Verified against `mod.rs` main loop, `run.rs` run_job, `command.rs` + `docker.rs` cancel branches, `docker_orphan.rs` mark_run_orphaned. All line numbers checked. |
-| Log ordering + backfill | HIGH | Confirmed `LogLine` has no id field; confirmed broadcast-before-insert ordering in `log_writer_task` L334–L341; confirmed `run_detail.html` has no backfill today. |
-| TOCTOU on run detail | HIGH | Handler path in `run_detail.rs` L140–L144 returns 404 on `Ok(None)`; scheduler insert happens async via mpsc. |
-| Per-job run number migration | HIGH | Three-step split grounded in SQLite docs on NOT NULL addition; bundled sqlite version needs a CI assertion. |
-| Timeline pitfalls | HIGH | Existing indices + dashboard query shape both verified in `queries.rs` and the initial migration. |
-| Bulk enable/disable | HIGH | `sync_config_to_db`, `disable_missing_jobs`, `upsert_job` all read; override-clear logic derived from existing sync. |
-| Healthcheck scope correction | HIGH | Grep-verified: zero `HEALTHCHECK` in Dockerfile, zero `healthcheck:` in shipped compose files. |
-| FEATURES.md `kill_on_drop` regression flag | HIGH | Direct read of `FEATURES.md` L93 and `command.rs` L203 — the two disagree, and the current code is correct. |
-| Percentile rounding | MEDIUM-HIGH | Standard stats problem; convention choice is a decision not a risk. |
-
+| Webhook isolation pattern | HIGH | Standard tokio mpsc + spawn-worker pattern; v1.0/v1.1 already use bounded channels (log pipeline, log-broadcast capacity 256). Direct read of scheduler loop confirms existing isolation surface. |
+| Webhook flooding default | HIGH | Streak-edge-trigger is the operationally-correct default; rationale grounded in operator-experience pitfalls observed in similar tools. |
+| HMAC pitfalls | HIGH | Constant-time compare is canonical Web-Cryptography 101; Stripe / GitHub signing conventions verified. |
+| SSRF + HTTPS posture | HIGH | Aligned with v1's documented "trusted-LAN" stance (THREAT_MODEL.md Threat Model 2); no breaking change. |
+| Payload schema versioning | HIGH | API-design canonical wisdom; deferred-versioning-cost is well-documented across Stripe/GitHub/Slack/Twilio post-mortems. |
+| `cronduit.*` reserved namespace | HIGH | Validated against `docker_orphan.rs` reading `cronduit.run_id` → exact data-integrity risk if operator overrides. |
+| Type-gate validator | HIGH | Direct precedent in v1.0.1 `cmd`-on-non-docker validator. |
+| `job_runs.config_hash` gap | HIGH | Grep-verified: `config_hash` exists only on `jobs` table (`migrations/sqlite/20260410_000000_initial.up.sql:23`), nowhere on `job_runs`. |
+| Image-digest capture site | HIGH | Direct read of `docker.rs:240–250`; `DockerExecResult.image_digest` already populated, just needs persistence. |
+| Exit-code bucket strategy | MEDIUM-HIGH | Buckets reflect Unix shell-exit-code conventions (128+signal, 127 = command-not-found); decision-not-risk choice. |
+| Tag normalization rules | HIGH | Standard URL-friendly slug conventions; matches GitHub Issues / GitLab labels. |
+| Filter UX defaults (AND, hidden untagged) | HIGH | Issue-tracker convention (Jira, GitHub Issues, Linear all default to AND on multi-tag). |
+| Phase-ordering dependency | HIGH | Direct trace of webhook payload (Pitfall 33) → streak helper (Pitfall 46) dependency. |
+| Threat model gap | HIGH | Direct read of `THREAT_MODEL.md`; no current treatment of outbound HTTP. |
