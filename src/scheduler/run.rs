@@ -80,7 +80,10 @@ pub async fn run_job(
     let start = tokio::time::Instant::now();
 
     // 1. Insert running row (scheduler-driven path owns this step).
-    let run_id = match insert_running_run(&pool, job.id, &trigger).await {
+    // Phase 16 FCTX-04: capture per-run config_hash at fire time from the
+    // resolved DbJob so a reload-mid-fire still reflects the run's actual
+    // config rather than the latest reloaded value.
+    let run_id = match insert_running_run(&pool, job.id, &trigger, &job.config_hash).await {
         Ok(id) => id,
         Err(e) => {
             tracing::error!(
