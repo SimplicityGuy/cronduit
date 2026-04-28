@@ -433,6 +433,14 @@ pub async fn insert_running_run(
 
 /// Finalize a job run by updating its status, exit_code, end_time, duration_ms, error_message, container_id, and image_digest.
 /// Phase 16 FOUND-14: image_digest captured from `inspect_container` post-start; NULL for command/script jobs.
+///
+/// `#[allow(clippy::too_many_arguments)]`: the 8-arg shape mirrors the
+/// `job_runs` row's terminal write surface (status, exit_code, end_time,
+/// duration_ms, error_message, container_id, image_digest). Bundling these
+/// into a struct would re-marshal data that is already in scope at every
+/// caller; the param list IS the schema. Phase 16 FOUND-14 widened from 7
+/// to 8 to add `image_digest` alongside `container_id`.
+#[allow(clippy::too_many_arguments)]
 pub async fn finalize_run(
     pool: &DbPool,
     run_id: i64,
