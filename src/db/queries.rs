@@ -1159,14 +1159,16 @@ pub async fn get_run_history(
 pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<DbRunDetail>> {
     let sql_sqlite = r#"
         SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
-               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
+               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message,
+               r.image_digest, r.config_hash
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = ?1
     "#;
     let sql_postgres = r#"
         SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
-               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
+               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message,
+               r.image_digest, r.config_hash
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = $1
@@ -1190,6 +1192,8 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
                 duration_ms: r.get("duration_ms"),
                 exit_code: r.get("exit_code"),
                 error_message: r.get("error_message"),
+                image_digest: r.get("image_digest"), // Phase 16 FOUND-14
+                config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
             }))
         }
         PoolRef::Postgres(p) => {
@@ -1209,6 +1213,8 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
                 duration_ms: r.get("duration_ms"),
                 exit_code: r.get("exit_code"),
                 error_message: r.get("error_message"),
+                image_digest: r.get("image_digest"), // Phase 16 FOUND-14
+                config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
             }))
         }
     }
