@@ -678,10 +678,7 @@ pub struct FailureContext {
 /// convention from the initial migration so lexicographic comparison is
 /// portable across SQLite and Postgres.
 #[allow(dead_code)] // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
-pub async fn get_failure_context(
-    pool: &DbPool,
-    job_id: i64,
-) -> anyhow::Result<FailureContext> {
+pub async fn get_failure_context(pool: &DbPool, job_id: i64) -> anyhow::Result<FailureContext> {
     let sql_sqlite = r#"
         WITH last_success AS (
             SELECT id AS run_id, image_digest, config_hash, start_time
