@@ -1871,7 +1871,7 @@ mod tests {
         .await
         .unwrap();
 
-        let run_id = insert_running_run(&pool, job_id, "scheduled")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
             .await
             .unwrap();
         assert!(run_id > 0);
@@ -1912,14 +1912,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let run_id = insert_running_run(&pool, job_id, "scheduled")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
             .await
             .unwrap();
 
         let start = tokio::time::Instant::now();
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
-        finalize_run(&pool, run_id, "success", Some(0), start, None, None)
+        finalize_run(&pool, run_id, "success", Some(0), start, None, None, None)
             .await
             .unwrap();
 
@@ -1961,7 +1961,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let run_id = insert_running_run(&pool, job_id, "scheduled")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
             .await
             .unwrap();
 
@@ -2021,10 +2021,12 @@ mod tests {
     }
 
     async fn insert_run(pool: &DbPool, job_id: i64, status: &str, trigger: &str) -> i64 {
-        let run_id = insert_running_run(pool, job_id, trigger).await.unwrap();
+        let run_id = insert_running_run(pool, job_id, trigger, "testhash")
+            .await
+            .unwrap();
         if status != "running" {
             let start = tokio::time::Instant::now();
-            finalize_run(pool, run_id, status, Some(0), start, None, None)
+            finalize_run(pool, run_id, status, Some(0), start, None, None, None)
                 .await
                 .unwrap();
         }

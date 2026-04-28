@@ -54,7 +54,7 @@ async fn inflight_run_survives_reload() {
     let job_a = &enabled[0];
 
     // 2. Insert a running run for job-a
-    let run_id = insert_running_run(&pool, job_a.id, "scheduled")
+    let run_id = insert_running_run(&pool, job_a.id, "scheduled", "testhash")
         .await
         .expect("insert running run");
 

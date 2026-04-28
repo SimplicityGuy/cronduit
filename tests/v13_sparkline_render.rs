@@ -77,11 +77,11 @@ async fn seed_job(pool: &DbPool, name: &str) -> i64 {
 /// elapsed between the two calls (a few micros — immaterial to these tests
 /// since we assert on status-based counts + rendered strings, not durations).
 async fn seed_run_with_status(pool: &DbPool, job_id: i64, status: &str) {
-    let run_id = queries::insert_running_run(pool, job_id, "scheduled")
+    let run_id = queries::insert_running_run(pool, job_id, "scheduled", "testhash")
         .await
         .expect("insert running run");
     let start = tokio::time::Instant::now();
-    queries::finalize_run(pool, run_id, status, Some(0), start, None, None)
+    queries::finalize_run(pool, run_id, status, Some(0), start, None, None, None)
         .await
         .expect("finalize run");
 }

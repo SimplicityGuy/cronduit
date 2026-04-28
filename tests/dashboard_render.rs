@@ -71,16 +71,16 @@ async fn dashboard_renders_all_jobs_with_six_required_fields() {
     // Give alpha a terminal successful run so the Last Run status badge and
     // timestamp are populated (UI-06 fields 5 & 6).
     let start = tokio::time::Instant::now();
-    let alpha_run = queries::insert_running_run(&pool, alpha_id, "manual")
+    let alpha_run = queries::insert_running_run(&pool, alpha_id, "manual", "testhash")
         .await
         .expect("insert alpha running run");
-    queries::finalize_run(&pool, alpha_run, "success", Some(0), start, None, None)
+    queries::finalize_run(&pool, alpha_run, "success", Some(0), start, None, None, None)
         .await
         .expect("finalize alpha run");
 
     // Give beta an in-progress (running) row so the dashboard has to render
     // the running-status path as well.
-    let _beta_run = queries::insert_running_run(&pool, beta_id, "manual")
+    let _beta_run = queries::insert_running_run(&pool, beta_id, "manual", "testhash")
         .await
         .expect("insert beta running run");
 

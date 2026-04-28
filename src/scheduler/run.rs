@@ -797,7 +797,7 @@ mod tests {
         .await;
 
         // Pre-insert a row on behalf of the "API handler".
-        let pre_run_id = crate::db::queries::insert_running_run(&pool, job.id, "manual")
+        let pre_run_id = crate::db::queries::insert_running_run(&pool, job.id, "manual", "testhash")
             .await
             .unwrap();
 

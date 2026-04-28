@@ -186,11 +186,11 @@ async fn get_api_jobs_id_runs_honors_limit_query_param() {
 
     // Seed 5 runs directly through the queries module.
     for _ in 0..5 {
-        let run_id = cronduit::db::queries::insert_running_run(&pool, job_id, "manual")
+        let run_id = cronduit::db::queries::insert_running_run(&pool, job_id, "manual", "testhash")
             .await
             .expect("insert run");
         let start = tokio::time::Instant::now();
-        cronduit::db::queries::finalize_run(&pool, run_id, "success", Some(0), start, None, None)
+        cronduit::db::queries::finalize_run(&pool, run_id, "success", Some(0), start, None, None, None)
             .await
             .expect("finalize run");
     }
