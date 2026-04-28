@@ -622,6 +622,40 @@ pub struct DbRunDetail {
     pub config_hash: Option<String>,
 }
 
+/// Phase 16 FCTX-07: failure-context query result. Returned by
+/// `get_failure_context(job_id)`; consumed by the Phase 18 webhook payload
+/// (WH-09) and the Phase 21 failure-context UI panel (FCTX-01..06).
+///
+/// `streak_position` is computed Rust-side from `consecutive_failures`
+/// (D-06): consecutive_failures == 1 -> "first_failure"; > 1 -> "ongoing";
+/// == 0 -> caller should not be calling this (the run isn't a failure).
+///
+/// `last_success_*` fields are NULL when the job has never succeeded
+/// (the LEFT JOIN ON 1=1 returns one row with NULL last_success columns).
+#[derive(Debug, Clone)]
+pub struct FailureContext {
+    /// Number of failed/timeout/error runs since the last success (or all
+    /// failure-status runs if the job has never succeeded).
+    // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+    #[allow(dead_code)]
+    pub consecutive_failures: i64,
+    /// Run ID of the most recent successful run, or None if the job has
+    /// never succeeded.
+    // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+    #[allow(dead_code)]
+    pub last_success_run_id: Option<i64>,
+    /// Image digest of the most recent successful run, or None if no
+    /// success exists or the success was a non-docker job.
+    // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+    #[allow(dead_code)]
+    pub last_success_image_digest: Option<String>,
+    /// Config hash of the most recent successful run, or None if no
+    /// success exists or the success row was pre-v1.2 with no backfill match.
+    // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+    #[allow(dead_code)]
+    pub last_success_config_hash: Option<String>,
+}
+
 /// A row from job_logs.
 #[derive(Debug, Clone)]
 pub struct DbLogLine {
