@@ -188,6 +188,7 @@ fn docker_exec_result_carries_image_digest_for_db_storage() {
             error_message: None,
         },
         image_digest: Some("sha256:abc123def456".to_string()),
+        container_id: None,
     };
 
     assert_eq!(result.image_digest.as_deref(), Some("sha256:abc123def456"));

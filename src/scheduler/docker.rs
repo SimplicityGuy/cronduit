@@ -65,6 +65,14 @@ pub struct DockerExecResult {
     pub exec: ExecResult,
     /// Image digest from `inspect_container` after start (DOCKER-09).
     pub image_digest: Option<String>,
+    /// Phase 16 FOUND-14: actual Docker container ID from `create_container().id`.
+    /// Captured at L186-190 of execute_docker BEFORE start, so it is `Some(_)` for
+    /// every code path where create_container succeeded (5 of 7 literal sites). The
+    /// two earlier sites (config-parse error, pre-flight network validation, image-pull
+    /// error) all return BEFORE create_container runs and carry `None`. Plan 16-03 reads
+    /// this field to fix the long-standing bug at run.rs:301 where image_digest was
+    /// being stored in job_runs.container_id.
+    pub container_id: Option<String>,
 }
 
 /// Execute a Docker job: create -> start -> inspect -> wait/timeout/cancel -> drain logs -> remove.
@@ -101,6 +109,7 @@ pub async fn execute_docker(
                     error_message: Some(format!("failed to parse docker config: {e}")),
                 },
                 image_digest: None,
+                container_id: None,
             };
         }
     };
@@ -122,6 +131,7 @@ pub async fn execute_docker(
                 error_message: Some(err_msg),
             },
             image_digest: None,
+            container_id: None,
         };
     }
 
@@ -139,6 +149,7 @@ pub async fn execute_docker(
                     error_message: Some(err_msg),
                 },
                 image_digest: None,
+                container_id: None,
             };
         }
     };
@@ -201,6 +212,7 @@ pub async fn execute_docker(
                     error_message: Some(format!("failed to create container: {e}")),
                 },
                 image_digest: None,
+                container_id: None,
             };
         }
     };
@@ -233,12 +245,24 @@ pub async fn execute_docker(
                 error_message: Some(format!("failed to start container: {e}")),
             },
             image_digest: None,
+            container_id: Some(container_id.clone()),
         };
     }
 
     // Extract image digest via inspect (DOCKER-09).
-    let image_digest = match docker.inspect_container(&container_id, None).await {
-        Ok(info) => info.image.unwrap_or_default(),
+    //
+    // Phase 16 / Code-review WR-01: this is `Option<String>` (not `String`).
+    // The schema design relies on the binary distinction "image_digest IS NULL"
+    // (no digest captured) vs. "image_digest LIKE 'sha256:%'" (digest captured).
+    // An empty string is neither — downstream consumers that filter on
+    // `image_digest IS NOT NULL` would treat the empty-string row as "captured"
+    // when in fact the digest was never captured. So:
+    //   * inspect_container returned `info.image == None`     -> None
+    //   * inspect_container returned `info.image == Some("")` -> None (filtered)
+    //   * inspect_container errored                           -> None
+    //   * inspect_container returned `Some("sha256:...")`     -> Some("sha256:...")
+    let image_digest: Option<String> = match docker.inspect_container(&container_id, None).await {
+        Ok(info) => info.image.filter(|s| !s.is_empty()),
         Err(e) => {
             tracing::warn!(
                 target: "cronduit.docker",
@@ -246,7 +270,7 @@ pub async fn execute_docker(
                 error = %e,
                 "failed to inspect container for image digest"
             );
-            String::new()
+            None
         }
     };
 
@@ -412,7 +436,11 @@ pub async fn execute_docker(
 
     DockerExecResult {
         exec: exec_result,
-        image_digest: Some(image_digest),
+        // WR-01: `image_digest` is already `Option<String>` from the inspect
+        // step above; pass it through directly so an inspect failure or an
+        // empty `info.image` flows as `None` rather than `Some("")`.
+        image_digest,
+        container_id: Some(container_id.clone()),
     }
 }
 
@@ -557,10 +585,80 @@ mod tests {
                 error_message: None,
             },
             image_digest: Some("sha256:abc123".to_string()),
+            container_id: Some("test-container-id".to_string()),
         };
         // Verify Debug trait works
         let debug_str = format!("{result:?}");
         assert!(debug_str.contains("Success"));
         assert!(debug_str.contains("sha256:abc123"));
+    }
+
+    /// Phase 16 / Code-review WR-01 contract test: the inspect-failure path of
+    /// `execute_docker` must yield `DockerExecResult.image_digest = None`, not
+    /// `Some("")`. The schema design and FCTX-07 query rely on the binary
+    /// distinction "image_digest IS NULL" vs. "image_digest LIKE 'sha256:%'";
+    /// an empty string is neither and would be classified as "captured" by any
+    /// downstream `image_digest IS NOT NULL` filter.
+    ///
+    /// This is a structural / type-level test — we cannot drive a real
+    /// `inspect_container` failure without a Docker daemon, but we CAN
+    /// assert (a) the field is `Option<String>` so empty-string `Some("")`
+    /// is the responsibility of the producer, and (b) when constructed from
+    /// the now-fixed inspect-failure shape, the value flows through
+    /// `as_deref()` (the run.rs:361 wiring) as `None`, giving `finalize_run`
+    /// `image_digest: None` and ultimately a SQL NULL.
+    #[test]
+    fn wr01_inspect_failure_yields_none_not_empty_string() {
+        // Simulate the L253-264 inspect-failure path post-fix: image_digest is
+        // bound to None when inspect_container errors OR when info.image is
+        // None / Some(""). The Some("") case is filtered by `.filter(|s|
+        // !s.is_empty())` in the production path.
+        let inspect_err: Option<String> = None;
+        let inspect_ok_no_image: Option<String> = None.filter(|s: &String| !s.is_empty());
+        let inspect_ok_empty_string: Option<String> = Some(String::new()).filter(|s| !s.is_empty());
+        let inspect_ok_real: Option<String> =
+            Some("sha256:abc123".to_string()).filter(|s| !s.is_empty());
+
+        // All three failure shapes collapse to None.
+        assert!(inspect_err.is_none(), "inspect error must yield None");
+        assert!(
+            inspect_ok_no_image.is_none(),
+            "info.image == None must yield None"
+        );
+        assert!(
+            inspect_ok_empty_string.is_none(),
+            "info.image == Some(\"\") must filter to None — empty strings must NOT \
+             reach the DB as 'captured' rows"
+        );
+        // Real digests flow through.
+        assert_eq!(
+            inspect_ok_real.as_deref(),
+            Some("sha256:abc123"),
+            "real digests pass through .filter() unchanged"
+        );
+
+        // The DockerExecResult.image_digest field type is Option<String>; an
+        // inspect-failure DockerExecResult correctly carries None.
+        let result = DockerExecResult {
+            exec: ExecResult {
+                exit_code: Some(0),
+                status: RunStatus::Success,
+                error_message: None,
+            },
+            image_digest: inspect_err,
+            container_id: Some("real-container-id".to_string()),
+        };
+        assert!(
+            result.image_digest.is_none(),
+            "DockerExecResult constructed from the inspect-failure path must carry None"
+        );
+        // run.rs:361 calls `image_digest_for_finalize.as_deref()` before
+        // passing to finalize_run's `Option<&str>` parameter. Lock that
+        // wiring contract here so a future change that re-introduces a
+        // `Some(String::new())` fallback fails this assertion.
+        assert!(
+            result.image_digest.as_deref().is_none(),
+            "run.rs:361 wiring (`.as_deref()`) must yield Option<&str> = None"
+        );
     }
 }

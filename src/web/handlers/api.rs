@@ -79,7 +79,9 @@ pub async fn run_now(
     // otherwise hit a 404 (and the log-viewer would flash "Unable to
     // stream logs") because the scheduler task hadn't yet inserted the
     // row. Row is reserved here; scheduler reuses this id.
-    let run_id = match queries::insert_running_run(&state.pool, job_id, "manual").await {
+    let run_id = match queries::insert_running_run(&state.pool, job_id, "manual", &job.config_hash)
+        .await
+    {
         Ok(id) => id,
         Err(err) => {
             tracing::error!(target: "cronduit.web", error = %err, job_id, "run_now: insert failed");
@@ -136,6 +138,7 @@ pub async fn run_now(
                 tokio::time::Instant::now(),
                 Some("scheduler shutting down"),
                 None,
+                None, // Phase 16 FOUND-14: image_digest — error fallback never started a container
             )
             .await;
             (

@@ -98,7 +98,7 @@ pub async fn seed_test_job(pool: &DbPool, name: &str) -> i64 {
 /// production code paths (including Plan 11-05's two-statement counter
 /// transaction once it lands).
 pub async fn seed_running_run(pool: &DbPool, job_id: i64) -> i64 {
-    queries::insert_running_run(pool, job_id, "manual")
+    queries::insert_running_run(pool, job_id, "manual", "testhash")
         .await
         .expect("insert running run")
 }

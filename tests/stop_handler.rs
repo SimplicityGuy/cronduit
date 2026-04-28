@@ -43,7 +43,7 @@ async fn seed_running_run(pool: &DbPool, job_name: &str) -> i64 {
     )
     .await
     .expect("upsert job");
-    cronduit::db::queries::insert_running_run(pool, job_id, "manual")
+    cronduit::db::queries::insert_running_run(pool, job_id, "manual", "testhash")
         .await
         .expect("insert running run")
 }

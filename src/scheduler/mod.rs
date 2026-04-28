@@ -261,6 +261,7 @@ impl SchedulerLoop {
                                     tokio::time::Instant::now(),
                                     Some("job no longer exists"),
                                     None,
+                                    None, // Phase 16 FOUND-14: image_digest — orphan row, no docker run started
                                 )
                                 .await;
                             }
@@ -336,6 +337,7 @@ impl SchedulerLoop {
                                                 tokio::time::Instant::now(),
                                                 Some("job no longer exists"),
                                                 None,
+                                                None, // Phase 16 FOUND-14: image_digest — orphan row, no docker run started
                                             )
                                             .await;
                                         }

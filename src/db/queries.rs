@@ -365,7 +365,16 @@ impl From<PgDbJobRow> for DbJob {
 /// two statements are effectively serialized; on Postgres the tx block + row
 /// lock from UPDATE guarantees no two callers can read the same counter.
 /// Replaces the former `MAX + 1` race-prone pattern.
-pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> anyhow::Result<i64> {
+///
+/// Phase 16 FCTX-04: `config_hash` is captured at fire time (BEFORE the executor
+/// spawns) and bound into the new `job_runs.config_hash` column so a
+/// reload-mid-fire still reflects the run's actual config rather than the latest.
+pub async fn insert_running_run(
+    pool: &DbPool,
+    job_id: i64,
+    trigger: &str,
+    config_hash: &str, // Phase 16 FCTX-04
+) -> anyhow::Result<i64> {
     let now = chrono::Utc::now().to_rfc3339();
 
     match pool.writer() {
@@ -380,13 +389,14 @@ pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> an
             .await?;
 
             let run_id: i64 = sqlx::query_scalar(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
-                 VALUES (?1, 'running', ?2, ?3, ?4) RETURNING id",
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number, config_hash) \
+                 VALUES (?1, 'running', ?2, ?3, ?4, ?5) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
             .bind(reserved)
+            .bind(config_hash) // Phase 16 FCTX-04: NEW bind, position ?5
             .fetch_one(&mut *tx)
             .await?;
 
@@ -404,13 +414,14 @@ pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> an
             .await?;
 
             let run_id: i64 = sqlx::query_scalar(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
-                 VALUES ($1, 'running', $2, $3, $4) RETURNING id",
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number, config_hash) \
+                 VALUES ($1, 'running', $2, $3, $4, $5) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
             .bind(reserved)
+            .bind(config_hash) // Phase 16 FCTX-04: NEW bind, position $5
             .fetch_one(&mut *tx)
             .await?;
 
@@ -420,7 +431,16 @@ pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> an
     }
 }
 
-/// Finalize a job run by updating its status, exit_code, end_time, duration_ms, error_message, and container_id.
+/// Finalize a job run by updating its status, exit_code, end_time, duration_ms, error_message, container_id, and image_digest.
+/// Phase 16 FOUND-14: image_digest captured from `inspect_container` post-start; NULL for command/script jobs.
+///
+/// `#[allow(clippy::too_many_arguments)]`: the 8-arg shape mirrors the
+/// `job_runs` row's terminal write surface (status, exit_code, end_time,
+/// duration_ms, error_message, container_id, image_digest). Bundling these
+/// into a struct would re-marshal data that is already in scope at every
+/// caller; the param list IS the schema. Phase 16 FOUND-14 widened from 7
+/// to 8 to add `image_digest` alongside `container_id`.
+#[allow(clippy::too_many_arguments)]
 pub async fn finalize_run(
     pool: &DbPool,
     run_id: i64,
@@ -429,6 +449,7 @@ pub async fn finalize_run(
     start_instant: tokio::time::Instant,
     error_message: Option<&str>,
     container_id: Option<&str>,
+    image_digest: Option<&str>, // Phase 16 FOUND-14
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let duration_ms = start_instant.elapsed().as_millis().min(i64::MAX as u128) as i64;
@@ -436,7 +457,7 @@ pub async fn finalize_run(
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             sqlx::query(
-                "UPDATE job_runs SET status = ?1, exit_code = ?2, end_time = ?3, duration_ms = ?4, error_message = ?5, container_id = ?6 WHERE id = ?7",
+                "UPDATE job_runs SET status = ?1, exit_code = ?2, end_time = ?3, duration_ms = ?4, error_message = ?5, container_id = ?6, image_digest = ?7 WHERE id = ?8",
             )
             .bind(status)
             .bind(exit_code)
@@ -444,13 +465,14 @@ pub async fn finalize_run(
             .bind(duration_ms)
             .bind(error_message)
             .bind(container_id)
+            .bind(image_digest) // Phase 16 FOUND-14: NEW bind, position ?7
             .bind(run_id)
             .execute(p)
             .await?;
         }
         PoolRef::Postgres(p) => {
             sqlx::query(
-                "UPDATE job_runs SET status = $1, exit_code = $2, end_time = $3, duration_ms = $4, error_message = $5, container_id = $6 WHERE id = $7",
+                "UPDATE job_runs SET status = $1, exit_code = $2, end_time = $3, duration_ms = $4, error_message = $5, container_id = $6, image_digest = $7 WHERE id = $8",
             )
             .bind(status)
             .bind(exit_code)
@@ -458,6 +480,7 @@ pub async fn finalize_run(
             .bind(duration_ms)
             .bind(error_message)
             .bind(container_id)
+            .bind(image_digest) // Phase 16 FOUND-14: NEW bind, position $7
             .bind(run_id)
             .execute(p)
             .await?;
@@ -564,6 +587,14 @@ pub struct DbRun {
     pub duration_ms: Option<i64>,
     pub exit_code: Option<i32>,
     pub error_message: Option<String>,
+    /// Phase 16 FOUND-14: image digest from post-start `inspect_container`. NULL for
+    /// command/script jobs (no image), pre-v1.2 docker rows (capture site landed in v1.2).
+    pub image_digest: Option<String>,
+    /// Phase 16 FCTX-04: per-run config_hash captured at fire time by
+    /// `insert_running_run`. NULL for pre-v1.2 rows whose backfill found no matching
+    /// `jobs.config_hash`. See migration `*_000007_config_hash_backfill.up.sql` for
+    /// the BACKFILL_CUTOFF_RFC3339 marker (D-03).
+    pub config_hash: Option<String>,
 }
 
 /// A row from job_runs with the associated job name (for run detail page).
@@ -581,6 +612,146 @@ pub struct DbRunDetail {
     pub duration_ms: Option<i64>,
     pub exit_code: Option<i32>,
     pub error_message: Option<String>,
+    /// Phase 16 FOUND-14: image digest from post-start `inspect_container`. NULL for
+    /// command/script jobs (no image), pre-v1.2 docker rows (capture site landed in v1.2).
+    pub image_digest: Option<String>,
+    /// Phase 16 FCTX-04: per-run config_hash captured at fire time by
+    /// `insert_running_run`. NULL for pre-v1.2 rows whose backfill found no matching
+    /// `jobs.config_hash`. See migration `*_000007_config_hash_backfill.up.sql` for
+    /// the BACKFILL_CUTOFF_RFC3339 marker (D-03).
+    pub config_hash: Option<String>,
+}
+
+/// Phase 16 FCTX-07: failure-context query result. Returned by
+/// `get_failure_context(job_id)`; consumed by the Phase 18 webhook payload
+/// (WH-09) and the Phase 21 failure-context UI panel (FCTX-01..06).
+///
+/// `streak_position` is computed Rust-side from `consecutive_failures`
+/// (D-06): consecutive_failures == 1 -> "first_failure"; > 1 -> "ongoing";
+/// == 0 -> caller should not be calling this (the run isn't a failure).
+///
+/// `last_success_*` fields are NULL when the job has never succeeded
+/// (the LEFT JOIN ON 1=1 returns one row with NULL last_success columns).
+#[derive(Debug, Clone)]
+pub struct FailureContext {
+    /// Number of failed/timeout/error runs since the last success (or all
+    /// failure-status runs if the job has never succeeded).
+    // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+    #[allow(dead_code)]
+    pub consecutive_failures: i64,
+    /// Run ID of the most recent successful run, or None if the job has
+    /// never succeeded.
+    // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+    #[allow(dead_code)]
+    pub last_success_run_id: Option<i64>,
+    /// Image digest of the most recent successful run, or None if no
+    /// success exists or the success was a non-docker job.
+    // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+    #[allow(dead_code)]
+    pub last_success_image_digest: Option<String>,
+    /// Config hash of the most recent successful run, or None if no
+    /// success exists or the success row was pre-v1.2 with no backfill match.
+    // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+    #[allow(dead_code)]
+    pub last_success_config_hash: Option<String>,
+}
+
+/// Phase 16 FCTX-07: single-query helper for failure-context computation.
+///
+/// Returns a `FailureContext` containing:
+/// - `consecutive_failures`: count of failed/timeout/error runs since the
+///   most recent success (or count of all failure-status runs if the job
+///   has never succeeded).
+/// - `last_success_run_id` + `last_success_image_digest` +
+///   `last_success_config_hash`: metadata of the most recent success
+///   (NULL fields when the job has never succeeded).
+///
+/// Implementation uses two CTEs (`last_success` LIMIT 1 + `streak` count)
+/// joined via `LEFT JOIN ... ON 1=1` so a single fetch_one returns one row
+/// even when no success exists. Both CTE arms hit
+/// `idx_job_runs_job_id_start (job_id, start_time DESC)` -- verified by
+/// the EXPLAIN tests in Plan 16-06.
+///
+/// Standard SQL only (D-15 -- no percentile_cont, no FILTER, no window
+/// functions). Epoch sentinel `'1970-01-01T00:00:00Z'` used in COALESCE
+/// to handle the never-succeeded case; matches the start_time RFC3339 TEXT
+/// convention from the initial migration so lexicographic comparison is
+/// portable across SQLite and Postgres.
+#[allow(dead_code)] // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+pub async fn get_failure_context(pool: &DbPool, job_id: i64) -> anyhow::Result<FailureContext> {
+    let sql_sqlite = r#"
+        WITH last_success AS (
+            SELECT id AS run_id, image_digest, config_hash, start_time
+              FROM job_runs
+             WHERE job_id = ?1 AND status = 'success'
+             ORDER BY start_time DESC
+             LIMIT 1
+        ),
+        streak AS (
+            SELECT COUNT(*) AS consecutive_failures
+              FROM job_runs
+             WHERE job_id = ?1
+               AND status IN ('failed', 'timeout', 'error')
+               AND start_time > COALESCE(
+                     (SELECT start_time FROM last_success),
+                     '1970-01-01T00:00:00Z'
+                   )
+        )
+        SELECT
+            streak.consecutive_failures,
+            last_success.run_id        AS last_success_run_id,
+            last_success.image_digest  AS last_success_image_digest,
+            last_success.config_hash   AS last_success_config_hash
+          FROM streak
+          LEFT JOIN last_success ON 1=1
+    "#;
+    let sql_postgres = r#"
+        WITH last_success AS (
+            SELECT id AS run_id, image_digest, config_hash, start_time
+              FROM job_runs
+             WHERE job_id = $1 AND status = 'success'
+             ORDER BY start_time DESC
+             LIMIT 1
+        ),
+        streak AS (
+            SELECT COUNT(*) AS consecutive_failures
+              FROM job_runs
+             WHERE job_id = $1
+               AND status IN ('failed', 'timeout', 'error')
+               AND start_time > COALESCE(
+                     (SELECT start_time FROM last_success),
+                     '1970-01-01T00:00:00Z'
+                   )
+        )
+        SELECT
+            streak.consecutive_failures,
+            last_success.run_id        AS last_success_run_id,
+            last_success.image_digest  AS last_success_image_digest,
+            last_success.config_hash   AS last_success_config_hash
+          FROM streak
+          LEFT JOIN last_success ON 1=1
+    "#;
+
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let row = sqlx::query(sql_sqlite).bind(job_id).fetch_one(p).await?;
+            Ok(FailureContext {
+                consecutive_failures: row.get("consecutive_failures"),
+                last_success_run_id: row.get("last_success_run_id"),
+                last_success_image_digest: row.get("last_success_image_digest"),
+                last_success_config_hash: row.get("last_success_config_hash"),
+            })
+        }
+        PoolRef::Postgres(p) => {
+            let row = sqlx::query(sql_postgres).bind(job_id).fetch_one(p).await?;
+            Ok(FailureContext {
+                consecutive_failures: row.get("consecutive_failures"),
+                last_success_run_id: row.get("last_success_run_id"),
+                last_success_image_digest: row.get("last_success_image_digest"),
+                last_success_config_hash: row.get("last_success_config_hash"),
+            })
+        }
+    }
 }
 
 /// A row from job_logs.
@@ -1057,7 +1228,7 @@ pub async fn get_run_history(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
+                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message, image_digest, config_hash FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
             )
             .bind(job_id)
             .bind(limit)
@@ -1078,6 +1249,8 @@ pub async fn get_run_history(
                     duration_ms: r.get("duration_ms"),
                     exit_code: r.get("exit_code"),
                     error_message: r.get("error_message"),
+                    image_digest: r.get("image_digest"), // Phase 16 FOUND-14
+                    config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
                 })
                 .collect();
 
@@ -1091,7 +1264,7 @@ pub async fn get_run_history(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
+                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message, image_digest, config_hash FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
             )
             .bind(job_id)
             .bind(limit)
@@ -1112,6 +1285,8 @@ pub async fn get_run_history(
                     duration_ms: r.get("duration_ms"),
                     exit_code: r.get("exit_code"),
                     error_message: r.get("error_message"),
+                    image_digest: r.get("image_digest"), // Phase 16 FOUND-14
+                    config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
                 })
                 .collect();
 
@@ -1124,14 +1299,16 @@ pub async fn get_run_history(
 pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<DbRunDetail>> {
     let sql_sqlite = r#"
         SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
-               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
+               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message,
+               r.image_digest, r.config_hash
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = ?1
     "#;
     let sql_postgres = r#"
         SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
-               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message
+               r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message,
+               r.image_digest, r.config_hash
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = $1
@@ -1155,6 +1332,8 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
                 duration_ms: r.get("duration_ms"),
                 exit_code: r.get("exit_code"),
                 error_message: r.get("error_message"),
+                image_digest: r.get("image_digest"), // Phase 16 FOUND-14
+                config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
             }))
         }
         PoolRef::Postgres(p) => {
@@ -1174,6 +1353,8 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
                 duration_ms: r.get("duration_ms"),
                 exit_code: r.get("exit_code"),
                 error_message: r.get("error_message"),
+                image_digest: r.get("image_digest"), // Phase 16 FOUND-14
+                config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
             }))
         }
     }
@@ -1830,7 +2011,7 @@ mod tests {
         .await
         .unwrap();
 
-        let run_id = insert_running_run(&pool, job_id, "scheduled")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
             .await
             .unwrap();
         assert!(run_id > 0);
@@ -1871,14 +2052,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let run_id = insert_running_run(&pool, job_id, "scheduled")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
             .await
             .unwrap();
 
         let start = tokio::time::Instant::now();
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
-        finalize_run(&pool, run_id, "success", Some(0), start, None, None)
+        finalize_run(&pool, run_id, "success", Some(0), start, None, None, None)
             .await
             .unwrap();
 
@@ -1920,7 +2101,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let run_id = insert_running_run(&pool, job_id, "scheduled")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
             .await
             .unwrap();
 
@@ -1980,10 +2161,12 @@ mod tests {
     }
 
     async fn insert_run(pool: &DbPool, job_id: i64, status: &str, trigger: &str) -> i64 {
-        let run_id = insert_running_run(pool, job_id, trigger).await.unwrap();
+        let run_id = insert_running_run(pool, job_id, trigger, "testhash")
+            .await
+            .unwrap();
         if status != "running" {
             let start = tokio::time::Instant::now();
-            finalize_run(pool, run_id, status, Some(0), start, None, None)
+            finalize_run(pool, run_id, status, Some(0), start, None, None, None)
                 .await
                 .unwrap();
         }

@@ -80,7 +80,10 @@ pub async fn run_job(
     let start = tokio::time::Instant::now();
 
     // 1. Insert running row (scheduler-driven path owns this step).
-    let run_id = match insert_running_run(&pool, job.id, &trigger).await {
+    // Phase 16 FCTX-04: capture per-run config_hash at fire time from the
+    // resolved DbJob so a reload-mid-fire still reflects the run's actual
+    // config rather than the latest reloaded value.
+    let run_id = match insert_running_run(&pool, job.id, &trigger, &job.config_hash).await {
         Ok(id) => id,
         Err(e) => {
             tracing::error!(
@@ -229,6 +232,7 @@ async fn continue_run(
     };
 
     let mut container_id_for_finalize: Option<String> = None;
+    let mut image_digest_for_finalize: Option<String> = None; // Phase 16 FOUND-14
 
     let exec_result = match job.job_type.as_str() {
         "command" => {
@@ -298,7 +302,16 @@ async fn continue_run(
                     &run_control,
                 )
                 .await;
-                container_id_for_finalize = docker_result.image_digest.clone();
+                // Phase 16 FOUND-14 / WR-02: route both finalize args through
+                // `finalize_args_from_docker_result` so the wiring contract is
+                // unit-testable without a real Docker daemon. The helper
+                // assigns container_id <- DockerExecResult.container_id and
+                // image_digest <- DockerExecResult.image_digest; a future
+                // copy/paste swap that re-introduces FOUND-14 fails the
+                // wiring unit test below in standard CI.
+                let (cid, digest) = finalize_args_from_docker_result(&docker_result);
+                container_id_for_finalize = cid;
+                image_digest_for_finalize = digest;
                 docker_result.exec
             }
             None => {
@@ -353,6 +366,7 @@ async fn continue_run(
         start,
         exec_result.error_message.as_deref(),
         container_id_for_finalize.as_deref(),
+        image_digest_for_finalize.as_deref(), // Phase 16 FOUND-14: new last positional
     )
     .await
     {
@@ -467,6 +481,32 @@ async fn continue_run(
     }
 }
 
+/// Phase 16 FOUND-14 / Code-review WR-02: extract the finalize-args wiring
+/// from a `DockerExecResult` so it is unit-testable without a real Docker
+/// daemon.
+///
+/// Returns `(container_id_for_finalize, image_digest_for_finalize)` — the two
+/// `Option<String>` values that flow into `finalize_run`'s parameters at the
+/// run.rs call-site. The historical FOUND-14 bug was a copy/paste swap that
+/// stored `image_digest` into `job_runs.container_id`. Locking this helper at
+/// the function-signature level means a future swap that reintroduces FOUND-14
+/// fails the wiring unit test in standard CI — no Docker daemon required.
+///
+/// Contract:
+///   * `.0` MUST come from `DockerExecResult.container_id`.
+///   * `.1` MUST come from `DockerExecResult.image_digest`.
+///   * Neither field is modified, defaulted, or string-coerced — they pass
+///     through as-is so the WR-01 None-vs-empty-string contract from
+///     `execute_docker` is preserved end-to-end.
+fn finalize_args_from_docker_result(
+    docker_result: &super::docker::DockerExecResult,
+) -> (Option<String>, Option<String>) {
+    (
+        docker_result.container_id.clone(),
+        docker_result.image_digest.clone(),
+    )
+}
+
 /// Classify a run failure into one of the 6 FailureReason variants (D-05).
 ///
 /// Maps error_message strings from docker_preflight, docker_pull, and docker_orphan
@@ -551,7 +591,110 @@ async fn log_writer_task(
 mod tests {
     use super::*;
     use crate::db::queries::PoolRef;
+    use crate::scheduler::command::ExecResult;
+    use crate::scheduler::docker::DockerExecResult;
     use sqlx::Row;
+
+    /// Phase 16 FOUND-14 / Code-review WR-02 — wiring lock.
+    ///
+    /// Constructs a synthetic `DockerExecResult` populated with values that
+    /// would HAVE made FOUND-14 silently regress (a real-looking container_id
+    /// AND a real-looking image_digest, both Some(_), both distinct strings)
+    /// and asserts `finalize_args_from_docker_result` returns the right one
+    /// in each tuple position.
+    ///
+    /// The two `#[ignore]`-gated regression tests in `tests/v12_run_rs_277_bug_fix.rs`
+    /// require a real Docker daemon and therefore do NOT run in standard
+    /// `cargo test`. This unit test fills that gap: a future copy/paste swap
+    /// at run.rs's docker arm that re-introduces FOUND-14 would have to
+    /// either mutate this helper or its assertions, both of which are
+    /// noisy in code review. Standard CI (no Docker) catches the regression.
+    #[test]
+    fn wr02_finalize_args_wiring_locks_found14_against_silent_regression() {
+        // Distinguishable fixture values: a "looks-like-container-id" string
+        // and a "looks-like-sha256-digest" string. If FOUND-14 swap is
+        // reintroduced (container <- image_digest, image_digest <- container_id),
+        // the assertions below FAIL with a clear message.
+        let docker_result = DockerExecResult {
+            exec: ExecResult {
+                exit_code: Some(0),
+                status: RunStatus::Success,
+                error_message: None,
+            },
+            image_digest: Some("sha256:deadbeef".to_string()),
+            container_id: Some("abc123-real-container-id".to_string()),
+        };
+
+        let (cid, digest) = finalize_args_from_docker_result(&docker_result);
+
+        assert_eq!(
+            cid.as_deref(),
+            Some("abc123-real-container-id"),
+            "FOUND-14 wiring: container_id_for_finalize MUST come from \
+             DockerExecResult.container_id, NOT image_digest"
+        );
+        assert_eq!(
+            digest.as_deref(),
+            Some("sha256:deadbeef"),
+            "FOUND-14 wiring: image_digest_for_finalize MUST come from \
+             DockerExecResult.image_digest, NOT container_id"
+        );
+        // Defensive paranoia — the two values must NOT have been swapped.
+        assert_ne!(
+            cid.as_deref(),
+            Some("sha256:deadbeef"),
+            "FOUND-14 regression: container_id wiring picked up image_digest"
+        );
+        assert!(
+            !cid.as_deref().unwrap_or("").starts_with("sha256:"),
+            "FOUND-14 regression: container_id must never start with sha256: \
+             — that would be the image digest leaking into the wrong column"
+        );
+    }
+
+    /// Phase 16 FOUND-14 / Code-review WR-02 — None-pass-through wiring.
+    ///
+    /// When `inspect_container` fails (WR-01 path), DockerExecResult.image_digest
+    /// is None; when create_container fails (early-return paths), both fields
+    /// are None. The helper must pass None through unchanged so finalize_run
+    /// receives `image_digest: None` and writes SQL NULL — never an empty
+    /// string, never a swapped value.
+    #[test]
+    fn wr02_finalize_args_wiring_passes_none_through_unchanged() {
+        // Inspect-failure shape (WR-01): real container_id, no digest.
+        let inspect_failed = DockerExecResult {
+            exec: ExecResult {
+                exit_code: Some(0),
+                status: RunStatus::Success,
+                error_message: None,
+            },
+            image_digest: None,
+            container_id: Some("real-cid".to_string()),
+        };
+        let (cid, digest) = finalize_args_from_docker_result(&inspect_failed);
+        assert_eq!(cid.as_deref(), Some("real-cid"));
+        assert!(
+            digest.is_none(),
+            "image_digest=None on inspect_container failure must flow through as None"
+        );
+
+        // Pre-create-container failure shape: both None.
+        let pre_create_failed = DockerExecResult {
+            exec: ExecResult {
+                exit_code: None,
+                status: RunStatus::Error,
+                error_message: Some("failed to create container".to_string()),
+            },
+            image_digest: None,
+            container_id: None,
+        };
+        let (cid, digest) = finalize_args_from_docker_result(&pre_create_failed);
+        assert!(cid.is_none(), "container_id=None must flow through as None");
+        assert!(
+            digest.is_none(),
+            "image_digest=None must flow through as None"
+        );
+    }
 
     async fn setup_pool() -> DbPool {
         let pool = DbPool::connect("sqlite::memory:").await.unwrap();
@@ -791,9 +934,10 @@ mod tests {
         .await;
 
         // Pre-insert a row on behalf of the "API handler".
-        let pre_run_id = crate::db::queries::insert_running_run(&pool, job.id, "manual")
-            .await
-            .unwrap();
+        let pre_run_id =
+            crate::db::queries::insert_running_run(&pool, job.id, "manual", "testhash")
+                .await
+                .unwrap();
 
         let cancel = CancellationToken::new();
         // Phase 15 / WH-02 — per-test webhook channel; receiver dropped.

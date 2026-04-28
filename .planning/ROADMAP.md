@@ -42,7 +42,7 @@
 ### 🚧 v1.2 Operator Integration & Insight (Phases 15–24) — IN PROGRESS
 
 - [x] **Phase 15: Foundation Preamble** — `Cargo.toml` 1.1.0→1.2.0 bump, `cargo-deny` CI preamble (non-blocking), webhook delivery worker foundation (bounded `mpsc(1024)` + dedicated worker task + drop counter) (completed 2026-04-26)
-- [ ] **Phase 16: Failure-Context Schema + run.rs:277 Bug Fix** — `DockerExecResult.container_id` field added and assignment corrected, `job_runs.config_hash` per-run column added (Option A), `get_failure_context(job_id)` single-query helper landed
+- [x] **Phase 16: Failure-Context Schema + run.rs:277 Bug Fix** — `DockerExecResult.container_id` field added and assignment corrected, `job_runs.config_hash` per-run column added (Option A), `get_failure_context(job_id)` single-query helper landed (completed 2026-04-28)
 - [ ] **Phase 17: Custom Docker Labels (SEED-001)** — operator-defined `labels` plumbed through to `bollard::Config::labels`, merge semantics, `cronduit.*` reserved-namespace validator, type-gated validator, `${ENV_VAR}` interpolation in values, size limits
 - [ ] **Phase 18: Webhook Payload + State-Filter + Coalescing** — Standard Webhooks v1 payload schema (`payload_version: "v1"`), per-job + `[defaults]` config with `use_defaults = false` disable, edge-triggered streak coalescing (default fires on `streak_position == 1`, `fire_every` per-job override)
 - [ ] **Phase 19: Webhook HMAC Signing + Receiver Examples** — HMAC-SHA256 only, Standard Webhooks signing-string `webhook-id.webhook-timestamp.payload`, signature header `v1,<base64>`, Python/Go/Node receiver examples with constant-time compare
@@ -90,7 +90,16 @@ Plans:
   2. An operator viewing two consecutive runs of the same job after a hot reload sees distinct `job_runs.config_hash` values when the underlying TOML actually changed (per-RUN column, not the per-JOB proxy).
   3. An operator inspecting the `EXPLAIN QUERY PLAN` for `get_failure_context(job_id)` on both SQLite and Postgres sees indexed access on `job_runs.job_id + start_time`; the function returns `streak_position`, `consecutive_failures`, `last_success_run_id`, `last_success_image_digest`, and `last_success_config_hash` from a single SQL query (not five separate round-trips).
 
-**Plans**: TBD
+**Plans:** 7/7 plans complete
+
+Plans:
+- [x] 16-01-PLAN.md — Migrations: image_digest add + config_hash add + config_hash backfill (6 files: 3 per backend) + tests/v12_fctx_config_hash_backfill.rs
+- [x] 16-02-PLAN.md — DockerExecResult.container_id field + 7 literal sites populated (struct widening)
+- [x] 16-03-PLAN.md — run.rs:301 bug fix + parallel image_digest_for_finalize local + tests/v12_run_rs_277_bug_fix.rs
+- [x] 16-04a-PLAN.md — DB layer (queries.rs only): finalize_run + insert_running_run signature changes; DbRun/DbRunDetail field add; SELECT-site updates (5 tasks)
+- [x] 16-04b-PLAN.md — Callers + recipe + wave-end gate: 4 production callers + 5 test-mod callers + just uat-fctx-bugfix-spot-check + full CI gate (5 tasks)
+- [x] 16-05-PLAN.md — get_failure_context query helper + FailureContext struct + tests/v12_fctx_streak.rs (5 streak scenarios + FCTX-04 write-site)
+- [x] 16-06-PLAN.md — tests/v12_fctx_explain.rs (EXPLAIN QUERY PLAN on SQLite + Postgres asserting idx_job_runs_job_id_start)
 
 ### Phase 17: Custom Docker Labels (SEED-001)
 
@@ -240,7 +249,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 15. Foundation Preamble | 5/5 | Complete    | 2026-04-26 |
-| 16. Failure-Context Schema + run.rs Bug Fix | 0/— | Not started | — |
+| 16. Failure-Context Schema + run.rs Bug Fix | 7/7 | Complete    | 2026-04-28 |
 | 17. Custom Docker Labels (SEED-001) | 0/— | Not started | — |
 | 18. Webhook Payload + State-Filter + Coalescing | 0/— | Not started | — |
 | 19. Webhook HMAC Signing + Receiver Examples | 0/— | Not started | — |

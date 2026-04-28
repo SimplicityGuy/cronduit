@@ -249,6 +249,22 @@ sqlx-prepare:
 schema-diff:
     cargo test --test schema_parity -- --nocapture
 
+# Phase 16 FOUND-14 spot check: print the container_id of the most recent
+# job_runs row from the dev SQLite DB. The maintainer verifies this is a
+# real Docker container ID (typically a 64-char hex string; 12-char prefix
+# is also valid) and NOT a sha256:... digest (which would indicate the
+# v1.0/v1.1 bug regressed). Targets cronduit.dev.db (the dev DB filename
+# matches `db-reset` and `sqlx-prepare` above).
+[group('db')]
+[doc('Phase 16 FOUND-14 spot check — container_id MUST NOT start with sha256:')]
+uat-fctx-bugfix-spot-check:
+    @echo "Phase 16 / FOUND-14 spot check"
+    @echo "Most recent job_run container_id (must NOT start with 'sha256:'):"
+    @sqlite3 cronduit.dev.db "SELECT id, job_id, status, container_id, image_digest FROM job_runs ORDER BY id DESC LIMIT 1;"
+    @echo ""
+    @echo "Expected: container_id is a real Docker container ID (or NULL for non-docker runs)."
+    @echo "FAIL if: container_id starts with 'sha256:' (would indicate the bug regressed)."
+
 # -------------------- dev loop --------------------
 
 # Single-process dev loop (readable text logs, trace level for cronduit)
