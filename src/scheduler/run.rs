@@ -690,7 +690,10 @@ mod tests {
         };
         let (cid, digest) = finalize_args_from_docker_result(&pre_create_failed);
         assert!(cid.is_none(), "container_id=None must flow through as None");
-        assert!(digest.is_none(), "image_digest=None must flow through as None");
+        assert!(
+            digest.is_none(),
+            "image_digest=None must flow through as None"
+        );
     }
 
     async fn setup_pool() -> DbPool {

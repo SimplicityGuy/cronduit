@@ -615,8 +615,7 @@ mod tests {
         // !s.is_empty())` in the production path.
         let inspect_err: Option<String> = None;
         let inspect_ok_no_image: Option<String> = None.filter(|s: &String| !s.is_empty());
-        let inspect_ok_empty_string: Option<String> =
-            Some(String::new()).filter(|s| !s.is_empty());
+        let inspect_ok_empty_string: Option<String> = Some(String::new()).filter(|s| !s.is_empty());
         let inspect_ok_real: Option<String> =
             Some("sha256:abc123".to_string()).filter(|s| !s.is_empty());
 
