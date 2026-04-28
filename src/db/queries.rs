@@ -579,6 +579,14 @@ pub struct DbRun {
     pub duration_ms: Option<i64>,
     pub exit_code: Option<i32>,
     pub error_message: Option<String>,
+    /// Phase 16 FOUND-14: image digest from post-start `inspect_container`. NULL for
+    /// command/script jobs (no image), pre-v1.2 docker rows (capture site landed in v1.2).
+    pub image_digest: Option<String>,
+    /// Phase 16 FCTX-04: per-run config_hash captured at fire time by
+    /// `insert_running_run`. NULL for pre-v1.2 rows whose backfill found no matching
+    /// `jobs.config_hash`. See migration `*_000007_config_hash_backfill.up.sql` for
+    /// the BACKFILL_CUTOFF_RFC3339 marker (D-03).
+    pub config_hash: Option<String>,
 }
 
 /// A row from job_runs with the associated job name (for run detail page).
@@ -596,6 +604,14 @@ pub struct DbRunDetail {
     pub duration_ms: Option<i64>,
     pub exit_code: Option<i32>,
     pub error_message: Option<String>,
+    /// Phase 16 FOUND-14: image digest from post-start `inspect_container`. NULL for
+    /// command/script jobs (no image), pre-v1.2 docker rows (capture site landed in v1.2).
+    pub image_digest: Option<String>,
+    /// Phase 16 FCTX-04: per-run config_hash captured at fire time by
+    /// `insert_running_run`. NULL for pre-v1.2 rows whose backfill found no matching
+    /// `jobs.config_hash`. See migration `*_000007_config_hash_backfill.up.sql` for
+    /// the BACKFILL_CUTOFF_RFC3339 marker (D-03).
+    pub config_hash: Option<String>,
 }
 
 /// A row from job_logs.
