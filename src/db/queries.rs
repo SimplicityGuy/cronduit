@@ -365,7 +365,16 @@ impl From<PgDbJobRow> for DbJob {
 /// two statements are effectively serialized; on Postgres the tx block + row
 /// lock from UPDATE guarantees no two callers can read the same counter.
 /// Replaces the former `MAX + 1` race-prone pattern.
-pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> anyhow::Result<i64> {
+///
+/// Phase 16 FCTX-04: `config_hash` is captured at fire time (BEFORE the executor
+/// spawns) and bound into the new `job_runs.config_hash` column so a
+/// reload-mid-fire still reflects the run's actual config rather than the latest.
+pub async fn insert_running_run(
+    pool: &DbPool,
+    job_id: i64,
+    trigger: &str,
+    config_hash: &str, // Phase 16 FCTX-04
+) -> anyhow::Result<i64> {
     let now = chrono::Utc::now().to_rfc3339();
 
     match pool.writer() {
@@ -380,13 +389,14 @@ pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> an
             .await?;
 
             let run_id: i64 = sqlx::query_scalar(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
-                 VALUES (?1, 'running', ?2, ?3, ?4) RETURNING id",
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number, config_hash) \
+                 VALUES (?1, 'running', ?2, ?3, ?4, ?5) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
             .bind(reserved)
+            .bind(config_hash) // Phase 16 FCTX-04: NEW bind, position ?5
             .fetch_one(&mut *tx)
             .await?;
 
@@ -404,13 +414,14 @@ pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> an
             .await?;
 
             let run_id: i64 = sqlx::query_scalar(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number) \
-                 VALUES ($1, 'running', $2, $3, $4) RETURNING id",
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number, config_hash) \
+                 VALUES ($1, 'running', $2, $3, $4, $5) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
             .bind(reserved)
+            .bind(config_hash) // Phase 16 FCTX-04: NEW bind, position $5
             .fetch_one(&mut *tx)
             .await?;
 
