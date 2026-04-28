@@ -65,6 +65,14 @@ pub struct DockerExecResult {
     pub exec: ExecResult,
     /// Image digest from `inspect_container` after start (DOCKER-09).
     pub image_digest: Option<String>,
+    /// Phase 16 FOUND-14: actual Docker container ID from `create_container().id`.
+    /// Captured at L186-190 of execute_docker BEFORE start, so it is `Some(_)` for
+    /// every code path where create_container succeeded (5 of 7 literal sites). The
+    /// two earlier sites (config-parse error, pre-flight network validation, image-pull
+    /// error) all return BEFORE create_container runs and carry `None`. Plan 16-03 reads
+    /// this field to fix the long-standing bug at run.rs:301 where image_digest was
+    /// being stored in job_runs.container_id.
+    pub container_id: Option<String>,
 }
 
 /// Execute a Docker job: create -> start -> inspect -> wait/timeout/cancel -> drain logs -> remove.
@@ -101,6 +109,7 @@ pub async fn execute_docker(
                     error_message: Some(format!("failed to parse docker config: {e}")),
                 },
                 image_digest: None,
+                container_id: None,
             };
         }
     };
@@ -122,6 +131,7 @@ pub async fn execute_docker(
                 error_message: Some(err_msg),
             },
             image_digest: None,
+            container_id: None,
         };
     }
 
@@ -139,6 +149,7 @@ pub async fn execute_docker(
                     error_message: Some(err_msg),
                 },
                 image_digest: None,
+                container_id: None,
             };
         }
     };
@@ -201,6 +212,7 @@ pub async fn execute_docker(
                     error_message: Some(format!("failed to create container: {e}")),
                 },
                 image_digest: None,
+                container_id: None,
             };
         }
     };
@@ -233,6 +245,7 @@ pub async fn execute_docker(
                 error_message: Some(format!("failed to start container: {e}")),
             },
             image_digest: None,
+            container_id: Some(container_id.clone()),
         };
     }
 
@@ -413,6 +426,7 @@ pub async fn execute_docker(
     DockerExecResult {
         exec: exec_result,
         image_digest: Some(image_digest),
+        container_id: Some(container_id.clone()),
     }
 }
 
@@ -557,6 +571,7 @@ mod tests {
                 error_message: None,
             },
             image_digest: Some("sha256:abc123".to_string()),
+            container_id: Some("test-container-id".to_string()),
         };
         // Verify Debug trait works
         let debug_str = format!("{result:?}");
