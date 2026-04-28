@@ -299,7 +299,8 @@ async fn continue_run(
                     &run_control,
                 )
                 .await;
-                container_id_for_finalize = docker_result.image_digest.clone();
+                container_id_for_finalize = docker_result.container_id.clone();   // Phase 16 FOUND-14: was incorrectly .image_digest
+                image_digest_for_finalize = docker_result.image_digest.clone();   // Phase 16 FOUND-14: NEW parallel capture
                 docker_result.exec
             }
             None => {
