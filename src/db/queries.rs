@@ -656,6 +656,107 @@ pub struct FailureContext {
     pub last_success_config_hash: Option<String>,
 }
 
+/// Phase 16 FCTX-07: single-query helper for failure-context computation.
+///
+/// Returns a `FailureContext` containing:
+/// - `consecutive_failures`: count of failed/timeout/error runs since the
+///   most recent success (or count of all failure-status runs if the job
+///   has never succeeded).
+/// - `last_success_run_id` + `last_success_image_digest` +
+///   `last_success_config_hash`: metadata of the most recent success
+///   (NULL fields when the job has never succeeded).
+///
+/// Implementation uses two CTEs (`last_success` LIMIT 1 + `streak` count)
+/// joined via `LEFT JOIN ... ON 1=1` so a single fetch_one returns one row
+/// even when no success exists. Both CTE arms hit
+/// `idx_job_runs_job_id_start (job_id, start_time DESC)` -- verified by
+/// the EXPLAIN tests in Plan 16-06.
+///
+/// Standard SQL only (D-15 -- no percentile_cont, no FILTER, no window
+/// functions). Epoch sentinel `'1970-01-01T00:00:00Z'` used in COALESCE
+/// to handle the never-succeeded case; matches the start_time RFC3339 TEXT
+/// convention from the initial migration so lexicographic comparison is
+/// portable across SQLite and Postgres.
+#[allow(dead_code)] // Phase 18+ consumes (webhook payload WH-09 + Phase 21 FCTX UI panel).
+pub async fn get_failure_context(
+    pool: &DbPool,
+    job_id: i64,
+) -> anyhow::Result<FailureContext> {
+    let sql_sqlite = r#"
+        WITH last_success AS (
+            SELECT id AS run_id, image_digest, config_hash, start_time
+              FROM job_runs
+             WHERE job_id = ?1 AND status = 'success'
+             ORDER BY start_time DESC
+             LIMIT 1
+        ),
+        streak AS (
+            SELECT COUNT(*) AS consecutive_failures
+              FROM job_runs
+             WHERE job_id = ?1
+               AND status IN ('failed', 'timeout', 'error')
+               AND start_time > COALESCE(
+                     (SELECT start_time FROM last_success),
+                     '1970-01-01T00:00:00Z'
+                   )
+        )
+        SELECT
+            streak.consecutive_failures,
+            last_success.run_id        AS last_success_run_id,
+            last_success.image_digest  AS last_success_image_digest,
+            last_success.config_hash   AS last_success_config_hash
+          FROM streak
+          LEFT JOIN last_success ON 1=1
+    "#;
+    let sql_postgres = r#"
+        WITH last_success AS (
+            SELECT id AS run_id, image_digest, config_hash, start_time
+              FROM job_runs
+             WHERE job_id = $1 AND status = 'success'
+             ORDER BY start_time DESC
+             LIMIT 1
+        ),
+        streak AS (
+            SELECT COUNT(*) AS consecutive_failures
+              FROM job_runs
+             WHERE job_id = $1
+               AND status IN ('failed', 'timeout', 'error')
+               AND start_time > COALESCE(
+                     (SELECT start_time FROM last_success),
+                     '1970-01-01T00:00:00Z'
+                   )
+        )
+        SELECT
+            streak.consecutive_failures,
+            last_success.run_id        AS last_success_run_id,
+            last_success.image_digest  AS last_success_image_digest,
+            last_success.config_hash   AS last_success_config_hash
+          FROM streak
+          LEFT JOIN last_success ON 1=1
+    "#;
+
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let row = sqlx::query(sql_sqlite).bind(job_id).fetch_one(p).await?;
+            Ok(FailureContext {
+                consecutive_failures: row.get("consecutive_failures"),
+                last_success_run_id: row.get("last_success_run_id"),
+                last_success_image_digest: row.get("last_success_image_digest"),
+                last_success_config_hash: row.get("last_success_config_hash"),
+            })
+        }
+        PoolRef::Postgres(p) => {
+            let row = sqlx::query(sql_postgres).bind(job_id).fetch_one(p).await?;
+            Ok(FailureContext {
+                consecutive_failures: row.get("consecutive_failures"),
+                last_success_run_id: row.get("last_success_run_id"),
+                last_success_image_digest: row.get("last_success_image_digest"),
+                last_success_config_hash: row.get("last_success_config_hash"),
+            })
+        }
+    }
+}
+
 /// A row from job_logs.
 #[derive(Debug, Clone)]
 pub struct DbLogLine {
