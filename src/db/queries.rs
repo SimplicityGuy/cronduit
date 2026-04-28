@@ -420,7 +420,8 @@ pub async fn insert_running_run(pool: &DbPool, job_id: i64, trigger: &str) -> an
     }
 }
 
-/// Finalize a job run by updating its status, exit_code, end_time, duration_ms, error_message, and container_id.
+/// Finalize a job run by updating its status, exit_code, end_time, duration_ms, error_message, container_id, and image_digest.
+/// Phase 16 FOUND-14: image_digest captured from `inspect_container` post-start; NULL for command/script jobs.
 pub async fn finalize_run(
     pool: &DbPool,
     run_id: i64,
@@ -429,6 +430,7 @@ pub async fn finalize_run(
     start_instant: tokio::time::Instant,
     error_message: Option<&str>,
     container_id: Option<&str>,
+    image_digest: Option<&str>, // Phase 16 FOUND-14
 ) -> anyhow::Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let duration_ms = start_instant.elapsed().as_millis().min(i64::MAX as u128) as i64;
@@ -436,7 +438,7 @@ pub async fn finalize_run(
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             sqlx::query(
-                "UPDATE job_runs SET status = ?1, exit_code = ?2, end_time = ?3, duration_ms = ?4, error_message = ?5, container_id = ?6 WHERE id = ?7",
+                "UPDATE job_runs SET status = ?1, exit_code = ?2, end_time = ?3, duration_ms = ?4, error_message = ?5, container_id = ?6, image_digest = ?7 WHERE id = ?8",
             )
             .bind(status)
             .bind(exit_code)
@@ -444,13 +446,14 @@ pub async fn finalize_run(
             .bind(duration_ms)
             .bind(error_message)
             .bind(container_id)
+            .bind(image_digest) // Phase 16 FOUND-14: NEW bind, position ?7
             .bind(run_id)
             .execute(p)
             .await?;
         }
         PoolRef::Postgres(p) => {
             sqlx::query(
-                "UPDATE job_runs SET status = $1, exit_code = $2, end_time = $3, duration_ms = $4, error_message = $5, container_id = $6 WHERE id = $7",
+                "UPDATE job_runs SET status = $1, exit_code = $2, end_time = $3, duration_ms = $4, error_message = $5, container_id = $6, image_digest = $7 WHERE id = $8",
             )
             .bind(status)
             .bind(exit_code)
@@ -458,6 +461,7 @@ pub async fn finalize_run(
             .bind(duration_ms)
             .bind(error_message)
             .bind(container_id)
+            .bind(image_digest) // Phase 16 FOUND-14: NEW bind, position $7
             .bind(run_id)
             .execute(p)
             .await?;
