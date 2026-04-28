@@ -16,7 +16,7 @@
 -- "at run time"). Rows whose matching `jobs` row was deleted leave
 -- `config_hash` NULL (orphan handling).
 --
--- Pairs with migrations/postgres/20260427_000007_config_hash_backfill.up.sql.
+-- Pairs with migrations/postgres/20260429_000007_config_hash_backfill.up.sql.
 -- Identical SQL on both backends — the correlated UPDATE shape is
 -- standard SQL accepted by SQLite and Postgres (RESEARCH §G.3).
 --

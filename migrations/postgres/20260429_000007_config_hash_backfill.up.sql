@@ -15,7 +15,7 @@
 -- (semantically suspect — reflect "config_hash at backfill time").
 -- Rows whose matching `jobs` row was deleted leave `config_hash` NULL.
 --
--- Pairs with migrations/sqlite/20260427_000007_config_hash_backfill.up.sql.
+-- Pairs with migrations/sqlite/20260429_000007_config_hash_backfill.up.sql.
 -- Identical SQL on both backends.
 --
 -- Idempotency: `WHERE config_hash IS NULL` guard makes re-runs safe.

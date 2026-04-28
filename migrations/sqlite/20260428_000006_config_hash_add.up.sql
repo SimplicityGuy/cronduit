@@ -3,15 +3,16 @@
 -- Nullable TEXT, FOREVER (D-01): captured at fire time by
 -- `insert_running_run` from the resolved DbJob's hash (in-memory Config
 -- ⇒ compute_config_hash); pre-v1.2 rows are best-effort backfilled by
--- the paired migration `_000007_config_hash_backfill.up.sql`. Rows with
--- no matching `jobs` row (orphaned by job deletion) stay NULL forever.
+-- the paired migration `20260429_000007_config_hash_backfill.up.sql`.
+-- Rows with no matching `jobs` row (orphaned by job deletion) stay NULL
+-- forever.
 --
 -- The per-RUN column resolves Research-Phase Correction 2 (Option A
 -- locked at requirements step): the per-JOB `jobs.config_hash` already
 -- existed in v1.0/v1.1, but failure-context delta needs per-RUN history
 -- to detect "config changed since last successful run".
 --
--- Pairs with migrations/postgres/20260427_000006_config_hash_add.up.sql.
+-- Pairs with migrations/postgres/20260428_000006_config_hash_add.up.sql.
 -- Any structural change MUST land in both files in the same PR;
 -- tests/schema_parity.rs::normalize_type collapses TEXT-family types to
 -- TEXT, so this column passes parity with zero test edits (RESEARCH §E).
