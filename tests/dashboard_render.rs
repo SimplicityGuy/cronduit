@@ -74,9 +74,18 @@ async fn dashboard_renders_all_jobs_with_six_required_fields() {
     let alpha_run = queries::insert_running_run(&pool, alpha_id, "manual", "testhash")
         .await
         .expect("insert alpha running run");
-    queries::finalize_run(&pool, alpha_run, "success", Some(0), start, None, None, None)
-        .await
-        .expect("finalize alpha run");
+    queries::finalize_run(
+        &pool,
+        alpha_run,
+        "success",
+        Some(0),
+        start,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("finalize alpha run");
 
     // Give beta an in-progress (running) row so the dashboard has to render
     // the running-status path as well.

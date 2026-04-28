@@ -232,7 +232,7 @@ async fn continue_run(
     };
 
     let mut container_id_for_finalize: Option<String> = None;
-    let mut image_digest_for_finalize: Option<String> = None;  // Phase 16 FOUND-14
+    let mut image_digest_for_finalize: Option<String> = None; // Phase 16 FOUND-14
 
     let exec_result = match job.job_type.as_str() {
         "command" => {
@@ -302,8 +302,8 @@ async fn continue_run(
                     &run_control,
                 )
                 .await;
-                container_id_for_finalize = docker_result.container_id.clone();   // Phase 16 FOUND-14: was incorrectly .image_digest
-                image_digest_for_finalize = docker_result.image_digest.clone();   // Phase 16 FOUND-14: NEW parallel capture
+                container_id_for_finalize = docker_result.container_id.clone(); // Phase 16 FOUND-14: was incorrectly .image_digest
+                image_digest_for_finalize = docker_result.image_digest.clone(); // Phase 16 FOUND-14: NEW parallel capture
                 docker_result.exec
             }
             None => {
@@ -358,7 +358,7 @@ async fn continue_run(
         start,
         exec_result.error_message.as_deref(),
         container_id_for_finalize.as_deref(),
-        image_digest_for_finalize.as_deref(),   // Phase 16 FOUND-14: new last positional
+        image_digest_for_finalize.as_deref(), // Phase 16 FOUND-14: new last positional
     )
     .await
     {
@@ -797,9 +797,10 @@ mod tests {
         .await;
 
         // Pre-insert a row on behalf of the "API handler".
-        let pre_run_id = crate::db::queries::insert_running_run(&pool, job.id, "manual", "testhash")
-            .await
-            .unwrap();
+        let pre_run_id =
+            crate::db::queries::insert_running_run(&pool, job.id, "manual", "testhash")
+                .await
+                .unwrap();
 
         let cancel = CancellationToken::new();
         // Phase 15 / WH-02 — per-test webhook channel; receiver dropped.

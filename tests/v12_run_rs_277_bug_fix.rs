@@ -346,5 +346,8 @@ async fn digest_persists_across_inspect_failure() {
         image_digest.is_none(),
         "image_digest should remain None when inspect_container failed; got: {image_digest:?}"
     );
-    assert_eq!(status, "success", "row must reach a terminal status, not panic");
+    assert_eq!(
+        status, "success",
+        "row must reach a terminal status, not panic"
+    );
 }

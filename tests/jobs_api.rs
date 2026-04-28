@@ -190,9 +190,18 @@ async fn get_api_jobs_id_runs_honors_limit_query_param() {
             .await
             .expect("insert run");
         let start = tokio::time::Instant::now();
-        cronduit::db::queries::finalize_run(&pool, run_id, "success", Some(0), start, None, None, None)
-            .await
-            .expect("finalize run");
+        cronduit::db::queries::finalize_run(
+            &pool,
+            run_id,
+            "success",
+            Some(0),
+            start,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("finalize run");
     }
 
     // Default limit: should return all 5.
