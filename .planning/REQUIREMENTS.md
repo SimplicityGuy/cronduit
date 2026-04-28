@@ -24,7 +24,7 @@ Every requirement below is a testable operator-visible behavior. Pitfall test-ca
 
 Continuation from v1.0/v1.1 FOUND-01..13.
 
-- [ ] **FOUND-14**: The `src/scheduler/run.rs:277` bug is fixed: `DockerExecResult` carries both `container_id: Option<String>` (from `create_container`) and `image_digest: Option<String>` (from `inspect_container().image`); `finalize_run` populates `job_runs.container_id` with the real container ID and `job_runs.image_digest` with the digest. Historical rows with `container_id = sha256:...` age out via Phase 6 retention; no data migration. `T-V12-FCTX-01`.
+- [x] **FOUND-14**: The `src/scheduler/run.rs:277` bug is fixed: `DockerExecResult` carries both `container_id: Option<String>` (from `create_container`) and `image_digest: Option<String>` (from `inspect_container().image`); `finalize_run` populates `job_runs.container_id` with the real container ID and `job_runs.image_digest` with the digest. Historical rows with `container_id = sha256:...` age out via Phase 6 retention; no data migration. `T-V12-FCTX-01`.
 
 - [x] **FOUND-15**: `Cargo.toml` version is bumped from `1.1.0` to `1.2.0` on the first v1.2 commit. `cronduit --version` reports `1.2.0` from the very first v1.2 commit. rc tags use the semver pre-release format `v1.2.0-rc.1`, `v1.2.0-rc.2`, etc. The final ship is `v1.2.0`.
 
@@ -82,13 +82,13 @@ Pre-locked design: `.planning/seeds/SEED-001-custom-docker-labels.md`. Three dec
 
 - [ ] **FCTX-03**: **Image-digest delta** (docker jobs only) — "image digest changed since last success: sha256:abc...→ sha256:def..." with truncation to 12 hex chars per side. Requires `job_runs.image_digest` column populated correctly (FOUND-14). Non-docker jobs hide this row. `T-V12-FCTX-05`, `T-V12-FCTX-06`.
 
-- [ ] **FCTX-04**: **Config-hash delta** — "config changed since last success" boolean ("Yes" if `current_run.config_hash != last_successful_run.config_hash`, "No" otherwise). Requires new `job_runs.config_hash TEXT NULL` per-run column added in v1.2 migration wave (Research-Phase Correction 2 / Option A). Conservative backfill from current `jobs.config_hash` for old rows; written from `insert_running_run` at fire time. `T-V12-FCTX-07`, `T-V12-FCTX-08`, `T-V12-FCTX-09`.
+- [x] **FCTX-04**: **Config-hash delta** — "config changed since last success" boolean ("Yes" if `current_run.config_hash != last_successful_run.config_hash`, "No" otherwise). Requires new `job_runs.config_hash TEXT NULL` per-run column added in v1.2 migration wave (Research-Phase Correction 2 / Option A). Conservative backfill from current `jobs.config_hash` for old rows; written from `insert_running_run` at fire time. `T-V12-FCTX-07`, `T-V12-FCTX-08`, `T-V12-FCTX-09`.
 
 - [ ] **FCTX-05**: **Duration-vs-p50 deviation** — "duration was 12.3s; typical p50 is 4.2s (3× longer than usual)" computed as `current.duration_ms / p50_of_last_100_successful_runs`. Below 5 sample threshold (no p50 available), this row is suppressed. Reuses `src/web/stats.rs::percentile()` from Phase 13. `T-V12-FCTX-10`.
 
 - [ ] **FCTX-06**: **Scheduler-fire-time vs run-start-time skew** — "scheduled fire: 14:30:00; actual start: 14:30:23 (+23s)" computed from `scheduled_for` (already in `job_runs`) and `started_at`. Highlights scheduler back-pressure or executor slow-start situations. `T-V12-FCTX-11`.
 
-- [ ] **FCTX-07**: The `get_failure_context(job_id)` query returns a single struct populated from a single SQL query (NOT 5 separate queries). The query is verified via `EXPLAIN QUERY PLAN` on both SQLite and Postgres to use indexed access on `job_runs.job_id` + `start_time`. `T-V12-FCTX-12`.
+- [x] **FCTX-07**: The `get_failure_context(job_id)` query returns a single struct populated from a single SQL query (NOT 5 separate queries). The query is verified via `EXPLAIN QUERY PLAN` on both SQLite and Postgres to use indexed access on `job_runs.job_id` + `start_time`. `T-V12-FCTX-12`.
 
 ### Per-Job Exit-Code Histogram (EXIT) — new category
 
@@ -169,7 +169,7 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 
 | REQ-ID    | Phase | Status  |
 | --------- | ----- | ------- |
-| FOUND-14  | 16    | Pending |
+| FOUND-14  | 16    | Complete |
 | FOUND-15  | 15    | Complete |
 | FOUND-16  | 15    | Complete |
 | WH-01     | 18    | Pending |
@@ -192,10 +192,10 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | FCTX-01   | 21    | Pending |
 | FCTX-02   | 21    | Pending |
 | FCTX-03   | 21    | Pending |
-| FCTX-04   | 16    | Pending |
+| FCTX-04   | 16    | Complete |
 | FCTX-05   | 21    | Pending |
 | FCTX-06   | 21    | Pending |
-| FCTX-07   | 16    | Pending |
+| FCTX-07   | 16    | Complete |
 | EXIT-01   | 21    | Pending |
 | EXIT-02   | 21    | Pending |
 | EXIT-03   | 21    | Pending |
