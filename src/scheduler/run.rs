@@ -229,6 +229,7 @@ async fn continue_run(
     };
 
     let mut container_id_for_finalize: Option<String> = None;
+    let mut image_digest_for_finalize: Option<String> = None;  // Phase 16 FOUND-14
 
     let exec_result = match job.job_type.as_str() {
         "command" => {
