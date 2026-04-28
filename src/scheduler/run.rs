@@ -355,6 +355,7 @@ async fn continue_run(
         start,
         exec_result.error_message.as_deref(),
         container_id_for_finalize.as_deref(),
+        image_digest_for_finalize.as_deref(),   // Phase 16 FOUND-14: new last positional
     )
     .await
     {
