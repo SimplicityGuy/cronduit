@@ -1088,7 +1088,7 @@ pub async fn get_run_history(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
+                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message, image_digest, config_hash FROM job_runs WHERE job_id = ?1 ORDER BY start_time DESC LIMIT ?2 OFFSET ?3",
             )
             .bind(job_id)
             .bind(limit)
@@ -1109,6 +1109,8 @@ pub async fn get_run_history(
                     duration_ms: r.get("duration_ms"),
                     exit_code: r.get("exit_code"),
                     error_message: r.get("error_message"),
+                    image_digest: r.get("image_digest"), // Phase 16 FOUND-14
+                    config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
                 })
                 .collect();
 
@@ -1122,7 +1124,7 @@ pub async fn get_run_history(
             let total: i64 = count_row.get("cnt");
 
             let rows = sqlx::query(
-                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
+                "SELECT id, job_id, job_run_number, status, trigger, start_time, end_time, duration_ms, exit_code, error_message, image_digest, config_hash FROM job_runs WHERE job_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3",
             )
             .bind(job_id)
             .bind(limit)
@@ -1143,6 +1145,8 @@ pub async fn get_run_history(
                     duration_ms: r.get("duration_ms"),
                     exit_code: r.get("exit_code"),
                     error_message: r.get("error_message"),
+                    image_digest: r.get("image_digest"), // Phase 16 FOUND-14
+                    config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
                 })
                 .collect();
 
