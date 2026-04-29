@@ -1,10 +1,13 @@
 ---
 id: SEED-001
-status: dormant
+status: realized
 planted: 2026-04-24
 planted_during: between v1.1 and v1.2 — milestone close-out for v1.1 just completed
 trigger_when: v1.2 milestone kickoff during the requirements pass (operator must explicitly raise this seed at `/gsd-new-milestone` for v1.2; do not auto-promote)
 scope: Small
+realized_in: phase-17
+milestone: v1.2
+realized_date: 2026-04-29
 ---
 
 # SEED-001: Custom Docker labels on spawned containers
