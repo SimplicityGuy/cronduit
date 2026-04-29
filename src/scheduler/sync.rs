@@ -274,6 +274,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            webhook: None,
         }
     }
 
@@ -443,6 +444,7 @@ mod tests {
                 timeout: None,
                 delete: None,
                 cmd: None,
+                webhook: None,
             }],
         };
 

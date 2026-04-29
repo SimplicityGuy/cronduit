@@ -81,6 +81,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            webhook: None,
         }
     }
 
@@ -134,6 +135,7 @@ mod tests {
                 timeout: None,
                 delete: None,
                 cmd: None,
+                webhook: None,
             }
         }
 
@@ -155,6 +157,7 @@ mod tests {
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
+                webhook: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -177,6 +180,7 @@ mod tests {
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
+                webhook: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -199,6 +203,7 @@ mod tests {
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
+                webhook: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -221,6 +226,7 @@ mod tests {
                 delete: None,
                 timeout: Some(std::time::Duration::from_secs(300)),
                 random_min_gap: None,
+                webhook: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -243,6 +249,7 @@ mod tests {
                 delete: Some(true),
                 timeout: None,
                 random_min_gap: None,
+                webhook: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(

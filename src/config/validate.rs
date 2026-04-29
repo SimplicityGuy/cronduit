@@ -459,6 +459,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            webhook: None,
         }
     }
 

@@ -89,6 +89,14 @@ pub struct DefaultsConfig {
     pub timeout: Option<Duration>,
     #[serde(default, with = "humantime_serde::option")]
     pub random_min_gap: Option<Duration>,
+    /// Operator-defined webhook delivery configuration applied to all jobs.
+    /// Per WH-01 / D-01..D-05. Per-job `webhook` always wins; this is taken
+    /// only when `job.webhook` is None and `job.use_defaults != Some(false)`.
+    /// See `src/config/defaults.rs::apply_defaults` and `WebhookConfig` below.
+    /// Single inline block — replace-on-collision merge (NOT a HashMap union
+    /// like `labels`). Validators in `validate.rs` reject malformed shapes.
+    #[serde(default)]
+    pub webhook: Option<WebhookConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,12 +139,143 @@ pub struct JobConfig {
     /// meaning "run with NO command", semantically distinct from None).
     #[serde(default)]
     pub cmd: Option<Vec<String>>,
+    /// Operator-defined webhook delivery configuration for this job.
+    /// Per WH-01 / D-01..D-05. When None, `apply_defaults` may fill it from
+    /// `[defaults].webhook` (replace-on-collision; see `defaults.rs`).
+    /// `use_defaults = Some(false)` disables the inheritance.
+    ///
+    /// NOTE: `webhook` does NOT enter `DockerJobConfig` / `serialize_config_json` /
+    /// `compute_config_hash` — the 5-layer parity invariant from Phase 17 LBL
+    /// applies to docker-execution surface only. The dispatcher reads webhook
+    /// config from a per-job `Arc<HashMap<i64, WebhookConfig>>` built at the
+    /// bin layer (Plan 05) — not from `config_json`. See RESEARCH Open Q 1.
+    #[serde(default)]
+    pub webhook: Option<WebhookConfig>,
+}
+
+/// Per-job and `[defaults]` webhook configuration.
+/// Phase 18 — WH-01 / D-02. Schema:
+///   webhook = {
+///     url        = "https://hook.example.com/...",   # required
+///     states     = ["failed", "timeout"],            # default
+///     secret     = "${WEBHOOK_SECRET}",              # required UNLESS unsigned=true
+///     unsigned   = false,                            # default
+///     fire_every = 1                                 # 1=first-of-stream (default); 0=every; N=every Nth match
+///   }
+///
+/// `secret` is wrapped in `SecretString` to scrub Debug/Display per V8 Data
+/// Protection (D-03). `${WEBHOOK_SECRET}` interpolation happens BEFORE TOML
+/// parsing via `interpolate.rs::interpolate` (whole-file textual pass,
+/// Phase 17 CR-01 truth).
+#[derive(Debug, Deserialize, Clone)]
+pub struct WebhookConfig {
+    /// Required. Validated by `check_webhook_url` (`http`/`https` schemes only in Phase 18;
+    /// HTTPS-for-non-loopback enforcement is WH-07 / Phase 20).
+    pub url: String,
+    /// Default `["failed", "timeout"]` if omitted. Each entry must be one of:
+    /// `"success" | "failed" | "timeout" | "stopped" | "cancelled" | "error"`.
+    /// Empty `[]` is rejected (use absence of `webhook` block to disable).
+    #[serde(default = "default_webhook_states")]
+    pub states: Vec<String>,
+    /// Required when `unsigned = false` (default). When `unsigned = true`, MUST be None.
+    /// Wrapped in SecretString — scrubbed Debug/Display.
+    #[serde(default)]
+    pub secret: Option<SecretString>,
+    /// When true, dispatcher omits the `webhook-signature` header entirely (D-05).
+    /// Cronduit extension to Standard Webhooks v1 for receivers like Slack/Discord
+    /// that don't HMAC-verify. Mutually exclusive with `secret`.
+    #[serde(default)]
+    pub unsigned: bool,
+    /// Coalescing knob (D-16):
+    ///   0   → always fire (legacy per-failure)
+    ///   1   → first-of-stream (default; fires when filter_position == 1)
+    ///   N>1 → every Nth match (fires when filter_position % N == 1: 1, N+1, 2N+1, ...)
+    /// Negative values are rejected at validate.
+    #[serde(default = "default_fire_every")]
+    pub fire_every: i64,
+}
+
+fn default_webhook_states() -> Vec<String> {
+    vec!["failed".to_string(), "timeout".to_string()]
+}
+
+fn default_fire_every() -> i64 {
+    1
 }
 
 #[derive(Debug)]
 pub struct ParsedConfig {
     pub config: Config,
     pub source_path: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn webhook_config_parses_per_job() {
+        let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[[jobs]]
+name = "j1"
+schedule = "* * * * *"
+command = "true"
+webhook = { url = "https://hook.example.com/x", states = ["failed"], secret = "shh", fire_every = 3 }
+"#;
+        let cfg: super::Config = toml::from_str(toml_text).expect("parse");
+        let wh = cfg.jobs[0].webhook.as_ref().expect("webhook present");
+        assert_eq!(wh.url, "https://hook.example.com/x");
+        assert_eq!(wh.states, vec!["failed".to_string()]);
+        assert!(wh.secret.is_some());
+        assert!(!wh.unsigned);
+        assert_eq!(wh.fire_every, 3);
+    }
+
+    #[test]
+    fn webhook_config_parses_defaults_block() {
+        let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[defaults]
+webhook = { url = "https://hook.example.com/y", unsigned = true }
+
+[[jobs]]
+name = "j1"
+schedule = "* * * * *"
+command = "true"
+"#;
+        let cfg: super::Config = toml::from_str(toml_text).expect("parse");
+        let wh = cfg
+            .defaults
+            .as_ref()
+            .unwrap()
+            .webhook
+            .as_ref()
+            .expect("defaults webhook");
+        assert_eq!(wh.url, "https://hook.example.com/y");
+        // Default-filled:
+        assert_eq!(wh.states, vec!["failed".to_string(), "timeout".to_string()]);
+        assert!(wh.secret.is_none());
+        assert!(wh.unsigned);
+        assert_eq!(wh.fire_every, 1);
+    }
+
+    #[test]
+    fn webhook_config_states_default_when_omitted() {
+        assert_eq!(
+            super::default_webhook_states(),
+            vec!["failed".to_string(), "timeout".to_string()]
+        );
+    }
+
+    #[test]
+    fn webhook_config_fire_every_default_when_omitted() {
+        assert_eq!(super::default_fire_every(), 1);
+    }
 }
 
 /// Shared by `cronduit check` and `cronduit run`. Never touches the DB.

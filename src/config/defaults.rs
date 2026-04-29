@@ -204,6 +204,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            webhook: None,
         }
     }
 
@@ -216,6 +217,7 @@ mod tests {
             delete: Some(true),
             timeout: Some(Duration::from_secs(300)),
             random_min_gap: Some(Duration::from_secs(90 * 60)),
+            webhook: None,
         }
     }
 
@@ -230,6 +232,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.image.as_deref(), Some("alpine:latest"));
@@ -246,6 +249,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.network.as_deref(), Some("container:vpn"));
@@ -262,6 +266,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(
@@ -281,6 +286,7 @@ mod tests {
             delete: None,
             timeout: Some(Duration::from_secs(300)),
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.timeout, Some(Duration::from_secs(300)));
@@ -297,6 +303,7 @@ mod tests {
             delete: Some(true),
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.delete, Some(true));
@@ -381,6 +388,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -428,6 +436,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -475,6 +484,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -525,6 +535,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, None);
         assert_eq!(merged.image, None);
@@ -551,6 +562,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: Some(Duration::from_secs(90 * 60)),
+            webhook: None,
         };
         let defaults_without_gap = DefaultsConfig {
             image: Some("alpine:latest".into()),
@@ -560,6 +572,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
 
         let merged_with = apply_defaults(job_with_gap, Some(&defaults_with_gap));
@@ -706,6 +719,7 @@ mod tests {
             timeout: Some(Duration::from_secs(300)),
             delete: Some(true),
             cmd: Some(vec!["echo".to_string(), "parity".to_string()]),
+            webhook: None,
         };
 
         let json_str = sync::serialize_config_json(&job);

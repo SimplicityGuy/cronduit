@@ -73,6 +73,7 @@ fn make_job(
         timeout,
         delete: None,
         cmd: None,
+        webhook: None,
     }
 }
 
