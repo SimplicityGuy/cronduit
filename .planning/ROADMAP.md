@@ -44,7 +44,7 @@
 - [x] **Phase 15: Foundation Preamble** — `Cargo.toml` 1.1.0→1.2.0 bump, `cargo-deny` CI preamble (non-blocking), webhook delivery worker foundation (bounded `mpsc(1024)` + dedicated worker task + drop counter) (completed 2026-04-26)
 - [x] **Phase 16: Failure-Context Schema + run.rs:277 Bug Fix** — `DockerExecResult.container_id` field added and assignment corrected, `job_runs.config_hash` per-run column added (Option A), `get_failure_context(job_id)` single-query helper landed (completed 2026-04-28)
 - [x] **Phase 17: Custom Docker Labels (SEED-001)** — operator-defined `labels` plumbed through to `bollard::Config::labels`, merge semantics, `cronduit.*` reserved-namespace validator, type-gated validator, `${ENV_VAR}` interpolation in values, size limits (completed 2026-04-29)
-- [ ] **Phase 18: Webhook Payload + State-Filter + Coalescing** — Standard Webhooks v1 payload schema (`payload_version: "v1"`), per-job + `[defaults]` config with `use_defaults = false` disable, edge-triggered streak coalescing (default fires on `streak_position == 1`, `fire_every` per-job override)
+- [x] **Phase 18: Webhook Payload + State-Filter + Coalescing** — Standard Webhooks v1 payload schema (`payload_version: "v1"`), per-job + `[defaults]` config with `use_defaults = false` disable, edge-triggered streak coalescing (default fires on `streak_position == 1`, `fire_every` per-job override) (completed 2026-04-29)
 - [ ] **Phase 19: Webhook HMAC Signing + Receiver Examples** — HMAC-SHA256 only, Standard Webhooks signing-string `webhook-id.webhook-timestamp.payload`, signature header `v1,<base64>`, Python/Go/Node receiver examples with constant-time compare
 - [ ] **Phase 20: Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1** — HTTPS required for non-loopback/non-RFC1918, 3-attempt full-jitter exponential backoff (t=0/30s/300s × 0.8-1.2× rand), `webhook_deliveries` dead-letter table, 30s drain on shutdown, `cronduit_webhook_*` metric family; **cuts `v1.2.0-rc.1`**
 - [ ] **Phase 21: Failure-Context UI Panel + Exit-Code Histogram Card — rc.2** — Inline collapsed-by-default panel on run-detail with 5 P1 signals (time deltas, image-digest delta, config-hash delta, duration-vs-p50, scheduler-fire-skew), 10-bucket exit-code histogram on job-detail with `stopped` as distinct bucket and exit `0` as separate stat; **cuts `v1.2.0-rc.2`**
@@ -145,15 +145,15 @@ Plans:
   3. An operator inspecting a delivered webhook payload sees the locked v1.2.0 schema fields: `payload_version: "v1"`, `event_type: "run_finalized"`, `run_id`, `job_id`, `job_name`, `status`, `exit_code`, `started_at`, `finished_at`, `duration_ms`, `streak_position`, `consecutive_failures`, `image_digest` (docker only), `config_hash`, `tags`, `cronduit_version`.
   4. An operator inspecting delivered headers sees `webhook-id`, `webhook-timestamp`, and `webhook-signature` (Standard Webhooks v1 spec) on every delivery.
 
-**Plans:** 6 plans
+**Plans:** 6/6 plans complete
 
 Plans:
-- [ ] 18-01-PLAN.md — Foundation: Cargo deps (reqwest 0.13 rustls / hmac / base64 / ulid + wiremock dev) + just test-unit recipe + 2 new webhook counters described+zero-baselined
-- [ ] 18-02-PLAN.md — WH-01: WebhookConfig struct + apply_defaults webhook merge + check_webhook_url + check_webhook_block_completeness validators (incl. Pitfall H empty-secret)
-- [ ] 18-03-PLAN.md — WH-06+WH-09: WebhookPayload encoder (15-field v1 schema) + coalesce::filter_position SQL helper + EXPLAIN PLAN regression test
-- [ ] 18-04-PLAN.md — WH-03: HttpDispatcher impl (Standard Webhooks v1 headers + HMAC-SHA256 sign_v1 + reqwest 0.13 rustls Client + should_fire D-16 matrix)
-- [ ] 18-05-PLAN.md — Bin-layer wire-up (HttpDispatcher swap in src/cli/run.rs) + 6 wiremock integration tests (e2e signed, unsigned, state-filter, 3x metric counter)
-- [ ] 18-06-PLAN.md — Maintainer UAT: 3 new just recipes + examples/webhook_mock_server.rs + examples/cronduit.toml extension + 18-HUMAN-UAT.md (autonomous=false; maintainer-validated)
+- [x] 18-01-PLAN.md — Foundation: Cargo deps (reqwest 0.13 rustls / hmac / base64 / ulid + wiremock dev) + just test-unit recipe + 2 new webhook counters described+zero-baselined
+- [x] 18-02-PLAN.md — WH-01: WebhookConfig struct + apply_defaults webhook merge + check_webhook_url + check_webhook_block_completeness validators (incl. Pitfall H empty-secret)
+- [x] 18-03-PLAN.md — WH-06+WH-09: WebhookPayload encoder (15-field v1 schema) + coalesce::filter_position SQL helper + EXPLAIN PLAN regression test
+- [x] 18-04-PLAN.md — WH-03: HttpDispatcher impl (Standard Webhooks v1 headers + HMAC-SHA256 sign_v1 + reqwest 0.13 rustls Client + should_fire D-16 matrix)
+- [x] 18-05-PLAN.md — Bin-layer wire-up (HttpDispatcher swap in src/cli/run.rs) + 6 wiremock integration tests (e2e signed, unsigned, state-filter, 3x metric counter)
+- [x] 18-06-PLAN.md — Maintainer UAT: 3 new just recipes + examples/webhook_mock_server.rs + examples/cronduit.toml extension + 18-HUMAN-UAT.md (autonomous=false; maintainer-validated)
 
 ### Phase 19: Webhook HMAC Signing + Receiver Examples
 
@@ -271,7 +271,7 @@ Plans:
 | 15. Foundation Preamble | 5/5 | Complete    | 2026-04-26 |
 | 16. Failure-Context Schema + run.rs Bug Fix | 7/7 | Complete    | 2026-04-28 |
 | 17. Custom Docker Labels (SEED-001) | 6/6 + 3 gap closure | Gap-closure pending | 2026-04-29 (core) |
-| 18. Webhook Payload + State-Filter + Coalescing | 0/6 | Planned | — |
+| 18. Webhook Payload + State-Filter + Coalescing | 6/6 | Complete   | 2026-04-29 |
 | 19. Webhook HMAC Signing + Receiver Examples | 0/— | Not started | — |
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 0/— | Not started | — |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 0/— | Not started | — |

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: executing
-stopped_at: Phase 18 context gathered
-last_updated: "2026-04-29T20:57:53.075Z"
-last_activity: 2026-04-29 -- Phase 18 execution started
+status: awaiting-uat
+stopped_at: Phase 18 complete — VERIFICATION 8/9 PASS, 7 UAT scenarios awaiting maintainer
+last_updated: "2026-04-29T22:15:00.000Z"
+last_activity: 2026-04-29 -- Phase 18 execution complete (6/6 plans + verification)
 progress:
   total_phases: 10
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 27
-  completed_plans: 21
-  percent: 78
+  completed_plans: 27
+  percent: 100
 ---
 
 # Project State
@@ -21,18 +21,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 18 — webhook-payload-state-filter-coalescing
+**Current focus:** Phase 18 — awaiting maintainer UAT (7 scenarios in 18-HUMAN-UAT.md)
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 18 (webhook-payload-state-filter-coalescing) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 18
-Last activity: 2026-04-29 -- Phase 18 execution started
+Phase: 18 (webhook-payload-state-filter-coalescing) — COMPLETE (verifier 8/9 PASS, UAT awaiting maintainer)
+Plan: 6 of 6 complete
+Status: Phase 18 awaiting maintainer UAT validation
+Last activity: 2026-04-29 -- Phase 18 execution complete; VERIFICATION.md written; 7 UAT scenarios unchecked
 
-Progress: [█░░░░░░░░░] 10% (v1.2: 1/10 phases complete; 9/— plans complete)
+Progress: [████░░░░░░] 40% (v1.2: 4/10 phases complete; 27/— plans complete)
 
 ## v1.2 Roadmap Summary
 
@@ -173,8 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-29T18:15:49.204Z
-Stopped at: Phase 18 context gathered
-Resume command: `/gsd-plan-phase 17 --gaps` — plan gap-closure for CR-01 (README contract) + CR-02 (LBL-04 error wording)
+Last session: 2026-04-29T22:15:00.000Z
+Stopped at: Phase 18 complete — VERIFICATION 8/9 PASS, 7 UAT scenarios awaiting maintainer
+Resume command: maintainer runs `18-HUMAN-UAT.md` end-to-end (just uat-webhook-mock + just dev + 7 scenarios), flips checkboxes from `[ ]` to `[x]`, then `/gsd-discuss-phase 19` for HMAC + receiver examples
 
-**Planned Phase:** 15 — Foundation Preamble (Cargo 1.1.0→1.2.0 bump; cargo-deny CI preamble (non-blocking); webhook delivery worker foundation: bounded mpsc(1024) + dedicated worker task + drop counter; FOUND-15, FOUND-16, WH-02)
+**Planned Phase:** 19 — Webhook HMAC Signing + Receiver Examples (HMAC-SHA256 only, Standard Webhooks signing-string `webhook-id.webhook-timestamp.payload`, signature header `v1,<base64>`, Python/Go/Node receiver examples with constant-time compare)
