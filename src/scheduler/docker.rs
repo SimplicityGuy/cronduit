@@ -171,11 +171,7 @@ pub async fn execute_docker(
     // ordering is the structural guard.
     let mut labels = HashMap::new();
     if let Some(operator_labels) = &config.labels {
-        labels.extend(
-            operator_labels
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
+        labels.extend(operator_labels.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
     labels.insert("cronduit.run_id".to_string(), run_id.to_string());
     labels.insert("cronduit.job_name".to_string(), job_name.to_string());
