@@ -250,7 +250,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 15. Foundation Preamble | 5/5 | Complete    | 2026-04-26 |
 | 16. Failure-Context Schema + run.rs Bug Fix | 7/7 | Complete    | 2026-04-28 |
-| 17. Custom Docker Labels (SEED-001) | 0/— | Not started | — |
+| 17. Custom Docker Labels (SEED-001) | 1/6 | In Progress|  |
 | 18. Webhook Payload + State-Filter + Coalescing | 0/— | Not started | — |
 | 19. Webhook HMAC Signing + Receiver Examples | 0/— | Not started | — |
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 0/— | Not started | — |
