@@ -9,7 +9,7 @@
 
 ## UAT Checklist
 
-- [ ] **U1 — README labels subsection renders correctly on GitHub.**
+- [x] **U1 — README labels subsection renders correctly on GitHub.**
   - **Recipe:** None — visual review of `README.md` after PR is open.
   - **Steps:**
     1. After the PR is opened, navigate to the PR's "Files changed" tab.
@@ -19,7 +19,7 @@
     5. Confirm the four code blocks (`cronduit.foo` example, `team = "ops"` example, `${DEPLOYMENT_ID}` example, `${TEAM}` example) render as syntax-highlighted TOML.
   - **Pass criteria:** Mermaid diagram renders; table renders; code blocks render. NO ASCII art anywhere (D-07).
 
-- [ ] **U2 — examples/cronduit.toml parses + validates clean.**
+- [x] **U2 — examples/cronduit.toml parses + validates clean.**
   - **Recipe:** `just check-config examples/cronduit.toml` (verified existing recipe; bare `just check` does NOT exist — `check-config` takes a `PATH` argument)
   - **Steps:**
     1. From a clean working tree on the `phase-17-custom-docker-labels` branch, run `just check-config examples/cronduit.toml`.
@@ -27,7 +27,7 @@
     3. Visually scan `examples/cronduit.toml` for the three integration patterns: `[defaults].labels` Watchtower line, `hello-world` Traefik labels, NEW `isolated-batch` job with `use_defaults = false`.
   - **Pass criteria:** Recipe exits 0; all three integration patterns visible in the file.
 
-- [ ] **U3 — Full unit + integration test suite passes.**
+- [x] **U3 — Full unit + integration test suite passes.**
   - **Recipe:** `just nextest` (faster) OR `just test` (standard)
   - **Steps:**
     1. Run `just nextest` (or `just test` if nextest isn't available locally).
@@ -35,7 +35,7 @@
     3. Confirm the test count visibly reflects the new tests added in Plans 17-01 (parity, hash-differs, merge tests) and 17-02 (12+ validator tests).
   - **Pass criteria:** Recipe exits 0; new tests visible in output.
 
-- [ ] **U4 — Lint + format gates pass.**
+- [x] **U4 — Lint + format gates pass.**
   - **Recipe:** `just clippy && just fmt-check` (or `just ci` — the composite recipe).
   - **Steps:**
     1. Run `just clippy`.
@@ -43,7 +43,7 @@
     3. Confirm both recipes exit 0.
   - **Pass criteria:** Both recipes exit 0.
 
-- [ ] **U5 — End-to-end docker labels spot-check.**
+- [x] **U5 — End-to-end docker labels spot-check.**
   - **Recipe:** `just docker-compose-up` (start cronduit + a docker job from `examples/cronduit.toml`)
   - **Steps:**
     1. Run `just docker-compose-up` to launch cronduit with the example config.
@@ -57,7 +57,7 @@
     5. Tear down with the inline sub-step `docker compose -f examples/docker-compose.yml down` (there is no `just docker-compose-down` recipe; the existing `docker-compose-up` recipe has no down-equivalent, so the down command is documented here as a literal `docker compose ... down` sub-step, NOT a `just` recipe — note `docker compose` is the modern hyphenless subcommand).
   - **Pass criteria:** All four label categories visible on the spawned container — confirms the LBL-01 / LBL-02 / SC-1 / SC-2 contract end-to-end.
 
-- [ ] **U6 — Reserved namespace rejection error message is operator-friendly.**
+- [x] **U6 — Reserved namespace rejection error message is operator-friendly.**
   - **Recipe:** `just check-config /tmp/cronduit-bad.toml` (the verified existing recipe takes a PATH argument; the doctored copy lives at `/tmp/cronduit-bad.toml`)
   - **Steps:**
     1. Make a temporary copy of `examples/cronduit.toml` (`cp examples/cronduit.toml /tmp/cronduit-bad.toml`).
@@ -74,3 +74,5 @@
 - The maintainer comments on the PR with `UAT passed` (or equivalent) once every box above is ticked.
 - `gsd-execute-phase` (or the orchestrator) treats the phase as complete only after the human-validation comment lands.
 - SEED-001's frontmatter is already at `status: realized` (Task 1 of this plan) — no further seed-state action needed.
+
+**Validated by:** Maintainer (Robert) on 2026-04-29 — all 6 UAT items passed locally per D-09.
