@@ -20,7 +20,7 @@ pub mod event;
 pub mod payload;
 pub mod worker;
 
-pub use dispatcher::{NoopDispatcher, WebhookDispatcher, WebhookError};
+pub use dispatcher::{HttpDispatcher, NoopDispatcher, WebhookDispatcher, WebhookError};
 pub use event::RunFinalized;
 pub use payload::WebhookPayload;
 pub use worker::{CHANNEL_CAPACITY, channel, channel_with_capacity, spawn_worker};
