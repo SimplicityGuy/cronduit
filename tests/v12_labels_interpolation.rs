@@ -10,6 +10,14 @@
 //! threads in the same process would race on the env-var read inside
 //! `parse_and_validate`'s pre-parse interpolation pass. Project-wide
 //! convention already runs docker tests with --test-threads=1.
+//!
+//! Plan 17-07 (gap closure for CR-01) extends this file with two
+//! KEY-position tests pinning the post-CR-01 documentation contract:
+//!   * lbl_05_key_position_interpolation_env_set_resolves_to_literal_when_pattern_matches
+//!   * lbl_05_key_position_interpolation_env_unset_caught_by_strict_chars
+//!
+//! These tests do NOT require a Docker daemon — they exercise only the
+//! parse pipeline (interpolate -> toml -> apply_defaults -> validate).
 
 use bollard::Docker;
 use cronduit::config::parse_and_validate;
@@ -145,4 +153,142 @@ labels = {{ "deployment.id" = "${{DEPLOYMENT_ID}}" }}
     unsafe {
         std::env::remove_var("DEPLOYMENT_ID");
     }
+}
+
+/// CR-01 regression test (gap closure plan 17-07).
+///
+/// Pins the documented behavior: when an env var named in a LABEL KEY
+/// position is SET in the environment, the whole-file textual interpolation
+/// pass at `src/config/interpolate.rs::interpolate` resolves it BEFORE TOML
+/// parsing. The resolved key is then validated by `check_label_key_chars`
+/// (D-02). If the resolved value matches the strict pattern, the load
+/// succeeds — by design, per the post-CR-01 README contract.
+///
+/// This test does NOT require a Docker daemon — it only exercises the
+/// parse pipeline (interpolate -> toml -> apply_defaults -> validate).
+#[tokio::test]
+async fn lbl_05_key_position_interpolation_env_set_resolves_to_literal_when_pattern_matches() {
+    // SAFETY: same single-threaded justification as the value-side test;
+    // file runs under --test-threads=1.
+    unsafe {
+        std::env::set_var("TEAM", "ops");
+    }
+
+    let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[defaults]
+image = "alpine:latest"
+
+[[jobs]]
+name = "lbl-05-key-set"
+schedule = "*/5 * * * *"
+image = "alpine:latest"
+cmd = ["sh", "-c", "exit 0"]
+labels = { "${TEAM}" = "v" }
+"#;
+
+    let mut tmp = tempfile::NamedTempFile::new().expect("tempfile created");
+    tmp.write_all(toml_text.as_bytes()).expect("toml written");
+
+    let parsed = parse_and_validate(tmp.path())
+        .expect("env-set key-position interpolation must succeed (resolved key matches D-02)");
+
+    let job = parsed
+        .config
+        .jobs
+        .iter()
+        .find(|j| j.name == "lbl-05-key-set")
+        .expect("job present");
+
+    // The resolved key is the LITERAL string "ops" — NOT "${TEAM}".
+    let labels = job.labels.as_ref().expect("labels present");
+    assert!(
+        labels.contains_key("ops"),
+        "interpolation must resolve ${{TEAM}} -> 'ops' in key position; \
+         got keys: {:?}",
+        labels.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        labels.get("ops").map(String::as_str),
+        Some("v"),
+        "value v must survive interpolation pass intact"
+    );
+    // Negative — the literal placeholder MUST NOT be a key.
+    assert!(
+        !labels.contains_key("${TEAM}"),
+        "literal ${{TEAM}} must NOT survive interpolation in env-set case"
+    );
+
+    // SAFETY: same single-threaded justification.
+    unsafe {
+        std::env::remove_var("TEAM");
+    }
+}
+
+/// CR-01 regression test (gap closure plan 17-07).
+///
+/// Pins the documented behavior: when an env var named in a LABEL KEY
+/// position is UNSET, the interpolation pass at
+/// `src/config/interpolate.rs::interpolate` emits a `MissingVar` error and
+/// the load FAILS at the interpolation stage (BEFORE the validator runs).
+/// The error path produces exit 1 with a "missing environment variable"
+/// message — distinct from the D-02 strict-char message that would fire
+/// only if the missing-var error were somehow suppressed.
+///
+/// This test does NOT require a Docker daemon.
+#[tokio::test]
+async fn lbl_05_key_position_interpolation_env_unset_caught_by_strict_chars() {
+    // SAFETY: same single-threaded justification; ensure TEAM is not set
+    // (a previous test in this file may have set it).
+    unsafe {
+        std::env::remove_var("TEAM");
+    }
+
+    let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[defaults]
+image = "alpine:latest"
+
+[[jobs]]
+name = "lbl-05-key-unset"
+schedule = "*/5 * * * *"
+image = "alpine:latest"
+cmd = ["sh", "-c", "exit 0"]
+labels = { "${TEAM}" = "v" }
+"#;
+
+    let mut tmp = tempfile::NamedTempFile::new().expect("tempfile created");
+    tmp.write_all(toml_text.as_bytes()).expect("toml written");
+
+    let result = parse_and_validate(tmp.path());
+    let errors = result.expect_err("env-unset key-position interpolation MUST fail at config-LOAD");
+
+    // Either path produces a load-time failure (exit 1 in the binary):
+    //   * MissingVar error from interpolate.rs (the actual binary path)
+    //   * Strict-char validator error (would fire only if MissingVar were
+    //     suppressed; documented as the fallback in README's
+    //     "Recommended pattern" section).
+    // Assert that AT LEAST ONE of the two messages is present.
+    let combined = errors
+        .iter()
+        .map(|e| e.message.clone())
+        .collect::<Vec<_>>()
+        .join(" || ");
+    assert!(
+        combined.contains("missing environment variable")
+            || combined.contains("invalid label keys"),
+        "expected MissingVar or D-02 invalid-char error; got: {combined}"
+    );
+    // The variable name MUST appear in the error — operator must know
+    // which env var to set or which key to literalize.
+    assert!(
+        combined.contains("TEAM"),
+        "error must name the offending var/key 'TEAM'; got: {combined}"
+    );
 }
