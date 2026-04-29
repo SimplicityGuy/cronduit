@@ -115,6 +115,22 @@ pub fn setup_metrics() -> PrometheusHandle {
                  with WARN-level events on the cronduit.webhooks tracing target. The \
                  full cronduit_webhook_* family lands in P20 / WH-11."
             );
+            // Phase 18 — successful and failed webhook delivery counters.
+            // Both are closed-cardinality (no labels) per D-17 / WH-09 hardening.
+            // Phase 20's RetryingDispatcher may eventually distinguish 4xx (permanent)
+            // vs 5xx/network (transient) — Phase 18 stays unlabeled.
+            metrics::describe_counter!(
+                "cronduit_webhook_delivery_sent_total",
+                "Total successful webhook deliveries (HTTP 2xx response). \
+                 Closed-cardinality in Phase 18 (no labels). Phase 20 may add a `job` \
+                 label when load patterns warrant it."
+            );
+            metrics::describe_counter!(
+                "cronduit_webhook_delivery_failed_total",
+                "Total failed webhook deliveries (non-2xx response or network error). \
+                 Closed-cardinality in Phase 18. Phase 20 distinguishes 4xx (permanent) \
+                 vs 5xx/network (transient) for retry decisioning."
+            );
             metrics::describe_gauge!(
                 "cronduit_docker_reachable",
                 "1 if the docker daemon was reachable at last ping, 0 otherwise (Phase 8 D-12)"
@@ -131,6 +147,9 @@ pub fn setup_metrics() -> PrometheusHandle {
             metrics::histogram!("cronduit_run_duration_seconds").record(0.0);
             metrics::counter!("cronduit_run_failures_total").increment(0);
             metrics::counter!("cronduit_webhook_delivery_dropped_total").increment(0);
+            // Phase 18 zero-baseline so /metrics shows the family from boot (Pitfall 3 mitigation).
+            metrics::counter!("cronduit_webhook_delivery_sent_total").increment(0);
+            metrics::counter!("cronduit_webhook_delivery_failed_total").increment(0);
             metrics::gauge!("cronduit_docker_reachable").set(0.0);
 
             // Phase 10 / T-V11-STOP-16 / PITFALLS §1.6: pre-declare each
