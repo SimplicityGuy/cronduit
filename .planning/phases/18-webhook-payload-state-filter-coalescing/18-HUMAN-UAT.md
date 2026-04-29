@@ -28,7 +28,7 @@ Expected output (terminal C):
 - Headers include: `content-type: application/json`, `webhook-id: <26-char ULID>`, `webhook-timestamp: <10-digit Unix seconds>`, `webhook-signature: v1,<base64-with-padding-and-+-or-/>`
 - The body (after the empty line in the log) is compact JSON containing all 16 fields: `payload_version`, `event_type`, `run_id`, `job_id`, `job_name`, `status`, `exit_code`, `started_at` (ending in `Z`), `finished_at`, `duration_ms`, `streak_position` (== 1 on the first delivery), `consecutive_failures` (== 1+), `image_digest` (`null` for command jobs), `config_hash`, `tags` (`[]`), `cronduit_version`
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (2026-04-29 — schedule-driven path)
 
 ### Scenario 2 — Unsigned delivery omits webhook-signature header
 
@@ -41,7 +41,7 @@ Steps:
 
 Expected: the `/unsigned` POST has `webhook-id` AND `webhook-timestamp` headers but NO `webhook-signature` header.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (2026-04-29 — schedule-driven path)
 
 ### Scenario 3 — Default coalescing (fire_every = 1)
 
@@ -54,7 +54,7 @@ Steps:
 
 Expected: ONE `/signed` delivery (from the first fire), then NO further deliveries from `wh-example-signed` because the streak-position stays > 1 (until a `success` resets it). Compare to scenario 5 below.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (2026-04-29 — schedule-driven path)
 
 ### Scenario 4 — State filter excludes success
 
@@ -69,7 +69,7 @@ Steps:
 
 Expected: NO deliveries triggered by the `wh-example-passing` job (success is not in the default `["failed", "timeout"]` filter).
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (2026-04-29 — schedule-driven path)
 
 ### Scenario 5 — `fire_every = 0` legacy mode
 
@@ -82,7 +82,7 @@ Steps:
 
 Expected: 3 deliveries to `/timeouts-only` IF any timeout occurred OR — if `wh-example-fire-every-zero`'s schedule produces failures every 3 min and you map a `command` that fails as timeout via a long-running false… (NOTE: the example config uses `command = "false"` which exits failed, NOT timeout. To exercise this scenario, the maintainer should temporarily change the example to `command = "sleep 3600"` and add `timeout = "5s"`.)
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (2026-04-29 — schedule-driven path)
 
 ### Scenario 6 — `${WEBHOOK_SECRET}` env-var interpolation
 
@@ -99,7 +99,7 @@ Steps:
 8. Run `just check-config examples/cronduit.toml`
 9. Verify it PASSES
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (2026-04-29 — schedule-driven path)
 
 ### Scenario 7 — Metrics families
 
@@ -116,10 +116,10 @@ Expected: stdout/grep includes:
 - `# TYPE cronduit_webhook_delivery_<each>_total counter`
 - All three counters present (with at least the zero-baseline value 0; sent/failed may be > 0 if scenarios above already fired)
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (2026-04-29 — schedule-driven path)
 
 ## Sign-off
 
-All 7 scenarios above are maintainer-validated [ ] (flip to [x] when complete).
+All 7 scenarios above are maintainer-validated [x] (flipped 2026-04-29 by robert@simplicityguy.com after running `just dev` + `just uat-webhook-mock` and observing webhooks arrive on the natural cron schedule; the `uat-webhook-fire` recipe was broken at sign-off time and has since been fixed in commit `e01a186`).
 
 Cross-reference: every scenario above has an automated regression test in `tests/v12_webhook_*.rs` (Plans 03 + 05). The UAT scenarios re-prove the same behaviors against a real receiver — operator-side TLS, real network latency, real ${ENV_VAR} substitution.
