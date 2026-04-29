@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: "Phase 17 shipped — PR #48 awaiting review/merge"
+status: "Phase 17 MERGED (PR #48, squash a34cad0); v1.2: 1 phase shipped"
 stopped_at: Phase 17 context gathered
-last_updated: "2026-04-29T15:05:13.526Z"
-last_activity: "2026-04-29 -- Phase 17 shipped — PR #48"
+last_updated: "2026-04-29T17:41:38.606Z"
+last_activity: "2026-04-29 -- Phase 17 merged to main via PR #48"
 progress:
   total_phases: 10
   completed_phases: 2
@@ -29,8 +29,8 @@ Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 17 (custom-docker-labels-seed-001) — COMPLETE (gap closure passed verification 2026-04-29; see 17-VERIFICATION-GAP-CLOSURE.md)
 Plan: 9 of 9 (all gap-closure plans landed: 17-07 CR-01, 17-08 CR-02, 17-09 bookkeeping)
-Status: Phase 17 shipped — PR #48 awaiting review/merge
-Last activity: 2026-04-29 -- Phase 17 shipped — PR #48
+Status: Phase 17 MERGED (PR #48, squash a34cad0); v1.2: 1 phase shipped
+Last activity: 2026-04-29 -- Phase 17 merged to main via PR #48
 
 Progress: [█░░░░░░░░░] 10% (v1.2: 1/10 phases complete; 9/— plans complete)
 
