@@ -1,11 +1,16 @@
 # examples/cronduit.toml -- Cronduit quickstart configuration.
 #
-# This file ships five example jobs covering every execution type:
+# This file ships six example jobs covering every execution type:
 #   1. echo-timestamp (command) - every minute, instant heartbeat
 #   2. http-healthcheck (command) - every 5 minutes, uptime canary
 #   3. disk-usage (script) - every 15 minutes, script-job demo on /data
 #   4. hello-world (docker) - every 5 minutes, [defaults] merge + cmd demo
 #   5. hello-world-container (docker) - every 5 minutes, per-job override demo
+#   6. isolated-batch (docker, use_defaults=false) - daily 4am, label REPLACE demo
+#
+# Phase 17 / SEED-001 also adds `[defaults].labels` (Watchtower exclusion) and
+# per-job `labels` on hello-world (Traefik MERGE) + isolated-batch (REPLACE).
+# See README § Configuration > Labels for the full merge-semantics table.
 #
 # SECURITY:
 #   * Never commit plaintext secrets. Use env-var references (${VAR}) and set
@@ -34,17 +39,22 @@ delete = true
 timeout = "5m"
 random_min_gap = "0s"
 
+# Phase 17 / SEED-001 -- Watchtower exclusion inherited by every docker job.
+# See README § Configuration > Labels for merge semantics + reserved-namespace rules.
+labels = { "com.centurylinklabs.watchtower.enable" = "false" }
+
 # ------------------------------------------------------------
 # Quickstart jobs
 # ------------------------------------------------------------
-# Five jobs covering every execution type so a new operator can see
+# Six jobs covering every execution type so a new operator can see
 # commands, scripts, and Docker containers run out of the box:
 #
 #   1. echo-timestamp         -- command (every 1 min)  instant heartbeat
 #   2. http-healthcheck       -- command (every 5 min)  realistic uptime canary
 #   3. disk-usage             -- script  (every 15 min) /data volume inspector
-#   4. hello-world            -- docker  (every 5 min)  [defaults] merge + cmd override
+#   4. hello-world            -- docker  (every 5 min)  [defaults] merge + cmd override + labels MERGE
 #   5. hello-world-container  -- docker  (every 5 min)  per-job override demo
+#   6. isolated-batch         -- docker  (daily 4 am)   use_defaults=false + labels REPLACE
 #
 # Command/script jobs run inside the cronduit runtime image (alpine:3)
 # and rely on busybox applets (date, wget, du, df, /bin/sh). Docker jobs
@@ -52,27 +62,42 @@ random_min_gap = "0s"
 # docker-socket-proxy sidecar in docker-compose.secure.yml). Jobs 4 and 5
 # are both docker-type but demonstrate opposite sides of the [defaults]
 # merge semantics -- job 4 inherits every docker-only field from
-# [defaults]; job 5 overrides them per-job.
+# [defaults]; job 5 overrides them per-job. Job 6 is the Phase 17 / SEED-001
+# label-REPLACE demo: `use_defaults = false` discards every defaults field
+# (labels included) so only the per-job `backup.exclude` label reaches the
+# container. See README § Configuration > Labels.
 
 # 1. Instant heartbeat. Runs every minute so you see it in the dashboard
 #    within ~60s of `docker compose up`.
+#    NOTE: `use_defaults = false` is required on command/script jobs
+#    whenever `[defaults].labels` is set (Phase 17 / SEED-001). The labels
+#    merge in apply_defaults runs unconditionally; the LBL-04 validator
+#    then rejects labels on non-docker jobs. `use_defaults = false` short-
+#    circuits the merge so this command job stays clean. Timeout is set
+#    explicitly to replace the inherited [defaults].timeout.
 [[jobs]]
 name = "echo-timestamp"
 schedule = "*/1 * * * *"
 command = "date '+%Y-%m-%d %H:%M:%S -- Cronduit is running!'"
+use_defaults = false
+timeout = "5m"
 
 # 2. Realistic uptime canary. Hits https://www.google.com using busybox
 #    wget, captures the response headers into cronduit's stdout log via
 #    `2>&1 | head -10`. Validates DNS + egress + TLS from inside the
 #    container. Swap the URL for your own uptime target when adopting.
+#    NOTE: `use_defaults = false` -- see job 1 comment for rationale.
 [[jobs]]
 name = "http-healthcheck"
 schedule = "*/5 * * * *"
 command = "sh -c \"wget -q -S --spider https://www.google.com 2>&1 | head -10\""
+use_defaults = false
+timeout = "5m"
 
 # 3. Script-type job demonstrating the `script = """..."""` path and the
 #    /data named volume. Prints disk usage if /data is mounted, or a
 #    friendly message otherwise. Shebang resolves via alpine's /bin/sh.
+#    NOTE: `use_defaults = false` -- see job 1 comment for rationale.
 [[jobs]]
 name = "disk-usage"
 schedule = "*/15 * * * *"
@@ -80,6 +105,8 @@ script = """#!/bin/sh
 du -sh /data 2>/dev/null || echo "/data not mounted"
 df -h /data 2>/dev/null || true
 """
+use_defaults = false
+timeout = "5m"
 
 # 4. Docker job demonstrating BOTH the [defaults] merge path (CONF-03/
 #    CONF-06) AND the per-job `cmd` override. This block deliberately
@@ -98,6 +125,10 @@ df -h /data 2>/dev/null || true
 name = "hello-world"
 schedule = "*/5 * * * *"
 cmd = ["echo", "Hello from cronduit defaults!"]
+# Phase 17 / SEED-001 -- defaults+per-job MERGE demo. The container ends up
+# with watchtower.enable=false (inherited) AND the two traefik labels (per-job).
+# Per-key collision (none here) would resolve per-job-wins. See README § Labels.
+labels = { "traefik.enable" = "true", "traefik.http.routers.hello.rule" = "Host(`hello.local`)" }
 
 # 5. Docker job demonstrating per-job field overrides winning over [defaults]
 #    (CONF-06). Contrast with `hello-world` above (job 4): job 4 inherits
@@ -133,3 +164,27 @@ name = "hello-world-container"
 schedule = "*/5 * * * *"
 image = "hello-world:latest"
 delete = false
+
+# 6. NEW Phase 17 / SEED-001 demo -- `use_defaults = false` REPLACE semantic.
+#    Defaults' watchtower.enable=false label is INTENTIONALLY DISCARDED for
+#    this job; only the per-job `backup.exclude = "true"` reaches the container.
+#    Use this pattern when an isolated batch / one-off needs a clean label
+#    set (e.g. excluded from operational tooling that filters by label).
+#    See README § Configuration > Labels for the full merge-semantics table.
+#
+#    NOTE: `use_defaults = false` short-circuits apply_defaults and DROPS every
+#    [defaults] field for this job (image/network/timeout/delete/labels/...).
+#    `image` is set explicitly because the LBL-04 type-gate validator requires
+#    docker jobs to have an image; `delete`, `timeout`, and `network` are set
+#    explicitly to document the operator's intent (without them, the runtime
+#    defaults take over instead of [defaults]).
+[[jobs]]
+name = "isolated-batch"
+schedule = "0 4 * * *"
+image = "alpine:latest"
+cmd = ["sh", "-c", "echo isolated batch run"]
+use_defaults = false
+delete = true        # Required because use_defaults=false discards [defaults].delete
+timeout = "1m"       # Required because use_defaults=false discards [defaults].timeout
+network = "bridge"   # Required because use_defaults=false discards [defaults].network
+labels = { "backup.exclude" = "true" }
