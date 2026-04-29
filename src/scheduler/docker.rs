@@ -160,7 +160,23 @@ pub async fn execute_docker(
     };
 
     // Build labels (T-04-03: only run_id and job_name, never secrets).
+    //
+    // Operator-defined labels (Phase 17 / SEED-001 / LBL-01) are inserted
+    // FIRST. The cronduit-internal labels (`cronduit.run_id`,
+    // `cronduit.job_name`) are then inserted AFTER, so on the
+    // impossible-due-to-LBL-03-validator collision case (operator somehow
+    // set `cronduit.*`), the cronduit-internal value structurally wins.
+    // This is defense-in-depth — `check_label_reserved_namespace`
+    // (src/config/validate.rs, Plan 17-02) is the primary guard, this
+    // ordering is the structural guard.
     let mut labels = HashMap::new();
+    if let Some(operator_labels) = &config.labels {
+        labels.extend(
+            operator_labels
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+    }
     labels.insert("cronduit.run_id".to_string(), run_id.to_string());
     labels.insert("cronduit.job_name".to_string(), job_name.to_string());
 
