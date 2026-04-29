@@ -12,6 +12,22 @@ static NETWORK_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^(bridge|host|none|container:[a-zA-Z0-9_.-]+|[a-zA-Z0-9_.-]+)$").unwrap()
 });
 
+static LABEL_KEY_RE: Lazy<Regex> = Lazy::new(|| {
+    // Strict ASCII: leading char alphanumeric or underscore; subsequent chars
+    // alphanumeric, dot, hyphen, or underscore. Per CONTEXT D-02; mirrors the
+    // once_cell idiom at validate.rs:10-13 and interpolate.rs:23-24.
+    Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9._-]*$").unwrap()
+});
+
+/// Maximum byte length for an individual label value (LBL-06).
+/// Aligns with Docker's documented label-value convention.
+const MAX_LABEL_VALUE_BYTES: usize = 4 * 1024; // 4 KB
+
+/// Maximum total byte length of all keys + values for a single job's labels (LBL-06).
+/// Cronduit-side; well below dockerd's informal ~250 KB limit so operators see a
+/// clear cronduit error at config-load instead of a confusing dockerd 400 at create.
+const MAX_LABEL_SET_BYTES: usize = 32 * 1024; // 32 KB
+
 /// Run every post-parse check; push errors into `errors`. Never fail-fast.
 pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<ConfigError>) {
     check_timezone(&cfg.server.timezone, path, errors);
@@ -22,6 +38,11 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         check_cmd_only_on_docker_jobs(job, path, errors);
         check_network_mode(job, path, errors);
         check_schedule(job, path, errors);
+        // Phase 17 / SEED-001 — operator labels (LBL-03, LBL-04, LBL-06, D-02)
+        check_label_reserved_namespace(job, path, errors);
+        check_labels_only_on_docker_jobs(job, path, errors);
+        check_label_size_limits(job, path, errors);
+        check_label_key_chars(job, path, errors);
     }
 }
 
@@ -135,6 +156,119 @@ fn check_schedule(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
             ),
         });
     }
+}
+
+/// LBL-03: reject operator labels under the reserved `cronduit.*` namespace.
+/// The cronduit.* prefix is reserved for cronduit-internal labels (currently
+/// cronduit.run_id, cronduit.job_name; consumed by docker_orphan reconciliation
+/// at src/scheduler/docker_orphan.rs:31). Sorting the offending-key list is
+/// CRITICAL — HashMap iteration is non-deterministic (see RESEARCH Pitfall 2).
+fn check_label_reserved_namespace(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(labels) = &job.labels else { return };
+    let mut offending: Vec<&str> = labels
+        .keys()
+        .filter(|k| k.starts_with("cronduit."))
+        .map(String::as_str)
+        .collect();
+    if offending.is_empty() {
+        return;
+    }
+    offending.sort(); // determinism — HashMap iter order is random
+    errors.push(ConfigError {
+        file: path.into(),
+        line: 0,
+        col: 0,
+        message: format!(
+            "[[jobs]] `{}`: labels under reserved namespace `cronduit.*` are not allowed: {}. Remove these keys; the cronduit.* prefix is reserved for cronduit-internal labels.",
+            job.name,
+            offending.join(", ")
+        ),
+    });
+}
+
+/// LBL-04: reject `labels = ...` on non-docker (command/script) jobs.
+/// Mirrors check_cmd_only_on_docker_jobs (validate.rs:89). Runs AFTER
+/// apply_defaults so `image.is_none()` reliably distinguishes non-docker.
+fn check_labels_only_on_docker_jobs(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.labels.is_some() && job.image.is_none() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: `labels` is only valid on docker jobs (job with `image = \"...\"` set either directly or via `[defaults].image`); command and script jobs cannot set `labels` because there is no container to attach them to. Remove the `labels` block, or switch the job to a docker job by setting `image`.",
+                job.name
+            ),
+        });
+    }
+}
+
+/// LBL-06: enforce per-value (4 KB) and per-set (32 KB) byte-length limits.
+/// Two independent checks may both fire for one job (per D-01 aggregation).
+fn check_label_size_limits(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(labels) = &job.labels else { return };
+
+    // Per-value check
+    let mut oversized_keys: Vec<&str> = labels
+        .iter()
+        .filter(|(_, v)| v.len() > MAX_LABEL_VALUE_BYTES)
+        .map(|(k, _)| k.as_str())
+        .collect();
+    if !oversized_keys.is_empty() {
+        oversized_keys.sort();
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: label values exceed 4 KB limit: {}. Each label value must be ≤ {} bytes.",
+                job.name,
+                oversized_keys.join(", "),
+                MAX_LABEL_VALUE_BYTES
+            ),
+        });
+    }
+
+    // Per-job total check
+    let total_bytes: usize = labels.iter().map(|(k, v)| k.len() + v.len()).sum();
+    if total_bytes > MAX_LABEL_SET_BYTES {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: total label-set size {} bytes exceeds 32 KB limit. Sum of all key+value byte lengths must be ≤ {} bytes.",
+                job.name, total_bytes, MAX_LABEL_SET_BYTES
+            ),
+        });
+    }
+}
+
+/// D-02: enforce strict ASCII char regex on label keys.
+/// Partially enforces LBL-05's "keys are NOT interpolated" — leftover `${`/`}`
+/// chars after a failed/unintended interpolation are rejected here.
+/// Sort before format (RESEARCH Pitfall 2).
+fn check_label_key_chars(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(labels) = &job.labels else { return };
+    let mut invalid: Vec<&str> = labels
+        .keys()
+        .filter(|k| !LABEL_KEY_RE.is_match(k))
+        .map(String::as_str)
+        .collect();
+    if invalid.is_empty() {
+        return;
+    }
+    invalid.sort();
+    errors.push(ConfigError {
+        file: path.into(),
+        line: 0,
+        col: 0,
+        message: format!(
+            "[[jobs]] `{}`: invalid label keys: {}. Keys must match the pattern `^[a-zA-Z0-9_][a-zA-Z0-9._-]*$` (alphanumeric or underscore start; alphanumeric, dot, hyphen, or underscore body). Note: env-var ${{...}} interpolation runs only on label VALUES, not keys.",
+            job.name,
+            invalid.join(", ")
+        ),
+    });
 }
 
 fn check_duplicate_job_names(
@@ -349,5 +483,226 @@ mod tests {
         let mut e = Vec::new();
         check_cmd_only_on_docker_jobs(&job, Path::new("x"), &mut e);
         assert!(e.is_empty());
+    }
+
+    // ---- LBL-03 reserved-namespace ----
+
+    #[test]
+    fn check_label_reserved_namespace_rejects_cronduit_prefix() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("cronduit.foo".to_string(), "v".to_string());
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_reserved_namespace(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("cronduit.foo"));
+        assert!(e[0].message.contains("reserved namespace"));
+    }
+
+    #[test]
+    fn check_label_reserved_namespace_lists_multiple_keys_sorted() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("cronduit.zeta".to_string(), "v".to_string());
+        labels.insert("cronduit.alpha".to_string(), "v".to_string());
+        labels.insert("cronduit.mid".to_string(), "v".to_string());
+        labels.insert("traefik.enable".to_string(), "true".to_string()); // not reserved
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_reserved_namespace(&job, Path::new("x"), &mut e);
+        assert_eq!(
+            e.len(),
+            1,
+            "D-01: one ConfigError per job per violation type"
+        );
+        // Determinism: alphabetical ordering. Per RESEARCH Pitfall 2.
+        let pos_alpha = e[0].message.find("cronduit.alpha").expect("contains alpha");
+        let pos_mid = e[0].message.find("cronduit.mid").expect("contains mid");
+        let pos_zeta = e[0].message.find("cronduit.zeta").expect("contains zeta");
+        assert!(pos_alpha < pos_mid, "alphabetical: alpha before mid");
+        assert!(pos_mid < pos_zeta, "alphabetical: mid before zeta");
+        assert!(
+            !e[0].message.contains("traefik.enable"),
+            "non-reserved key not listed"
+        );
+    }
+
+    #[test]
+    fn check_label_reserved_namespace_accepts_cronduit_underscore_keys() {
+        // Per RESEARCH Edge Case 8.5 — `cronduit_foo` does NOT start with `cronduit.`
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("cronduit_foo".to_string(), "v".to_string());
+        labels.insert("cronduitfoo".to_string(), "v".to_string());
+        labels.insert("cronduit-foo".to_string(), "v".to_string());
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_reserved_namespace(&job, Path::new("x"), &mut e);
+        assert!(
+            e.is_empty(),
+            "underscore/no-separator forms must pass: got {e:?}"
+        );
+    }
+
+    #[test]
+    fn check_label_reserved_namespace_accepts_none() {
+        let job = stub_job("*/5 * * * *"); // labels: None
+        let mut e = Vec::new();
+        check_label_reserved_namespace(&job, Path::new("x"), &mut e);
+        assert!(e.is_empty());
+    }
+
+    // ---- LBL-04 type-gate ----
+
+    #[test]
+    fn check_labels_only_on_docker_jobs_rejects_on_command_job() {
+        let mut job = stub_job("*/5 * * * *");
+        // stub_job defaults command = Some("echo hi") and image = None — command job.
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("a".to_string(), "v".to_string());
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_labels_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("test-job"));
+        assert!(e[0].message.contains("docker jobs"));
+        assert!(e[0].message.contains("labels"));
+    }
+
+    #[test]
+    fn check_labels_only_on_docker_jobs_rejects_on_script_job() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.script = Some("echo hi".into());
+        // image still None
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("a".to_string(), "v".to_string());
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_labels_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+    }
+
+    #[test]
+    fn check_labels_only_on_docker_jobs_accepts_docker_job() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("a".to_string(), "v".to_string());
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_labels_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        assert!(e.is_empty(), "docker job with labels must pass: got {e:?}");
+    }
+
+    // ---- LBL-06 size limits ----
+
+    #[test]
+    fn check_label_size_limits_rejects_per_value_over_4kb() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("k".to_string(), "x".repeat(4097)); // 4097 bytes — over 4 KB
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_size_limits(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("4 KB") || e[0].message.contains("4096"));
+        assert!(e[0].message.contains("k"));
+    }
+
+    #[test]
+    fn check_label_size_limits_accepts_value_at_4kb_boundary() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("k".to_string(), "x".repeat(4096)); // exactly 4096 — must pass
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_size_limits(&job, Path::new("x"), &mut e);
+        assert!(e.is_empty(), "4096-byte value must pass: got {e:?}");
+    }
+
+    #[test]
+    fn check_label_size_limits_rejects_per_set_over_32kb() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        // Build a label set whose total bytes (keys + values) exceeds 32 KB but
+        // keeps each value ≤ 4 KB so only the per-set check fires.
+        for i in 0..10 {
+            labels.insert(format!("key{:02}", i), "x".repeat(3500)); // ~3500 bytes each — 10 entries → ~35 KB
+        }
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_size_limits(&job, Path::new("x"), &mut e);
+        assert!(!e.is_empty(), "expected at least one error");
+        assert!(
+            e.iter().any(|err| err.message.contains("32 KB")),
+            "expected a 32 KB error: got {e:?}"
+        );
+    }
+
+    // ---- D-02 key chars ----
+
+    #[test]
+    fn check_label_key_chars_rejects_space_slash_empty() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("my key".to_string(), "v".to_string()); // space
+        labels.insert("foo/bar".to_string(), "v".to_string()); // slash
+        labels.insert("".to_string(), "v".to_string()); // empty
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_key_chars(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1, "D-01: one ConfigError per violation type");
+        assert!(e[0].message.contains("my key"));
+        assert!(e[0].message.contains("foo/bar"));
+    }
+
+    #[test]
+    fn check_label_key_chars_rejects_leading_dot() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert(".foo".to_string(), "v".to_string()); // leading char must be alphanumeric/underscore
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_key_chars(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+    }
+
+    #[test]
+    fn check_label_key_chars_accepts_dotted_and_underscore_keys() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine:latest".into());
+        let mut labels = std::collections::HashMap::new();
+        labels.insert(
+            "com.centurylinklabs.watchtower.enable".to_string(),
+            "false".to_string(),
+        );
+        labels.insert("traefik.http.routers.x.rule".to_string(), "v".to_string());
+        labels.insert("_internal".to_string(), "v".to_string());
+        labels.insert("a-b-c".to_string(), "v".to_string());
+        labels.insert("0starts_digit".to_string(), "v".to_string());
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_label_key_chars(&job, Path::new("x"), &mut e);
+        assert!(e.is_empty(), "valid keys must all pass: got {e:?}");
     }
 }
