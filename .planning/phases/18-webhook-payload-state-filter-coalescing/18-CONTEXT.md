@@ -94,11 +94,14 @@ Operators can configure per-job (and `[defaults]`) webhook URLs with a state-fil
 - **D-22:** HMAC implementation: `hmac` + `sha2` crates (RustCrypto, rustls-compatible). `webhook-id` generation: `ulid` crate (preferred; lexicographically sortable + 26-char compact base32) — researcher confirms availability, falls back to UUID v7 if blocked.
 
 ### Universal Project Constraints (carried forward)
-- **D-23:** All changes land via PR on a feature branch. No direct commits to main. `phase-18-webhook-payload` is the working branch name.
-- **D-24:** Diagrams in any Phase 18 artifact (PLAN, SUMMARY, README, code comments) are mermaid. No ASCII art.
+
+> The decisions below are **[informational]** — repo-wide process constraints honored by absence (no UI files modified, mermaid-only diagrams, PR-only branch state, maintainer-validated UAT). They are not phase-implementation tasks and do not need to be cited in any single plan's `must_haves`. Plan 06 still gates D-25 / D-26 explicitly because they shape that plan's UAT structure.
+
+- **D-23:** [informational] All changes land via PR on a feature branch. No direct commits to main. `phase-18-webhook-payload` is the working branch name.
+- **D-24:** [informational] Diagrams in any Phase 18 artifact (PLAN, SUMMARY, README, code comments) are mermaid. No ASCII art.
 - **D-25:** UAT recipes use existing `just` commands. Per project memory `feedback_uat_use_just_commands.md` — every UAT step references a `just` recipe, not ad-hoc cargo/docker/curl.
-- **D-26:** Maintainer validates UAT — Claude does NOT mark UAT passed from its own runs (project memory `feedback_uat_user_validates.md`).
-- **D-27:** UI: Phase 18 has NO UI surface. Webhook config visibility on the dashboard is Phase 21 (FCTX UI panel) territory if at all. ROADMAP marks Phase 18 `UI hint: no`.
+- **D-26:** [informational] Maintainer validates UAT — Claude does NOT mark UAT passed from its own runs (project memory `feedback_uat_user_validates.md`).
+- **D-27:** [informational] UI: Phase 18 has NO UI surface. Webhook config visibility on the dashboard is Phase 21 (FCTX UI panel) territory if at all. ROADMAP marks Phase 18 `UI hint: no`.
 
 ### Claude's Discretion
 - Migration filenames, function signatures, internal struct shapes, and test file names — researcher and planner choose, following existing patterns (`src/webhooks/{mod,dispatcher,event,worker}.rs`, `src/config/{mod,defaults,validate,interpolate,hash}.rs`).
