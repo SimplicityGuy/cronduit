@@ -48,6 +48,22 @@ fn job_type(job: &JobConfig) -> &'static str {
 /// `src/config/defaults.rs::tests::parity_with_docker_job_config_is_maintained`
 /// can call this function directly and assert that every non-secret
 /// field `DockerJobConfig` reads is present in the JSON output.
+/// Doc-hidden public re-export of [`serialize_config_json`] for integration tests.
+///
+/// Plan 17-03 (Phase 17) BLOCKER #4 fix: the v12_labels_*.rs integration tests
+/// drive end-to-end through `parse_and_validate` → `apply_defaults` →
+/// serialize → `execute_docker` → bollard → `inspect_container`. Because
+/// `serialize_config_json` is `pub(crate)`, integration-test crates cannot
+/// call it directly. This re-export keeps the tests on the canonical
+/// serializer path so a future field-add cannot drift the test fixture.
+///
+/// Intentionally `#[doc(hidden)]` so it does not appear in rendered API docs
+/// and downstream consumers do not depend on it.
+#[doc(hidden)]
+pub fn serialize_config_json_for_tests(job: &JobConfig) -> String {
+    serialize_config_json(job)
+}
+
 pub(crate) fn serialize_config_json(job: &JobConfig) -> String {
     let mut map = serde_json::Map::new();
     map.insert("name".into(), serde_json::json!(job.name));
