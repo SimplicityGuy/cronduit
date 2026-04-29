@@ -19,6 +19,12 @@ static LABEL_KEY_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9._-]*$").unwrap()
 });
 
+/// Canonical RunFinalized status values per src/scheduler/run.rs:315-322.
+/// Used by `check_webhook_block_completeness` for the operator's `webhook.states` filter.
+const VALID_WEBHOOK_STATES: &[&str] = &[
+    "success", "failed", "timeout", "stopped", "cancelled", "error",
+];
+
 /// Maximum byte length for an individual label value (LBL-06).
 /// Aligns with Docker's documented label-value convention.
 const MAX_LABEL_VALUE_BYTES: usize = 4 * 1024; // 4 KB
@@ -48,6 +54,9 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         );
         check_label_size_limits(job, path, errors);
         check_label_key_chars(job, path, errors);
+        // Phase 18 / WH-01 — webhook validators.
+        check_webhook_url(job, path, errors);
+        check_webhook_block_completeness(job, path, errors);
     }
 }
 
@@ -363,6 +372,152 @@ fn check_label_key_chars(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigEr
             invalid.join(", ")
         ),
     });
+}
+
+/// WH-01 / D-04 — verify `webhook.url` parses and uses an allowed scheme.
+/// HTTPS-for-non-loopback is Phase 20 / WH-07; this check only enforces
+/// parseability + http/https scheme.
+fn check_webhook_url(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(wh) = &job.webhook else {
+        return;
+    };
+    match url::Url::parse(&wh.url) {
+        Err(e) => {
+            errors.push(ConfigError {
+                file: path.into(),
+                line: 0,
+                col: 0,
+                message: format!(
+                    "[[jobs]] `{}`: webhook.url `{}` is not a valid URL: {}. \
+                     Provide a fully-qualified URL like `https://hook.example.com/path`.",
+                    job.name, wh.url, e
+                ),
+            });
+        }
+        Ok(parsed) => {
+            let scheme = parsed.scheme();
+            if scheme != "http" && scheme != "https" {
+                errors.push(ConfigError {
+                    file: path.into(),
+                    line: 0,
+                    col: 0,
+                    message: format!(
+                        "[[jobs]] `{}`: webhook.url scheme `{}` is not supported \
+                         (allowed: `http`, `https`).",
+                        job.name, scheme
+                    ),
+                });
+            }
+        }
+    }
+}
+
+/// WH-01 / D-04 — verify the `webhook` block is internally consistent.
+/// Combines five independent assertions (Phase 17 LBL precedent — D-01
+/// aggregation in a single check function): non-empty + valid states,
+/// `secret` xor `unsigned`, non-negative `fire_every`, non-empty resolved
+/// secret (Pitfall H).
+fn check_webhook_block_completeness(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    use secrecy::ExposeSecret;
+    let Some(wh) = &job.webhook else {
+        return;
+    };
+
+    // 1. states non-empty.
+    if wh.states.is_empty() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: webhook.states is empty. Use absence of the \
+                 `webhook` block to disable webhooks; `states = []` is meaningless.",
+                job.name
+            ),
+        });
+    }
+
+    // 2. every state ∈ VALID_WEBHOOK_STATES (sorted offending list per Pitfall G).
+    let mut invalid: Vec<&str> = wh
+        .states
+        .iter()
+        .map(String::as_str)
+        .filter(|s| !VALID_WEBHOOK_STATES.contains(s))
+        .collect();
+    if !invalid.is_empty() {
+        invalid.sort(); // determinism — Phase 17 D-01 / Pitfall G
+        invalid.dedup();
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: webhook.states contains unknown values: {}. \
+                 Valid values: {}.",
+                job.name,
+                invalid.join(", "),
+                VALID_WEBHOOK_STATES.join(", ")
+            ),
+        });
+    }
+
+    // 3. secret xor unsigned.
+    let has_secret = wh.secret.is_some();
+    if has_secret == wh.unsigned {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: if has_secret {
+                format!(
+                    "[[jobs]] `{}`: webhook block has both `secret` AND `unsigned = true`. \
+                     Set `unsigned = true` to skip signing (omit `secret`), OR set `secret` \
+                     to sign deliveries (omit `unsigned`).",
+                    job.name
+                )
+            } else {
+                format!(
+                    "[[jobs]] `{}`: webhook block needs either `secret = \"${{ENV_VAR}}\"` \
+                     (signed deliveries) OR `unsigned = true` (opt-in unsigned for receivers \
+                     like Slack/Discord). Currently neither is set.",
+                    job.name
+                )
+            },
+        });
+    }
+
+    // 4. fire_every non-negative.
+    if wh.fire_every < 0 {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: webhook.fire_every = {} is negative. \
+                 Use 0 (always fire), 1 (first-of-stream — default), or N>1 (every Nth match).",
+                job.name, wh.fire_every
+            ),
+        });
+    }
+
+    // 5. Pitfall H — empty resolved secret. The interpolate.rs pass produces
+    //    MissingVar for unset env vars, but `${WEBHOOK_SECRET}=""` (set-but-empty)
+    //    would silently sign HMACs with an empty key. Reject at LOAD time here.
+    if let Some(secret) = &wh.secret
+        && secret.expose_secret().is_empty()
+    {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: webhook.secret resolved to an empty string. \
+                 Set the source env var to a non-empty value (signing with an \
+                 empty key produces signatures receivers will reject).",
+                job.name
+            ),
+        });
+    }
 }
 
 fn check_duplicate_job_names(
@@ -909,5 +1064,283 @@ mod tests {
         let mut e = Vec::new();
         check_label_key_chars(&job, Path::new("x"), &mut e);
         assert!(e.is_empty(), "valid keys must all pass: got {e:?}");
+    }
+
+    // ---- Phase 18 / WH-01 webhook validators ----
+
+    fn make_webhook_job(name: &str, wh: Option<crate::config::WebhookConfig>) -> JobConfig {
+        use std::collections::BTreeMap;
+        JobConfig {
+            name: name.into(),
+            schedule: "* * * * *".into(),
+            command: Some("true".into()),
+            script: None,
+            image: None,
+            use_defaults: None,
+            env: BTreeMap::new(),
+            volumes: None,
+            labels: None,
+            network: None,
+            container_name: None,
+            timeout: None,
+            delete: None,
+            cmd: None,
+            webhook: wh,
+        }
+    }
+
+    #[test]
+    fn check_webhook_url_rejects_garbage() {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "not a url".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_url(&job, Path::new("test.toml"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("is not a valid URL"));
+    }
+
+    #[test]
+    fn check_webhook_url_rejects_non_http_scheme() {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "ftp://x.y/".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_url(&job, Path::new("test.toml"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("scheme"));
+        assert!(errors[0].message.contains("`ftp`"));
+        assert!(errors[0].message.contains("`http`, `https`"));
+    }
+
+    #[test]
+    fn check_webhook_url_accepts_https_and_http() {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        for url in ["https://x.y/", "http://127.0.0.1:8080/path"] {
+            let job = make_webhook_job(
+                "j",
+                Some(WebhookConfig {
+                    url: url.into(),
+                    states: vec!["failed".into()],
+                    secret: Some(SecretString::from("s")),
+                    unsigned: false,
+                    fire_every: 1,
+                }),
+            );
+            let mut errors = Vec::new();
+            check_webhook_url(&job, Path::new("test.toml"), &mut errors);
+            assert!(errors.is_empty(), "url {url} should pass; got: {errors:?}");
+        }
+    }
+
+    #[test]
+    fn check_webhook_block_rejects_empty_states() {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "https://x/".into(),
+                states: vec![],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("webhook.states is empty"))
+        );
+    }
+
+    #[test]
+    fn check_webhook_block_rejects_unknown_state() {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "https://x/".into(),
+                states: vec!["fialed".into(), "boom".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
+        let msg = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(msg.contains("unknown values"));
+        // Sorted offending list (Pitfall G): boom before fialed alphabetically.
+        let pos_boom = msg.find("boom").expect("boom present");
+        let pos_fialed = msg.find("fialed").expect("fialed present");
+        assert!(
+            pos_boom < pos_fialed,
+            "Pitfall G — offending values must be sorted"
+        );
+        // Valid list named.
+        for v in ["success", "failed", "timeout", "stopped", "cancelled", "error"] {
+            assert!(msg.contains(v), "valid value `{v}` must appear in error");
+        }
+    }
+
+    #[test]
+    fn check_webhook_block_rejects_both_secret_and_unsigned() {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "https://x/".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: true, // <-- both
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("both `secret` AND `unsigned = true`"))
+        );
+    }
+
+    #[test]
+    fn check_webhook_block_rejects_neither_secret_nor_unsigned() {
+        use crate::config::WebhookConfig;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "https://x/".into(),
+                states: vec!["failed".into()],
+                secret: None,
+                unsigned: false, // <-- neither
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("needs either `secret"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("OR `unsigned = true`"))
+        );
+    }
+
+    #[test]
+    fn check_webhook_block_rejects_negative_fire_every() {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "https://x/".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: -1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("webhook.fire_every = -1 is negative"))
+        );
+    }
+
+    #[test]
+    fn check_webhook_block_rejects_empty_secret() {
+        // Pitfall H — secret resolved to empty string after interpolation.
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "https://x/".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("")), // <-- empty string
+                unsigned: false,
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("webhook.secret resolved to an empty string"))
+        );
+    }
+
+    #[test]
+    fn check_webhook_block_accepts_valid_signed() {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "https://x/".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 0,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
+        assert!(errors.is_empty(), "valid signed config should pass: {errors:?}");
+    }
+
+    #[test]
+    fn check_webhook_block_accepts_valid_unsigned() {
+        use crate::config::WebhookConfig;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: "https://x/".into(),
+                states: vec!["timeout".into()],
+                secret: None,
+                unsigned: true,
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
+        assert!(errors.is_empty(), "valid unsigned config should pass: {errors:?}");
     }
 }
