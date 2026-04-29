@@ -151,6 +151,29 @@ pub fn apply_defaults(mut job: JobConfig, defaults: Option<&DefaultsConfig>) -> 
     {
         job.delete = Some(v);
     }
+    // Labels merge per LBL-02 / SEED-001:
+    //   * use_defaults = false      → already short-circuited above
+    //                                  (per-job labels stay; defaults discarded).
+    //   * use_defaults true / unset → defaults map ∪ per-job map; per-job key
+    //                                  wins on collision (standard override).
+    //
+    // Type-gate (docker-only) is checked in validate.rs (LBL-04), NOT here. We do
+    // NOT gate this merge on `is_non_docker` because:
+    //   1. The validator handles the type-mismatch case with a clear error
+    //      (`labels` on command/script jobs is rejected at load).
+    //   2. Skipping the merge here would silently drop defaults labels for
+    //      command/script jobs, masking the validator's intended error.
+    if let Some(defaults_labels) = &defaults.labels {
+        let merged: std::collections::HashMap<String, String> = match job.labels.take() {
+            Some(per_job) => {
+                let mut m = defaults_labels.clone();
+                m.extend(per_job); // per-job-wins on collision
+                m
+            }
+            None => defaults_labels.clone(),
+        };
+        job.labels = Some(merged);
+    }
     // NOTE: random_min_gap is intentionally NOT merged -- see module doc.
     // NOTE: cmd is per-job ONLY -- DefaultsConfig has no `cmd` field.
     // NOTE: container_name is per-job ONLY -- two containers cannot share a name.
@@ -329,6 +352,158 @@ mod tests {
         assert_eq!(merged.volumes, None);
         assert_eq!(merged.timeout, None);
         assert_eq!(merged.delete, None);
+    }
+
+    #[test]
+    fn apply_defaults_merges_labels_per_job_wins() {
+        // LBL-02 contract: defaults.labels ∪ per-job.labels with per-job
+        // value winning on key collision. Standard "operator override"
+        // semantics for hash-map merges.
+        let mut job = empty_job();
+        job.image = Some("alpine:latest".into()); // make it a docker job
+        let mut per_job_labels = std::collections::HashMap::new();
+        per_job_labels.insert("a".to_string(), "from-job".to_string());
+        per_job_labels.insert(
+            "traefik.http.routers.x.rule".to_string(),
+            "Host(`x`)".to_string(),
+        );
+        job.labels = Some(per_job_labels);
+
+        let mut defaults_labels = std::collections::HashMap::new();
+        defaults_labels.insert("a".to_string(), "from-defaults".to_string()); // collision
+        defaults_labels.insert("watchtower.enable".to_string(), "false".to_string());
+
+        let defaults = DefaultsConfig {
+            image: Some("alpine:latest".into()),
+            network: None,
+            volumes: None,
+            labels: Some(defaults_labels),
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+        };
+
+        let merged = apply_defaults(job, Some(&defaults));
+        let labels = merged.labels.expect("labels merged");
+
+        assert_eq!(
+            labels.get("a").map(String::as_str),
+            Some("from-job"),
+            "per-job key must win on collision (LBL-02)"
+        );
+        assert_eq!(
+            labels.get("watchtower.enable").map(String::as_str),
+            Some("false"),
+            "defaults key without collision must be inherited"
+        );
+        assert_eq!(
+            labels.get("traefik.http.routers.x.rule").map(String::as_str),
+            Some("Host(`x`)"),
+            "per-job-only key must be present"
+        );
+        assert_eq!(labels.len(), 3, "expected 3 merged keys");
+    }
+
+    #[test]
+    fn apply_defaults_use_defaults_false_replaces_labels() {
+        // LBL-02 contract: use_defaults = false short-circuits ALL defaults
+        // merging including labels — defaults labels must be discarded
+        // entirely; only per-job labels survive.
+        let mut job = empty_job();
+        job.image = Some("alpine:latest".into());
+        let mut per_job_labels = std::collections::HashMap::new();
+        per_job_labels.insert("backup.exclude".to_string(), "true".to_string());
+        job.labels = Some(per_job_labels);
+        job.use_defaults = Some(false);
+
+        let mut defaults_labels = std::collections::HashMap::new();
+        defaults_labels.insert("watchtower.enable".to_string(), "false".to_string());
+        let defaults = DefaultsConfig {
+            image: None,
+            network: None,
+            volumes: None,
+            labels: Some(defaults_labels),
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+        };
+
+        let merged = apply_defaults(job, Some(&defaults));
+        let labels = merged.labels.expect("per-job labels preserved");
+
+        assert!(
+            labels.get("watchtower.enable").is_none(),
+            "use_defaults=false must replace defaults labels entirely (LBL-02)"
+        );
+        assert_eq!(
+            labels.get("backup.exclude").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(labels.len(), 1);
+    }
+
+    #[test]
+    fn lbl_04_error_does_not_leak_defaults_keys_for_non_docker_jobs() {
+        // WARNING #2: the LBL-04 error message on a command-job-with-merged-defaults-labels
+        // must reference ONLY the operator-supplied keys, not the inherited defaults keys
+        // (otherwise operator gets confusing error pointing at [defaults]).
+        //
+        // This is a forward-pinning shape test for Plan 17-02's validator. The contract
+        // it pins: the merge runs unconditionally (no is_non_docker gate), AND the
+        // per-job key set is recoverable downstream by set-diffing against the defaults
+        // map. Plan 17-02's validator implements the "operator-keys-only" error formatter
+        // against this contract.
+        let mut job = empty_job();
+        job.command = Some("echo hi".to_string()); // makes it a non-docker job
+        let mut per_job_labels = std::collections::HashMap::new();
+        per_job_labels.insert("operator.key".to_string(), "v".to_string());
+        job.labels = Some(per_job_labels);
+
+        let mut defaults_labels = std::collections::HashMap::new();
+        defaults_labels.insert("inherited.from.defaults".to_string(), "v".to_string());
+        // Snapshot the defaults-key set BEFORE moving the map into DefaultsConfig
+        // so the assertion below can replicate the set-diff Plan 17-02 will use.
+        let defaults_keys_snapshot: std::collections::HashSet<String> =
+            defaults_labels.keys().cloned().collect();
+        let defaults = DefaultsConfig {
+            image: None,
+            network: None,
+            volumes: None,
+            labels: Some(defaults_labels),
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+        };
+
+        let merged = apply_defaults(job, Some(&defaults));
+
+        // The merge ran (per the no-gate comment in the merge block). The
+        // operator-supplied keys are still RECOVERABLE for LBL-04's error
+        // formatter by diffing against the defaults map. Plan 17-02 owns the
+        // error-formatter implementation; this test pins the prerequisite.
+        let merged_labels = merged.labels.expect("merge produced a labels set");
+        assert!(
+            merged_labels.contains_key("operator.key"),
+            "operator-supplied key must survive merge so LBL-04 can name it in the error"
+        );
+        assert!(
+            merged_labels.contains_key("inherited.from.defaults"),
+            "defaults keys also present (no is_non_docker gate); LBL-04 formatter must \
+             EXCLUDE these from the error message — the diff against [defaults].labels \
+             yields the operator-only key set."
+        );
+
+        // Recoverability check — operator-only keys = merged - defaults (set diff)
+        let operator_only_keys: Vec<&String> = merged_labels
+            .keys()
+            .filter(|k| !defaults_keys_snapshot.contains(*k))
+            .collect();
+        assert_eq!(operator_only_keys.len(), 1);
+        assert_eq!(
+            operator_only_keys[0], "operator.key",
+            "Plan 17-02's LBL-04 error formatter uses this exact set-diff to avoid \
+             leaking defaults keys"
+        );
     }
 
     #[test]
