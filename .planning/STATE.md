@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 18 context gathered
-last_updated: "2026-04-29T20:54:49.386Z"
-last_activity: 2026-04-29 -- Phase 18 planning complete
+last_updated: "2026-04-29T20:57:53.075Z"
+last_activity: 2026-04-29 -- Phase 18 execution started
 progress:
   total_phases: 10
   completed_phases: 3
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 17 — custom-docker-labels-seed-001 (gap closure complete; awaiting next-phase decision)
+**Current focus:** Phase 18 — webhook-payload-state-filter-coalescing
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 17 (custom-docker-labels-seed-001) — COMPLETE (gap closure passed verification 2026-04-29; see 17-VERIFICATION-GAP-CLOSURE.md)
-Plan: 9 of 9 (all gap-closure plans landed: 17-07 CR-01, 17-08 CR-02, 17-09 bookkeeping)
-Status: Ready to execute
-Last activity: 2026-04-29 -- Phase 18 planning complete
+Phase: 18 (webhook-payload-state-filter-coalescing) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 18
+Last activity: 2026-04-29 -- Phase 18 execution started
 
 Progress: [█░░░░░░░░░] 10% (v1.2: 1/10 phases complete; 9/— plans complete)
 

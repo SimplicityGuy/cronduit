@@ -138,6 +138,13 @@ fmt-check:
 clippy:
     cargo clippy --all-targets --all-features -- -D warnings
 
+# Unit tests only (no integration tests; fast feedback loop per 18-VALIDATION.md sampling rate).
+# Used by per-task feedback during Phase 18 execution; ~5-30s runtime depending on disk state.
+[group('test')]
+[doc('Run unit tests only — fast feedback (cargo test --lib)')]
+test-unit:
+    cargo test --lib --all-features
+
 # cargo test — all features
 [group('quality')]
 test:
