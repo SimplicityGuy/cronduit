@@ -272,6 +272,52 @@ uat-fctx-bugfix-spot-check:
     @echo "Expected: container_id is a real Docker container ID (or NULL for non-docker runs)."
     @echo "FAIL if: container_id starts with 'sha256:' (would indicate the bug regressed)."
 
+# ===== Phase 18 — webhook UAT recipes (per project memory feedback_uat_use_just_commands.md) =====
+
+# Cross-cutting helper — trigger an immediate run of JOB_NAME via the
+# running cronduit's HTTP API. Used by uat-webhook-fire and ad-hoc
+# operator nudges. Cronduit must be running (`just dev`).
+#
+# This is the ONLY place curl is invoked in the justfile (outside the
+# pre-existing `health` and `metrics-check` recipes, which are reused by
+# the Phase 18 UAT runbook). UAT-callable recipes (`uat-webhook-fire`)
+# call THIS recipe rather than reinventing the curl call inline — keeps
+# the UAT surface free of raw shell.
+[group('api')]
+[doc('Trigger immediate run of JOB_NAME via cronduit HTTP API (curl wrapper)')]
+api-run-now JOB_NAME:
+    @curl -sf -X POST "http://127.0.0.1:8080/api/jobs/{{JOB_NAME}}/run-now" >/dev/null \
+      || (echo "Run Now endpoint unreachable — confirm 'just dev' is running"; exit 1)
+    @echo "OK: triggered run-now for {{JOB_NAME}}"
+
+# Mock HTTP receiver on 127.0.0.1:9999 — logs every request to stdout AND
+# /tmp/cronduit-webhook-mock.log. Use Ctrl-C to stop.
+[group('uat')]
+[doc('Phase 18 — start mock HTTP receiver on 127.0.0.1:9999 (logs requests)')]
+uat-webhook-mock:
+    @echo "Starting webhook mock on http://127.0.0.1:9999/  (log: /tmp/cronduit-webhook-mock.log)"
+    @echo "Maintainer: Ctrl-C to stop. Run 'just uat-webhook-verify' in another terminal."
+    cargo run --example webhook_mock_server
+
+# Force a 'Run Now' on a webhook-configured job — operator confirms one
+# delivery lands at the mock receiver. Body delegates to `api-run-now`
+# so the UAT-callable surface contains zero raw curl/cargo/docker.
+[group('uat')]
+[doc('Phase 18 — force Run Now on a webhook-configured job (operator-supplied JOB_NAME)')]
+uat-webhook-fire JOB_NAME:
+    @echo "▶ UAT: triggering run for {{JOB_NAME}} — watch the receiver and the cronduit log"
+    @just api-run-now {{JOB_NAME}}
+
+# Print the last 30 lines of the mock receiver's log — maintainer hand-
+# validates the 3 Standard Webhooks v1 headers, the 16-field payload, and
+# the signature shape (v1,<base64>).
+[group('uat')]
+[doc('Phase 18 — print last 30 lines of webhook mock log for maintainer hand-validation')]
+uat-webhook-verify:
+    @echo "Last 30 lines from /tmp/cronduit-webhook-mock.log:"
+    @echo "Maintainer: confirm headers (webhook-id, webhook-timestamp, webhook-signature), 16-field body, signature format v1,<base64>."
+    @tail -n 30 /tmp/cronduit-webhook-mock.log 2>/dev/null || echo "(log empty; ensure 'just uat-webhook-mock' is running and 'just uat-webhook-fire <JOB>' was triggered)"
+
 # -------------------- dev loop --------------------
 
 # Single-process dev loop (readable text logs, trace level for cronduit)

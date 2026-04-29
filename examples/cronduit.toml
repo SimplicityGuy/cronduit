@@ -188,3 +188,53 @@ delete = true        # Required because use_defaults=false discards [defaults].d
 timeout = "1m"       # Required because use_defaults=false discards [defaults].timeout
 network = "bridge"   # Required because use_defaults=false discards [defaults].network
 labels = { "backup.exclude" = "true" }
+
+# =====================================================================
+# Phase 18 -- Webhook Payload + State-Filter + Coalescing examples
+# =====================================================================
+#
+# Per WH-01 / D-01..D-05. Each [[jobs]] block can carry a webhook block;
+# `[defaults].webhook` works the same way (use_defaults = false disables).
+# See README section Configuration > Webhooks for the full reference.
+#
+# These three examples target the local mock receiver started by
+# `just uat-webhook-mock` (listens on 127.0.0.1:9999). The 18-HUMAN-UAT.md
+# runbook walks the maintainer through each scenario.
+#
+# `${WEBHOOK_SECRET}` is interpolated from the environment at config-load
+# (Pitfall H — empty/unset is rejected by the validator). Set it in your
+# shell before running `just dev` or `just check-config`:
+#
+#     export WEBHOOK_SECRET=my-test-secret-shh
+
+# Example A -- signed delivery, default state filter, default coalescing.
+# The dispatcher fires on `failed` and `timeout` (default states); first
+# of each new streak (default fire_every = 1).
+[[jobs]]
+name = "wh-example-signed"
+schedule = "* * * * *"
+command = "false"  # always fails -- exercises the failure firing path
+use_defaults = false
+timeout = "5m"
+webhook = { url = "http://127.0.0.1:9999/signed", secret = "${WEBHOOK_SECRET}" }
+
+# Example B -- unsigned delivery (e.g., for receivers like Slack/Discord
+# that don't HMAC-verify). The webhook-signature header is omitted entirely;
+# webhook-id and webhook-timestamp are still emitted.
+[[jobs]]
+name = "wh-example-unsigned"
+schedule = "*/2 * * * *"
+command = "false"
+use_defaults = false
+timeout = "5m"
+webhook = { url = "http://127.0.0.1:9999/unsigned", states = ["failed", "stopped"], unsigned = true }
+
+# Example C -- narrow filter + always-fire coalescing.
+# Operator wants every timeout (no coalescing) but ignores other failures.
+[[jobs]]
+name = "wh-example-fire-every-zero"
+schedule = "*/3 * * * *"
+command = "false"
+use_defaults = false
+timeout = "5m"
+webhook = { url = "http://127.0.0.1:9999/timeouts-only", states = ["timeout"], fire_every = 0, secret = "${WEBHOOK_SECRET}" }
