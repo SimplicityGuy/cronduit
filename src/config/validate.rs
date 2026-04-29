@@ -192,19 +192,57 @@ fn check_label_reserved_namespace(job: &JobConfig, path: &Path, errors: &mut Vec
 }
 
 /// LBL-04: reject `labels = ...` on non-docker (command/script) jobs.
-/// Mirrors check_cmd_only_on_docker_jobs (validate.rs:89). Runs AFTER
-/// apply_defaults so `image.is_none()` reliably distinguishes non-docker.
+/// Mirrors check_cmd_only_on_docker_jobs (validate.rs:89).
 ///
-/// RED-phase stub: signature is updated to accept `defaults_labels` but the
-/// body still emits the legacy message unconditionally. The GREEN-phase
-/// commit implements the set-diff and Branch B remediation.
+/// IMPORTANT: this function runs AFTER `apply_defaults`, so `job.labels`
+/// already contains the merged set (defaults + per-job). To distinguish
+/// the operator-set case (operator wrote `labels = {...}` on a command
+/// job) from the defaults-only case (operator added `[defaults].labels`
+/// and forgot `use_defaults = false` on a command job), this function
+/// set-diffs against `defaults_labels` (the original `[defaults].labels`
+/// map, which `apply_defaults` clones from but does not consume). The
+/// pin contract is `lbl_04_error_does_not_leak_defaults_keys_for_non_docker_jobs`
+/// at src/config/defaults.rs:447-509.
+///
+/// Two distinct error messages emerge:
+///   * operator_only_keys non-empty → legacy message ("Remove the
+///     `labels` block...") — backwards-compatible with existing CI grep
+///     and operator scripts.
+///   * operator_only_keys empty + defaults_labels non-empty → new
+///     message ("set `use_defaults = false` on this job to opt out...")
+///     — names the actual fix the example file's comments teach.
 fn check_labels_only_on_docker_jobs(
     job: &JobConfig,
-    _defaults_labels: Option<&HashMap<String, String>>,
+    defaults_labels: Option<&HashMap<String, String>>,
     path: &Path,
     errors: &mut Vec<ConfigError>,
 ) {
-    if job.labels.is_some() && job.image.is_none() {
+    // Fast paths: no labels on this job, or this is a docker job (image set).
+    let Some(job_labels) = &job.labels else {
+        return;
+    };
+    if job.image.is_some() {
+        return;
+    }
+
+    // Set-diff: operator-only keys = job.labels.keys() - defaults_labels.keys()
+    // BTreeSet for deterministic ordering (RESEARCH Pitfall 2 — HashMap iter
+    // order is random; even though we don't currently emit these keys in the
+    // error message, keeping the structure deterministic future-proofs any
+    // downstream change that does want to enumerate them).
+    let operator_only_keys: std::collections::BTreeSet<&str> = match defaults_labels {
+        Some(d) => job_labels
+            .keys()
+            .filter(|k| !d.contains_key(k.as_str()))
+            .map(String::as_str)
+            .collect(),
+        None => job_labels.keys().map(String::as_str).collect(),
+    };
+
+    if !operator_only_keys.is_empty() {
+        // Branch A — operator-set case. Preserve the legacy message text
+        // verbatim for backwards compat (existing tests/scripts grep for
+        // "Remove the `labels` block").
         errors.push(ConfigError {
             file: path.into(),
             line: 0,
@@ -214,7 +252,31 @@ fn check_labels_only_on_docker_jobs(
                 job.name
             ),
         });
+    } else if defaults_labels.is_some_and(|d| !d.is_empty()) {
+        // Branch B — defaults-only case. Operator did not write
+        // `labels = {...}` on this job; the merged labels came from
+        // `[defaults].labels` via apply_defaults. Tell the operator the
+        // actual fix is `use_defaults = false`.
+        let job_type = if job.command.is_some() {
+            "command"
+        } else if job.script.is_some() {
+            "script"
+        } else {
+            "command/script"
+        };
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: this is a {} job; labels are docker-only. `[defaults].labels` is set and would be merged into this job by `apply_defaults` — set `use_defaults = false` on this job to opt out, OR remove `[defaults].labels`.",
+                job.name, job_type
+            ),
+        });
     }
+    // No-op when both operator_only_keys is empty AND defaults_labels is None
+    // (or empty) — that is structurally impossible given the fast paths above
+    // (job.labels is Some, so either operator set keys or defaults supplied them).
 }
 
 /// LBL-06: enforce per-value (4 KB) and per-set (32 KB) byte-length limits.
@@ -682,12 +744,7 @@ mod tests {
         defaults_labels.insert("inherited.from.defaults".to_string(), "v".to_string());
 
         let mut e = Vec::new();
-        check_labels_only_on_docker_jobs(
-            &job,
-            Some(&defaults_labels),
-            Path::new("x"),
-            &mut e,
-        );
+        check_labels_only_on_docker_jobs(&job, Some(&defaults_labels), Path::new("x"), &mut e);
         assert_eq!(e.len(), 1);
         assert!(
             e[0].message.contains("set `use_defaults = false`"),
@@ -716,7 +773,8 @@ mod tests {
     }
 
     #[test]
-    fn lbl_04_command_job_with_mixed_operator_and_defaults_emits_legacy_message_only_for_operator_keys() {
+    fn lbl_04_command_job_with_mixed_operator_and_defaults_emits_legacy_message_only_for_operator_keys()
+     {
         // CR-02 regression test (gap closure plan 17-08, mixed case).
         // Operator wrote `labels = {operator.key = ...}` AND inherited
         // `inherited.from.defaults` via apply_defaults merge. Branch A wins
@@ -733,12 +791,7 @@ mod tests {
         defaults_labels.insert("inherited.from.defaults".to_string(), "v".to_string());
 
         let mut e = Vec::new();
-        check_labels_only_on_docker_jobs(
-            &job,
-            Some(&defaults_labels),
-            Path::new("x"),
-            &mut e,
-        );
+        check_labels_only_on_docker_jobs(&job, Some(&defaults_labels), Path::new("x"), &mut e);
         assert_eq!(e.len(), 1);
         // Branch A wins → legacy message.
         assert!(
