@@ -22,7 +22,12 @@ static LABEL_KEY_RE: Lazy<Regex> = Lazy::new(|| {
 /// Canonical RunFinalized status values per src/scheduler/run.rs:315-322.
 /// Used by `check_webhook_block_completeness` for the operator's `webhook.states` filter.
 const VALID_WEBHOOK_STATES: &[&str] = &[
-    "success", "failed", "timeout", "stopped", "cancelled", "error",
+    "success",
+    "failed",
+    "timeout",
+    "stopped",
+    "cancelled",
+    "error",
 ];
 
 /// Maximum byte length for an individual label value (LBL-06).
@@ -1205,7 +1210,14 @@ mod tests {
             "Pitfall G — offending values must be sorted"
         );
         // Valid list named.
-        for v in ["success", "failed", "timeout", "stopped", "cancelled", "error"] {
+        for v in [
+            "success",
+            "failed",
+            "timeout",
+            "stopped",
+            "cancelled",
+            "error",
+        ] {
             assert!(msg.contains(v), "valid value `{v}` must appear in error");
         }
     }
@@ -1300,11 +1312,10 @@ mod tests {
         );
         let mut errors = Vec::new();
         check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.message.contains("webhook.secret resolved to an empty string"))
-        );
+        assert!(errors.iter().any(|e| {
+            e.message
+                .contains("webhook.secret resolved to an empty string")
+        }));
     }
 
     #[test]
@@ -1323,7 +1334,10 @@ mod tests {
         );
         let mut errors = Vec::new();
         check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
-        assert!(errors.is_empty(), "valid signed config should pass: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "valid signed config should pass: {errors:?}"
+        );
     }
 
     #[test]
@@ -1341,6 +1355,9 @@ mod tests {
         );
         let mut errors = Vec::new();
         check_webhook_block_completeness(&job, Path::new("test.toml"), &mut errors);
-        assert!(errors.is_empty(), "valid unsigned config should pass: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "valid unsigned config should pass: {errors:?}"
+        );
     }
 }

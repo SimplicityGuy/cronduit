@@ -209,75 +209,6 @@ pub struct ParsedConfig {
     pub source_path: PathBuf,
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn webhook_config_parses_per_job() {
-        let toml_text = r#"
-[server]
-bind = "127.0.0.1:0"
-timezone = "UTC"
-
-[[jobs]]
-name = "j1"
-schedule = "* * * * *"
-command = "true"
-webhook = { url = "https://hook.example.com/x", states = ["failed"], secret = "shh", fire_every = 3 }
-"#;
-        let cfg: super::Config = toml::from_str(toml_text).expect("parse");
-        let wh = cfg.jobs[0].webhook.as_ref().expect("webhook present");
-        assert_eq!(wh.url, "https://hook.example.com/x");
-        assert_eq!(wh.states, vec!["failed".to_string()]);
-        assert!(wh.secret.is_some());
-        assert!(!wh.unsigned);
-        assert_eq!(wh.fire_every, 3);
-    }
-
-    #[test]
-    fn webhook_config_parses_defaults_block() {
-        let toml_text = r#"
-[server]
-bind = "127.0.0.1:0"
-timezone = "UTC"
-
-[defaults]
-webhook = { url = "https://hook.example.com/y", unsigned = true }
-
-[[jobs]]
-name = "j1"
-schedule = "* * * * *"
-command = "true"
-"#;
-        let cfg: super::Config = toml::from_str(toml_text).expect("parse");
-        let wh = cfg
-            .defaults
-            .as_ref()
-            .unwrap()
-            .webhook
-            .as_ref()
-            .expect("defaults webhook");
-        assert_eq!(wh.url, "https://hook.example.com/y");
-        // Default-filled:
-        assert_eq!(wh.states, vec!["failed".to_string(), "timeout".to_string()]);
-        assert!(wh.secret.is_none());
-        assert!(wh.unsigned);
-        assert_eq!(wh.fire_every, 1);
-    }
-
-    #[test]
-    fn webhook_config_states_default_when_omitted() {
-        assert_eq!(
-            super::default_webhook_states(),
-            vec!["failed".to_string(), "timeout".to_string()]
-        );
-    }
-
-    #[test]
-    fn webhook_config_fire_every_default_when_omitted() {
-        assert_eq!(super::default_fire_every(), 1);
-    }
-}
-
 /// Shared by `cronduit check` and `cronduit run`. Never touches the DB.
 ///
 /// Collects ALL errors into a Vec<ConfigError> (D-21 -- not fail-fast).
@@ -359,5 +290,74 @@ pub fn parse_and_validate(path: &Path) -> Result<ParsedConfig, Vec<ConfigError>>
         })
     } else {
         Err(errors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn webhook_config_parses_per_job() {
+        let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[[jobs]]
+name = "j1"
+schedule = "* * * * *"
+command = "true"
+webhook = { url = "https://hook.example.com/x", states = ["failed"], secret = "shh", fire_every = 3 }
+"#;
+        let cfg: super::Config = toml::from_str(toml_text).expect("parse");
+        let wh = cfg.jobs[0].webhook.as_ref().expect("webhook present");
+        assert_eq!(wh.url, "https://hook.example.com/x");
+        assert_eq!(wh.states, vec!["failed".to_string()]);
+        assert!(wh.secret.is_some());
+        assert!(!wh.unsigned);
+        assert_eq!(wh.fire_every, 3);
+    }
+
+    #[test]
+    fn webhook_config_parses_defaults_block() {
+        let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[defaults]
+webhook = { url = "https://hook.example.com/y", unsigned = true }
+
+[[jobs]]
+name = "j1"
+schedule = "* * * * *"
+command = "true"
+"#;
+        let cfg: super::Config = toml::from_str(toml_text).expect("parse");
+        let wh = cfg
+            .defaults
+            .as_ref()
+            .unwrap()
+            .webhook
+            .as_ref()
+            .expect("defaults webhook");
+        assert_eq!(wh.url, "https://hook.example.com/y");
+        // Default-filled:
+        assert_eq!(wh.states, vec!["failed".to_string(), "timeout".to_string()]);
+        assert!(wh.secret.is_none());
+        assert!(wh.unsigned);
+        assert_eq!(wh.fire_every, 1);
+    }
+
+    #[test]
+    fn webhook_config_states_default_when_omitted() {
+        assert_eq!(
+            super::default_webhook_states(),
+            vec!["failed".to_string(), "timeout".to_string()]
+        );
+    }
+
+    #[test]
+    fn webhook_config_fire_every_default_when_omitted() {
+        assert_eq!(super::default_fire_every(), 1);
     }
 }
