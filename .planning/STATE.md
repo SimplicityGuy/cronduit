@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: executing
-stopped_at: Phase 17 context gathered
-last_updated: "2026-04-29T03:06:07.120Z"
-last_activity: 2026-04-29 -- Phase 17 execution started
+status: phase_complete
+stopped_at: Phase 17 gap closure (CR-01, CR-02, REQUIREMENTS bookkeeping) verified
+last_updated: "2026-04-29T03:35:00.000Z"
+last_activity: 2026-04-29 -- Phase 17 gap closure verified (all 9 plans complete)
 progress:
   total_phases: 10
   completed_phases: 1
-  total_plans: 14
-  completed_plans: 11
-  percent: 79
+  total_plans: 17
+  completed_plans: 17
+  percent: 100
 ---
 
 # Project State
@@ -21,18 +21,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 17 — custom-docker-labels-seed-001
+**Current focus:** Phase 17 — custom-docker-labels-seed-001 (gap closure complete; awaiting next-phase decision)
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 17 (custom-docker-labels-seed-001) — EXECUTING
-Plan: 1 of 9
-Status: Executing Phase 17
-Last activity: 2026-04-29 -- Phase 17 execution started
+Phase: 17 (custom-docker-labels-seed-001) — COMPLETE (gap closure passed verification 2026-04-29; see 17-VERIFICATION-GAP-CLOSURE.md)
+Plan: 9 of 9 (all gap-closure plans landed: 17-07 CR-01, 17-08 CR-02, 17-09 bookkeeping)
+Status: Phase 17 complete — ready to advance
+Last activity: 2026-04-29 -- Phase 17 gap closure verified (CR-01 + CR-02 + tracking-table drift all CLOSED)
 
-Progress: [░░░░░░░░░░] 0% (v1.2: 0/10 phases complete; 0/— plans complete)
+Progress: [█░░░░░░░░░] 10% (v1.2: 1/10 phases complete; 9/— plans complete)
 
 ## v1.2 Roadmap Summary
 

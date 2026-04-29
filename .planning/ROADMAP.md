@@ -125,9 +125,9 @@ Plans:
 - [x] 17-04-PLAN.md — examples/cronduit.toml: 3 integration patterns
 - [x] 17-05-PLAN.md — README § Configuration > Labels subsection (mermaid + table + 6 rules)
 - [x] 17-06-PLAN.md — SEED-001 close-out + 17-HUMAN-UAT.md
-- [ ] 17-07-PLAN.md — CR-01 gap closure: README env-var interpolation prose + validator/interpolate docstrings + two key-position regression tests (LBL-05)
-- [ ] 17-08-PLAN.md — CR-02 gap closure: set-diff in `check_labels_only_on_docker_jobs` + 3 unit tests + 1 integration test (LBL-04)
-- [ ] 17-09-PLAN.md — REQUIREMENTS.md bookkeeping: flip LBL-01..LBL-06 from Pending to Complete
+- [x] 17-07-PLAN.md — CR-01 gap closure: README env-var interpolation prose + validator/interpolate docstrings + two key-position regression tests (LBL-05)
+- [x] 17-08-PLAN.md — CR-02 gap closure: set-diff in `check_labels_only_on_docker_jobs` + 3 unit tests + 1 integration test (LBL-04)
+- [x] 17-09-PLAN.md — REQUIREMENTS.md bookkeeping: flip LBL-01..LBL-06 from Pending to Complete
 
 **UI hint**: yes
 
