@@ -79,6 +79,9 @@ pub(crate) fn serialize_config_json(job: &JobConfig) -> String {
     if let Some(c) = &job.cmd {
         map.insert("cmd".into(), serde_json::json!(c));
     }
+    if let Some(l) = &job.labels {
+        map.insert("labels".into(), serde_json::json!(l));
+    }
     // T-02-03: Only store env key names, never values.
     if !job.env.is_empty() {
         let keys: Vec<&str> = job.env.keys().map(|k| k.as_str()).collect();
@@ -249,6 +252,7 @@ mod tests {
             use_defaults: None,
             env: BTreeMap::new(),
             volumes: None,
+            labels: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -417,6 +421,7 @@ mod tests {
                 use_defaults: None,
                 env,
                 volumes: None,
+                labels: None,
                 network: None,
                 container_name: None,
                 timeout: None,

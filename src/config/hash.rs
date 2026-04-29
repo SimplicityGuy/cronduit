@@ -44,6 +44,9 @@ pub fn compute_config_hash(job: &JobConfig) -> String {
     if let Some(c) = &job.cmd {
         map.insert("cmd", serde_json::json!(c));
     }
+    if let Some(l) = &job.labels {
+        map.insert("labels", serde_json::json!(l));
+    }
     // DO NOT include `env` -- its values are SecretString and must not be hashed/logged.
 
     let bytes = serde_json::to_vec(&map).expect("serde_json BTreeMap never fails");
@@ -72,6 +75,7 @@ mod tests {
             use_defaults: None,
             env: BTreeMap::new(),
             volumes: None,
+            labels: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -124,6 +128,7 @@ mod tests {
                 use_defaults: None,
                 env: BTreeMap::new(),
                 volumes: None,
+                labels: None,
                 network: None,
                 container_name: None,
                 timeout: None,
@@ -146,6 +151,7 @@ mod tests {
                 image: Some("alpine:latest".into()),
                 network: None,
                 volumes: None,
+                labels: None,
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
@@ -167,6 +173,7 @@ mod tests {
                 image: None,
                 network: Some("container:vpn".into()),
                 volumes: None,
+                labels: None,
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
@@ -188,6 +195,7 @@ mod tests {
                 image: None,
                 network: None,
                 volumes: Some(vec!["/host:/container".to_string()]),
+                labels: None,
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
@@ -209,6 +217,7 @@ mod tests {
                 image: None,
                 network: None,
                 volumes: None,
+                labels: None,
                 delete: None,
                 timeout: Some(std::time::Duration::from_secs(300)),
                 random_min_gap: None,
@@ -230,6 +239,7 @@ mod tests {
                 image: None,
                 network: None,
                 volumes: None,
+                labels: None,
                 delete: Some(true),
                 timeout: None,
                 random_min_gap: None,
@@ -283,6 +293,32 @@ mod tests {
         assert_ne!(
             hc, hd,
             "None vs Some([]) -- image CMD vs explicit empty override"
+        );
+    }
+
+    #[test]
+    fn hash_differs_on_labels_change() {
+        // Guards change-detection for the new per-job `labels` field
+        // (LBL-01 / Layer 3). An operator editing a label value must
+        // produce a different config_hash so sync_config_to_db classifies
+        // the job as `updated`, not `unchanged`.
+        //
+        // Mirror of `hash_differs_on_cmd_change` shape: two jobs that
+        // differ ONLY in labels must hash to different values.
+        let mut a = mk_job();
+        let mut la = std::collections::HashMap::new();
+        la.insert("watchtower.enable".to_string(), "false".to_string());
+        a.labels = Some(la);
+
+        let mut b = mk_job();
+        let mut lb = std::collections::HashMap::new();
+        lb.insert("watchtower.enable".to_string(), "true".to_string()); // value differs
+        b.labels = Some(lb);
+
+        assert_ne!(
+            compute_config_hash(&a),
+            compute_config_hash(&b),
+            "hash must change when label value changes (per LBL-01)"
         );
     }
 }

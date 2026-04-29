@@ -225,6 +225,7 @@ mod tests {
             use_defaults: None,
             env: Default::default(),
             volumes: None,
+            labels: None,
             network: None,
             container_name: None,
             timeout: None,
