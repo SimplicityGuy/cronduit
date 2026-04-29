@@ -12,6 +12,22 @@ static NETWORK_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^(bridge|host|none|container:[a-zA-Z0-9_.-]+|[a-zA-Z0-9_.-]+)$").unwrap()
 });
 
+static LABEL_KEY_RE: Lazy<Regex> = Lazy::new(|| {
+    // Strict ASCII: leading char alphanumeric or underscore; subsequent chars
+    // alphanumeric, dot, hyphen, or underscore. Per CONTEXT D-02; mirrors the
+    // once_cell idiom at validate.rs:10-13 and interpolate.rs:23-24.
+    Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9._-]*$").unwrap()
+});
+
+/// Maximum byte length for an individual label value (LBL-06).
+/// Aligns with Docker's documented label-value convention.
+const MAX_LABEL_VALUE_BYTES: usize = 4 * 1024; // 4 KB
+
+/// Maximum total byte length of all keys + values for a single job's labels (LBL-06).
+/// Cronduit-side; well below dockerd's informal ~250 KB limit so operators see a
+/// clear cronduit error at config-load instead of a confusing dockerd 400 at create.
+const MAX_LABEL_SET_BYTES: usize = 32 * 1024; // 32 KB
+
 /// Run every post-parse check; push errors into `errors`. Never fail-fast.
 pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<ConfigError>) {
     check_timezone(&cfg.server.timezone, path, errors);
@@ -22,6 +38,11 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         check_cmd_only_on_docker_jobs(job, path, errors);
         check_network_mode(job, path, errors);
         check_schedule(job, path, errors);
+        // Phase 17 / SEED-001 — operator labels (LBL-03, LBL-04, LBL-06, D-02)
+        check_label_reserved_namespace(job, path, errors);
+        check_labels_only_on_docker_jobs(job, path, errors);
+        check_label_size_limits(job, path, errors);
+        check_label_key_chars(job, path, errors);
     }
 }
 
@@ -135,6 +156,119 @@ fn check_schedule(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
             ),
         });
     }
+}
+
+/// LBL-03: reject operator labels under the reserved `cronduit.*` namespace.
+/// The cronduit.* prefix is reserved for cronduit-internal labels (currently
+/// cronduit.run_id, cronduit.job_name; consumed by docker_orphan reconciliation
+/// at src/scheduler/docker_orphan.rs:31). Sorting the offending-key list is
+/// CRITICAL — HashMap iteration is non-deterministic (see RESEARCH Pitfall 2).
+fn check_label_reserved_namespace(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(labels) = &job.labels else { return };
+    let mut offending: Vec<&str> = labels
+        .keys()
+        .filter(|k| k.starts_with("cronduit."))
+        .map(String::as_str)
+        .collect();
+    if offending.is_empty() {
+        return;
+    }
+    offending.sort(); // determinism — HashMap iter order is random
+    errors.push(ConfigError {
+        file: path.into(),
+        line: 0,
+        col: 0,
+        message: format!(
+            "[[jobs]] `{}`: labels under reserved namespace `cronduit.*` are not allowed: {}. Remove these keys; the cronduit.* prefix is reserved for cronduit-internal labels.",
+            job.name,
+            offending.join(", ")
+        ),
+    });
+}
+
+/// LBL-04: reject `labels = ...` on non-docker (command/script) jobs.
+/// Mirrors check_cmd_only_on_docker_jobs (validate.rs:89). Runs AFTER
+/// apply_defaults so `image.is_none()` reliably distinguishes non-docker.
+fn check_labels_only_on_docker_jobs(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.labels.is_some() && job.image.is_none() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: `labels` is only valid on docker jobs (job with `image = \"...\"` set either directly or via `[defaults].image`); command and script jobs cannot set `labels` because there is no container to attach them to. Remove the `labels` block, or switch the job to a docker job by setting `image`.",
+                job.name
+            ),
+        });
+    }
+}
+
+/// LBL-06: enforce per-value (4 KB) and per-set (32 KB) byte-length limits.
+/// Two independent checks may both fire for one job (per D-01 aggregation).
+fn check_label_size_limits(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(labels) = &job.labels else { return };
+
+    // Per-value check
+    let mut oversized_keys: Vec<&str> = labels
+        .iter()
+        .filter(|(_, v)| v.len() > MAX_LABEL_VALUE_BYTES)
+        .map(|(k, _)| k.as_str())
+        .collect();
+    if !oversized_keys.is_empty() {
+        oversized_keys.sort();
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: label values exceed 4 KB limit: {}. Each label value must be ≤ {} bytes.",
+                job.name,
+                oversized_keys.join(", "),
+                MAX_LABEL_VALUE_BYTES
+            ),
+        });
+    }
+
+    // Per-job total check
+    let total_bytes: usize = labels.iter().map(|(k, v)| k.len() + v.len()).sum();
+    if total_bytes > MAX_LABEL_SET_BYTES {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: total label-set size {} bytes exceeds 32 KB limit. Sum of all key+value byte lengths must be ≤ {} bytes.",
+                job.name, total_bytes, MAX_LABEL_SET_BYTES
+            ),
+        });
+    }
+}
+
+/// D-02: enforce strict ASCII char regex on label keys.
+/// Partially enforces LBL-05's "keys are NOT interpolated" — leftover `${`/`}`
+/// chars after a failed/unintended interpolation are rejected here.
+/// Sort before format (RESEARCH Pitfall 2).
+fn check_label_key_chars(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(labels) = &job.labels else { return };
+    let mut invalid: Vec<&str> = labels
+        .keys()
+        .filter(|k| !LABEL_KEY_RE.is_match(k))
+        .map(String::as_str)
+        .collect();
+    if invalid.is_empty() {
+        return;
+    }
+    invalid.sort();
+    errors.push(ConfigError {
+        file: path.into(),
+        line: 0,
+        col: 0,
+        message: format!(
+            "[[jobs]] `{}`: invalid label keys: {}. Keys must match the pattern `^[a-zA-Z0-9_][a-zA-Z0-9._-]*$` (alphanumeric or underscore start; alphanumeric, dot, hyphen, or underscore body). Note: env-var ${{...}} interpolation runs only on label VALUES, not keys.",
+            job.name,
+            invalid.join(", ")
+        ),
+    });
 }
 
 fn check_duplicate_job_names(
