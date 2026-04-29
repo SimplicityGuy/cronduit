@@ -16,9 +16,20 @@ pub enum ErrorKind {
 /// Expand `${VAR}` references in `input`. Collects all errors (missing vars,
 /// forbidden `${VAR:-default}` syntax) into a Vec; never early-exits.
 ///
-/// TOML comments (lines starting with optional whitespace then `#`) are
-/// skipped so that documentation examples containing `${VAR}` don't trigger
-/// missing-variable errors.
+/// IMPORTANT: This is a WHOLE-FILE TEXTUAL REPLACEMENT pass — that is, a
+/// whole-file textual replacement that runs over the entire TOML source string
+/// BEFORE the TOML parser ever sees it. The pass does NOT respect TOML structure:
+/// `${VAR}` matches and resolves identically in key positions, value positions,
+/// table headers, and inline-table syntax. The only structural awareness is
+/// line-level TOML-comment skipping (see below). Downstream consumers MUST NOT
+/// assume keys are exempt from interpolation; see
+/// `src/config/validate.rs::check_label_key_chars` for the post-resolution
+/// character validator that catches the env-unset / leftover-`${`-`}` case.
+///
+/// TOML comments (lines starting with optional whitespace then `#`, and inline
+/// comments outside quoted strings) are skipped so that documentation examples
+/// containing `${VAR}` don't trigger missing-variable errors. Comment skipping
+/// is the ONLY TOML-aware behavior in this function.
 pub fn interpolate(input: &str) -> (String, Vec<InterpolationError>) {
     static VAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").unwrap());
     static DEFAULT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{[^}]*:-").unwrap());

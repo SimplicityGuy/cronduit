@@ -244,10 +244,28 @@ fn check_label_size_limits(job: &JobConfig, path: &Path, errors: &mut Vec<Config
     }
 }
 
-/// D-02: enforce strict ASCII char regex on label keys.
-/// Partially enforces LBL-05's "keys are NOT interpolated" — leftover `${`/`}`
-/// chars after a failed/unintended interpolation are rejected here.
-/// Sort before format (RESEARCH Pitfall 2).
+/// D-02: enforce strict ASCII char regex on label keys at config-LOAD.
+///
+/// Rejects label keys whose characters fall outside `^[a-zA-Z0-9_][a-zA-Z0-9._-]*$`
+/// (alphanumeric or underscore start; alphanumeric, dot, hyphen, or underscore body).
+/// This runs AFTER the whole-file textual interpolation pass in
+/// `src/config/interpolate.rs::interpolate`, so the keys this function sees are
+/// already post-interpolation. The interpolation pass does NOT distinguish key
+/// positions from value positions — it operates on raw TOML text — so this
+/// validator effectively enforces the D-02 character convention on the resolved
+/// key string. Two cases:
+///
+///   * env var SET in key position (e.g. `labels = { "${TEAM}" = "v" }` with
+///     `TEAM=ops`): the key resolves to `ops` BEFORE this function runs; this
+///     function sees `ops`, which passes — by design, per D-02. Operators who
+///     want stable label keys should write literal strings, not `${VAR}`
+///     references; see README § Configuration > Labels > Env-var interpolation.
+///   * env var UNSET in key position: the literal `${TEAM}` survives the
+///     interpolation pass and is rejected here by the strict char regex (the
+///     `$`, `{`, `}` characters are not in the allowed set).
+///
+/// Sort the offending-key list before format (RESEARCH Pitfall 2 — HashMap
+/// iteration is non-deterministic).
 fn check_label_key_chars(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
     let Some(labels) = &job.labels else { return };
     let mut invalid: Vec<&str> = labels
