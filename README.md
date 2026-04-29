@@ -254,17 +254,29 @@ labels = { "team" = "ops" }   # error: labels are docker-only
 
 **Size limits.** Each label value must be ≤ 4 KB (4096 bytes); the total byte length of all keys + values for a single job must be ≤ 32 KB. Both limits are enforced at config-LOAD. The 32 KB ceiling sits well below dockerd's informal label-size threshold so cronduit's error fires first with a clear message.
 
-**Env-var interpolation.** `${VAR}` placeholders in label VALUES are interpolated at config-LOAD using the same pipeline that handles env-var interpolation elsewhere in the config (e.g. `command`, `image`). Label KEYS are NEVER interpolated — keys are validated against the strict pattern `^[a-zA-Z0-9_][a-zA-Z0-9._-]*$` and any leftover `${` / `}` characters are rejected:
+**Env-var interpolation.** Cronduit applies a whole-file textual pre-parse pass over the entire TOML source BEFORE TOML parses it; this pass replaces every `${VAR}` reference with the resolved value of the named environment variable (reference: `src/config/interpolate.rs`). Interpolation runs over keys and values uniformly — it does NOT distinguish TOML key positions from value positions. Cronduit then enforces a strict character regex on every resolved label key: `^[a-zA-Z0-9_][a-zA-Z0-9._-]*$` (alphanumeric or underscore start; alphanumeric, dot, hyphen, or underscore body). Any character outside this set — including the literal `$`, `{`, `}` left behind when an env var is UNSET — is rejected at config-LOAD with a clear error.
+
+Concretely, this means:
+
+- `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }` with `DEPLOYMENT_ID=12345` exported → resolves to `labels = { "deployment.id" = "12345" }` and is accepted.
+- `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }` with `DEPLOYMENT_ID` unset → leaves the literal `${DEPLOYMENT_ID}` in the value, the validator's value-side checks pass, but interpolation itself emits a `missing environment variable` error and the load fails. (See the `${VAR:-default}` rule below — there is no default-value syntax in v1.)
+- `labels = { "${TEAM}" = "v" }` with `TEAM=ops` exported → resolves to `labels = { "ops" = "v" }` and is accepted (the resolved key `ops` matches the strict pattern).
+- `labels = { "${TEAM}" = "v" }` with `TEAM` unset → the literal `${TEAM}` survives, fails the strict-char regex on `$`, `{`, and `}`, and is rejected at config-LOAD.
+
+**Recommended pattern.** Use `${VAR}` interpolation for label VALUES, not keys. Stable label keys should be written as literal strings; if you write `${VAR}` inside a label key the resolved value must match the strict pattern above, which is fragile against env-var typos and reduces the visible diff in code review. The supported and tested pattern is `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }`.
 
 ```toml
-# ALLOWED -- value is interpolated at load (DEPLOYMENT_ID env var must be set):
+# RECOMMENDED -- env-var interpolation in label VALUE only:
 [[jobs]]
 labels = { "deployment.id" = "${DEPLOYMENT_ID}" }
 
-# NOT INTERPOLATED -- key remains literal "${TEAM}" and is rejected by the
-# strict char regex (the `$`, `{`, `}` chars are not in the allowed set):
+# SUPPORTED BUT DISCOURAGED -- env-var interpolation in label KEY position.
+# The resolved key must match `^[a-zA-Z0-9_][a-zA-Z0-9._-]*$`. If TEAM is set
+# to "ops" the line below is accepted as `labels = { "ops" = "v" }`. If TEAM
+# is unset the literal `${TEAM}` survives and is rejected by the strict char
+# regex.
 [[jobs]]
-labels = { "${TEAM}" = "ops" }   # rejected: invalid label key
+labels = { "${TEAM}" = "v" }
 ```
 
 **Label values are NOT secrets.** Anyone with access to the Docker daemon can read them via `docker inspect`. Use env vars (the `env =` field on docker jobs) for anything sensitive — env values are redacted in cronduit logs and never surface in `docker inspect` for the spawned container.
