@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
-stopped_at: Phase 17 context gathered
-last_updated: "2026-04-29T00:24:08.760Z"
-last_activity: 2026-04-29 -- Phase 17 execution started
+stopped_at: Phase 17 verified human_needed — 6/6 plans + Human UAT pass; 2 BLOCKERs (CR-01 README contract, CR-02 LBL-04 error wording); gap-closure 17.1 pending
+last_updated: "2026-04-29T01:55:00.000Z"
+last_activity: 2026-04-29 -- Phase 17 plans complete; verification flagged 2 BLOCKERs (CR-01, CR-02); gap-closure 17.1 pending
 progress:
   total_phases: 10
   completed_phases: 1
@@ -175,6 +175,6 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 Last session: 2026-04-28T22:18:56.529Z
 Stopped at: Phase 17 context gathered
-Resume command: `/gsd-discuss-phase 15`
+Resume command: `/gsd-plan-phase 17 --gaps` — plan gap-closure for CR-01 (README contract) + CR-02 (LBL-04 error wording)
 
 **Planned Phase:** 15 — Foundation Preamble (Cargo 1.1.0→1.2.0 bump; cargo-deny CI preamble (non-blocking); webhook delivery worker foundation: bounded mpsc(1024) + dedicated worker task + drop counter; FOUND-15, FOUND-16, WH-02)
