@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: ready_to_plan
-stopped_at: Phase 16 context gathered
-last_updated: "2026-04-28T02:27:16.660Z"
-last_activity: 2026-04-28 -- Phase 16 execution started
+status: "Phase 17 shipped — PR #48 awaiting review/merge"
+stopped_at: Phase 17 context gathered
+last_updated: "2026-04-29T15:05:13.526Z"
+last_activity: "2026-04-29 -- Phase 17 shipped — PR #48"
 progress:
   total_phases: 10
   completed_phases: 2
-  total_plans: 12
-  completed_plans: 5
-  percent: 20
+  total_plans: 14
+  completed_plans: 14
+  percent: 100
 ---
 
 # Project State
@@ -21,18 +21,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 16 — failure-context-schema-run-rs-277-bug-fix
+**Current focus:** Phase 17 — custom-docker-labels-seed-001 (gap closure complete; awaiting next-phase decision)
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 17
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-04-28
+Phase: 17 (custom-docker-labels-seed-001) — COMPLETE (gap closure passed verification 2026-04-29; see 17-VERIFICATION-GAP-CLOSURE.md)
+Plan: 9 of 9 (all gap-closure plans landed: 17-07 CR-01, 17-08 CR-02, 17-09 bookkeeping)
+Status: Phase 17 shipped — PR #48 awaiting review/merge
+Last activity: 2026-04-29 -- Phase 17 shipped — PR #48
 
-Progress: [░░░░░░░░░░] 0% (v1.2: 0/10 phases complete; 0/— plans complete)
+Progress: [█░░░░░░░░░] 10% (v1.2: 1/10 phases complete; 9/— plans complete)
 
 ## v1.2 Roadmap Summary
 
@@ -173,8 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-27T16:22:09.001Z
-Stopped at: Phase 16 context gathered
-Resume command: `/gsd-discuss-phase 15`
+Last session: 2026-04-28T22:18:56.529Z
+Stopped at: Phase 17 context gathered
+Resume command: `/gsd-plan-phase 17 --gaps` — plan gap-closure for CR-01 (README contract) + CR-02 (LBL-04 error wording)
 
 **Planned Phase:** 15 — Foundation Preamble (Cargo 1.1.0→1.2.0 bump; cargo-deny CI preamble (non-blocking); webhook delivery worker foundation: bounded mpsc(1024) + dedicated worker task + drop counter; FOUND-15, FOUND-16, WH-02)

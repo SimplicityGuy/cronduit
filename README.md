@@ -202,6 +202,87 @@ random_min_gap = "90m"      # Minimum gap between @random-scheduled jobs on the 
                             # Optional -- omit to allow @random jobs to land back-to-back.
 ```
 
+### Labels
+
+Cronduit attaches arbitrary Docker labels to spawned containers. Operators use this to integrate cronduit with reverse proxies (Traefik, Caddy), update tooling (Watchtower), backup tooling, and any other Docker ecosystem tool that filters or routes by container label.
+
+Labels are configured in two places — `[defaults].labels` (inherited by every docker job) and per-job `[[jobs]].labels` (merges with or replaces the defaults). The merge precedence is:
+
+```mermaid
+flowchart LR
+    A["[defaults].labels"] -->|"per-job present + use_defaults != false"| B["merge: defaults ∪ per-job<br/>(per-job wins on collision)"]
+    A -->|"per-job present + use_defaults = false"| C["replace: per-job only<br/>(defaults discarded)"]
+    A -->|"per-job absent"| D["inherit: defaults verbatim"]
+    B --> E["operator label set"]
+    C --> E
+    D --> E
+    E -->|"cronduit-internal labels<br/>(cronduit.run_id, cronduit.job_name)<br/>added — internal wins on impossible-collision"| F["bollard Config::labels<br/>(reaches Docker daemon)"]
+
+    classDef step fill:#0a3d0a,stroke:#00ff7f,color:#e0ffe0
+    classDef internal fill:#2a1a3d,stroke:#bf7fff,color:#f0e0ff
+    class A,B,C,D,E step
+    class F internal
+```
+
+The merge semantics in tabular form:
+
+| per-job `labels` field | per-job `use_defaults` | Resulting label set on container                                    |
+| ---------------------- | ---------------------- | ------------------------------------------------------------------- |
+| absent                 | unset / `true`         | `[defaults].labels` verbatim (inherit)                              |
+| present                | unset / `true`         | `[defaults].labels` ∪ per-job; per-job key wins on collision        |
+| present                | `false`                | per-job ONLY; defaults entirely discarded                           |
+
+In all cases, cronduit's two internal labels — `cronduit.run_id` and `cronduit.job_name` — are added to every spawned container after the operator-defined merge resolves. These power orphan reconciliation; they are not operator-configurable.
+
+**Reserved namespace.** Keys under the `cronduit.*` prefix are rejected at config-LOAD with a clear error. The prefix is reserved for cronduit-internal use:
+
+```toml
+# REJECTED at load:
+[[jobs]]
+labels = { "cronduit.foo" = "bar" }   # error: cronduit.* is reserved
+```
+
+**Type-gate (docker-only).** Labels are valid only on docker jobs (jobs with `image = "..."` set, either directly or via `[defaults].image`). Setting `labels` on a `command` or `script` job is rejected at config-LOAD; there is no container to attach labels to:
+
+```toml
+# REJECTED at load -- labels on a command job:
+[[jobs]]
+name = "no-good"
+command = "echo hi"
+labels = { "team" = "ops" }   # error: labels are docker-only
+```
+
+**Size limits.** Each label value must be ≤ 4 KB (4096 bytes); the total byte length of all keys + values for a single job must be ≤ 32 KB. Both limits are enforced at config-LOAD. The 32 KB ceiling sits well below dockerd's informal label-size threshold so cronduit's error fires first with a clear message.
+
+**Env-var interpolation.** Cronduit applies a whole-file textual pre-parse pass over the entire TOML source BEFORE TOML parses it; this pass replaces every `${VAR}` reference with the resolved value of the named environment variable (reference: `src/config/interpolate.rs`). Interpolation runs over keys and values uniformly — it does NOT distinguish TOML key positions from value positions. Cronduit then enforces a strict character regex on every resolved label key: `^[a-zA-Z0-9_][a-zA-Z0-9._-]*$` (alphanumeric or underscore start; alphanumeric, dot, hyphen, or underscore body). Any character outside this set — including the literal `$`, `{`, `}` left behind when an env var is UNSET — is rejected at config-LOAD with a clear error.
+
+Concretely, this means:
+
+- `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }` with `DEPLOYMENT_ID=12345` exported → resolves to `labels = { "deployment.id" = "12345" }` and is accepted.
+- `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }` with `DEPLOYMENT_ID` unset → leaves the literal `${DEPLOYMENT_ID}` in the value, the validator's value-side checks pass, but interpolation itself emits a `missing environment variable` error and the load fails. (See the `${VAR:-default}` rule below — there is no default-value syntax in v1.)
+- `labels = { "${TEAM}" = "v" }` with `TEAM=ops` exported → resolves to `labels = { "ops" = "v" }` and is accepted (the resolved key `ops` matches the strict pattern).
+- `labels = { "${TEAM}" = "v" }` with `TEAM` unset → the literal `${TEAM}` survives, fails the strict-char regex on `$`, `{`, and `}`, and is rejected at config-LOAD.
+
+**Recommended pattern.** Use `${VAR}` interpolation for label VALUES, not keys. Stable label keys should be written as literal strings; if you write `${VAR}` inside a label key the resolved value must match the strict pattern above, which is fragile against env-var typos and reduces the visible diff in code review. The supported and tested pattern is `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }`.
+
+```toml
+# RECOMMENDED -- env-var interpolation in label VALUE only:
+[[jobs]]
+labels = { "deployment.id" = "${DEPLOYMENT_ID}" }
+
+# SUPPORTED BUT DISCOURAGED -- env-var interpolation in label KEY position.
+# The resolved key must match `^[a-zA-Z0-9_][a-zA-Z0-9._-]*$`. If TEAM is set
+# to "ops" the line below is accepted as `labels = { "ops" = "v" }`. If TEAM
+# is unset the literal `${TEAM}` survives and is rejected by the strict char
+# regex.
+[[jobs]]
+labels = { "${TEAM}" = "v" }
+```
+
+**Label values are NOT secrets.** Anyone with access to the Docker daemon can read them via `docker inspect`. Use env vars (the `env =` field on docker jobs) for anything sensitive — env values are redacted in cronduit logs and never surface in `docker inspect` for the spawned container.
+
+See `examples/cronduit.toml` for three integration patterns: Watchtower exclusion in `[defaults]`, Traefik routing labels merged onto a per-job block, and a `use_defaults = false` job that establishes its own clean label set.
+
 ### Job Types
 
 **Command job** -- runs a local shell command:
