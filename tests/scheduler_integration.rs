@@ -67,6 +67,7 @@ fn make_job(
         use_defaults: None,
         env: BTreeMap::new(),
         volumes: None,
+        labels: None,
         network: None,
         container_name: None,
         timeout,

@@ -56,6 +56,11 @@ pub struct DockerJobConfig {
     /// `running` in the DB are touched by orphan reconciliation.
     #[serde(default)]
     pub delete: Option<bool>,
+    /// Operator-defined Docker labels merged into the cronduit-internal
+    /// label set at container-create time. Reserved-namespace and type-gate
+    /// validators at config-load mean this is always operator-safe content.
+    #[serde(default)]
+    pub labels: Option<HashMap<String, String>>,
 }
 
 /// Result of a Docker job execution, extending `ExecResult` with container metadata.

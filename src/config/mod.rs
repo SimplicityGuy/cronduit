@@ -77,6 +77,13 @@ pub struct DefaultsConfig {
     pub image: Option<String>,
     pub network: Option<String>,
     pub volumes: Option<Vec<String>>,
+    /// Operator-defined Docker labels attached to spawned containers.
+    /// Per LBL-01..06 / SEED-001. Merged with cronduit-internal labels
+    /// at container-create time. `cronduit.*` namespace reserved (LBL-03).
+    /// Type-gated to docker jobs only (LBL-04). Per-value 4 KB / per-set
+    /// 32 KB byte-length limits (LBL-06).
+    #[serde(default)]
+    pub labels: Option<std::collections::HashMap<String, String>>,
     pub delete: Option<bool>,
     #[serde(default, with = "humantime_serde::option")]
     pub timeout: Option<Duration>,
@@ -100,6 +107,13 @@ pub struct JobConfig {
     #[serde(default)]
     pub env: BTreeMap<String, SecretString>,
     pub volumes: Option<Vec<String>>,
+    /// Operator-defined Docker labels attached to spawned containers.
+    /// Per LBL-01..06 / SEED-001. Merged with cronduit-internal labels
+    /// at container-create time. `cronduit.*` namespace reserved (LBL-03).
+    /// Type-gated to docker jobs only (LBL-04). Per-value 4 KB / per-set
+    /// 32 KB byte-length limits (LBL-06).
+    #[serde(default)]
+    pub labels: Option<std::collections::HashMap<String, String>>,
     pub network: Option<String>,
     pub container_name: Option<String>,
     #[serde(default, with = "humantime_serde::option")]
