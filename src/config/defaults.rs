@@ -397,7 +397,9 @@ mod tests {
             "defaults key without collision must be inherited"
         );
         assert_eq!(
-            labels.get("traefik.http.routers.x.rule").map(String::as_str),
+            labels
+                .get("traefik.http.routers.x.rule")
+                .map(String::as_str),
             Some("Host(`x`)"),
             "per-job-only key must be present"
         );
@@ -432,7 +434,7 @@ mod tests {
         let labels = merged.labels.expect("per-job labels preserved");
 
         assert!(
-            labels.get("watchtower.enable").is_none(),
+            !labels.contains_key("watchtower.enable"),
             "use_defaults=false must replace defaults labels entirely (LBL-02)"
         );
         assert_eq!(
@@ -682,6 +684,13 @@ mod tests {
 
         let mut env = BTreeMap::new();
         env.insert("SECRET_KEY".to_string(), SecretString::from("super-secret"));
+
+        // BLOCKER #2 fix: populate labels so the parity test ENFORCES labels
+        // propagation across all five layers. Future field-add reviews will
+        // see labels as a first-class parity check via the assertions below.
+        let mut parity_labels = std::collections::HashMap::new();
+        parity_labels.insert("parity.k1".to_string(), "v1".to_string());
+
         let job = JobConfig {
             name: "parity-test".to_string(),
             schedule: "*/5 * * * *".to_string(),
@@ -691,7 +700,7 @@ mod tests {
             use_defaults: None,
             env,
             volumes: Some(vec!["/host:/container".to_string()]),
-            labels: None,
+            labels: Some(parity_labels.clone()),
             network: Some("container:vpn".to_string()),
             container_name: Some("parity-test-container".to_string()),
             timeout: Some(Duration::from_secs(300)),
@@ -721,6 +730,10 @@ mod tests {
             "container_name missing from config_json"
         );
         assert!(obj.contains_key("cmd"), "cmd missing from config_json");
+        assert!(
+            obj.contains_key("labels"),
+            "labels missing from config_json (extended parity per BLOCKER #2)"
+        );
         // env is the secret allowlist: env_keys present, raw env values ABSENT.
         assert!(
             obj.contains_key("env_keys"),
@@ -737,7 +750,55 @@ mod tests {
         // one-way assertion -- DockerJobConfig only consumes a subset -- but
         // it fails loudly if a typed field name drifts (e.g. someone renames
         // `image` -> `image_ref` on JobConfig without updating both sides).
-        let _check: DockerJobConfig = serde_json::from_str(&json_str)
+        let roundtripped: DockerJobConfig = serde_json::from_str(&json_str)
             .expect("serialize_config_json output must be a valid DockerJobConfig");
+        assert_eq!(
+            roundtripped.labels,
+            Some(parity_labels),
+            "Layer 5 regressed: DockerJobConfig.labels did not round-trip through config_json"
+        );
+    }
+
+    #[test]
+    fn parity_labels_round_trip_through_docker_job_config() {
+        // Phase 17 sibling parity test (multi-key + dotted-key explicit
+        // coverage). Distinct from the EXTENDED parity test above: this
+        // test reads cleaner in `cargo test` filters and exercises the
+        // realistic Watchtower + Traefik dotted-key fixture an operator
+        // would write in cronduit.toml.
+        use crate::scheduler::docker::DockerJobConfig;
+        use crate::scheduler::sync;
+
+        let mut job_labels = std::collections::HashMap::new();
+        job_labels.insert(
+            "com.centurylinklabs.watchtower.enable".to_string(),
+            "false".to_string(),
+        );
+        job_labels.insert("traefik.enable".to_string(), "true".to_string());
+
+        let mut job = empty_job();
+        job.image = Some("alpine:latest".into()); // docker job
+        job.labels = Some(job_labels.clone());
+
+        // Layer 2: serialize via sync::serialize_config_json
+        let json_str = sync::serialize_config_json(&job);
+        let v: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
+        let obj = v.as_object().expect("top-level object");
+        assert!(
+            obj.contains_key("labels"),
+            "labels missing from config_json — Layer 2 (serialize_config_json) regressed; \
+             got: {json_str}"
+        );
+
+        // Layer 5: deserialize as DockerJobConfig — fails loud if Task 1 forgot the field
+        let djc: DockerJobConfig = serde_json::from_str(&json_str)
+            .expect("serialize_config_json output must be a valid DockerJobConfig");
+        let djc_labels = djc
+            .labels
+            .expect("DockerJobConfig.labels populated — Layer 5 regressed");
+        assert_eq!(
+            djc_labels, job_labels,
+            "round-trip labels must equal source"
+        );
     }
 }
