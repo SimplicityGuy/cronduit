@@ -40,7 +40,12 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         check_schedule(job, path, errors);
         // Phase 17 / SEED-001 — operator labels (LBL-03, LBL-04, LBL-06, D-02)
         check_label_reserved_namespace(job, path, errors);
-        check_labels_only_on_docker_jobs(job, path, errors);
+        check_labels_only_on_docker_jobs(
+            job,
+            cfg.defaults.as_ref().and_then(|d| d.labels.as_ref()),
+            path,
+            errors,
+        );
         check_label_size_limits(job, path, errors);
         check_label_key_chars(job, path, errors);
     }
@@ -189,7 +194,16 @@ fn check_label_reserved_namespace(job: &JobConfig, path: &Path, errors: &mut Vec
 /// LBL-04: reject `labels = ...` on non-docker (command/script) jobs.
 /// Mirrors check_cmd_only_on_docker_jobs (validate.rs:89). Runs AFTER
 /// apply_defaults so `image.is_none()` reliably distinguishes non-docker.
-fn check_labels_only_on_docker_jobs(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+///
+/// RED-phase stub: signature is updated to accept `defaults_labels` but the
+/// body still emits the legacy message unconditionally. The GREEN-phase
+/// commit implements the set-diff and Branch B remediation.
+fn check_labels_only_on_docker_jobs(
+    job: &JobConfig,
+    _defaults_labels: Option<&HashMap<String, String>>,
+    path: &Path,
+    errors: &mut Vec<ConfigError>,
+) {
     if job.labels.is_some() && job.image.is_none() {
         errors.push(ConfigError {
             file: path.into(),
@@ -587,7 +601,7 @@ mod tests {
         labels.insert("a".to_string(), "v".to_string());
         job.labels = Some(labels);
         let mut e = Vec::new();
-        check_labels_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        check_labels_only_on_docker_jobs(&job, None, Path::new("x"), &mut e);
         assert_eq!(e.len(), 1);
         assert!(e[0].message.contains("test-job"));
         assert!(e[0].message.contains("docker jobs"));
@@ -604,7 +618,7 @@ mod tests {
         labels.insert("a".to_string(), "v".to_string());
         job.labels = Some(labels);
         let mut e = Vec::new();
-        check_labels_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        check_labels_only_on_docker_jobs(&job, None, Path::new("x"), &mut e);
         assert_eq!(e.len(), 1);
     }
 
@@ -617,8 +631,127 @@ mod tests {
         labels.insert("a".to_string(), "v".to_string());
         job.labels = Some(labels);
         let mut e = Vec::new();
-        check_labels_only_on_docker_jobs(&job, Path::new("x"), &mut e);
+        check_labels_only_on_docker_jobs(&job, None, Path::new("x"), &mut e);
         assert!(e.is_empty(), "docker job with labels must pass: got {e:?}");
+    }
+
+    // ---- LBL-04 set-diff branches (CR-02 gap closure, plan 17-08) ----
+
+    #[test]
+    fn lbl_04_command_job_with_operator_set_labels_emits_legacy_message() {
+        // CR-02 regression test (gap closure plan 17-08, Branch A).
+        // Operator wrote `labels = {...}` on a command job, no defaults.labels.
+        // Legacy message text preserved for backwards compat.
+        let mut job = stub_job("*/5 * * * *");
+        // stub_job defaults command = Some, image = None — command job.
+        let mut labels = std::collections::HashMap::new();
+        labels.insert("operator.key".to_string(), "v".to_string());
+        job.labels = Some(labels);
+        let mut e = Vec::new();
+        check_labels_only_on_docker_jobs(&job, None, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(
+            e[0].message.contains("Remove the `labels` block"),
+            "Branch A must preserve legacy message text; got: {}",
+            e[0].message
+        );
+        // Negative — must NOT contain Branch B's remediation phrase.
+        assert!(
+            !e[0].message.contains("use_defaults = false"),
+            "Branch A must not surface the use_defaults remediation; got: {}",
+            e[0].message
+        );
+    }
+
+    #[test]
+    fn lbl_04_command_job_with_defaults_only_emits_distinct_use_defaults_false_message() {
+        // CR-02 regression test (gap closure plan 17-08, Branch B).
+        // Operator did NOT write a labels block on the command job; the
+        // merged labels came from `[defaults].labels` via apply_defaults.
+        // The error must name the actual fix: use_defaults = false.
+        let mut job = stub_job("*/5 * * * *");
+        // Simulate post-apply_defaults state: job.labels contains ONLY the
+        // defaults keys (no operator-supplied keys).
+        let mut merged_labels = std::collections::HashMap::new();
+        merged_labels.insert("inherited.from.defaults".to_string(), "v".to_string());
+        job.labels = Some(merged_labels);
+
+        // The defaults map the validator will set-diff against — same keys
+        // as the merged labels (this is the defaults-only case).
+        let mut defaults_labels = std::collections::HashMap::new();
+        defaults_labels.insert("inherited.from.defaults".to_string(), "v".to_string());
+
+        let mut e = Vec::new();
+        check_labels_only_on_docker_jobs(
+            &job,
+            Some(&defaults_labels),
+            Path::new("x"),
+            &mut e,
+        );
+        assert_eq!(e.len(), 1);
+        assert!(
+            e[0].message.contains("set `use_defaults = false`"),
+            "Branch B must surface the use_defaults remediation; got: {}",
+            e[0].message
+        );
+        // Negative — must NOT contain Branch A's "Remove the `labels` block"
+        // phrase (operator never wrote one).
+        assert!(
+            !e[0].message.contains("Remove the `labels` block"),
+            "Branch B must not blame a labels block the operator never wrote; got: {}",
+            e[0].message
+        );
+        // The defaults key must NOT appear in the error message (no leak).
+        assert!(
+            !e[0].message.contains("inherited.from.defaults"),
+            "Branch B must not leak inherited keys into the error message; got: {}",
+            e[0].message
+        );
+        // Job type discriminator — stub_job is a command job.
+        assert!(
+            e[0].message.contains("command job"),
+            "Branch B must name the job type (command); got: {}",
+            e[0].message
+        );
+    }
+
+    #[test]
+    fn lbl_04_command_job_with_mixed_operator_and_defaults_emits_legacy_message_only_for_operator_keys() {
+        // CR-02 regression test (gap closure plan 17-08, mixed case).
+        // Operator wrote `labels = {operator.key = ...}` AND inherited
+        // `inherited.from.defaults` via apply_defaults merge. Branch A wins
+        // (operator_only_keys is non-empty) and the legacy message fires.
+        // The defaults-key MUST NOT appear in the error (set-diff hides it).
+        let mut job = stub_job("*/5 * * * *");
+        // Simulate post-apply_defaults state: job.labels = operator + defaults.
+        let mut merged_labels = std::collections::HashMap::new();
+        merged_labels.insert("operator.key".to_string(), "v".to_string());
+        merged_labels.insert("inherited.from.defaults".to_string(), "v".to_string());
+        job.labels = Some(merged_labels);
+
+        let mut defaults_labels = std::collections::HashMap::new();
+        defaults_labels.insert("inherited.from.defaults".to_string(), "v".to_string());
+
+        let mut e = Vec::new();
+        check_labels_only_on_docker_jobs(
+            &job,
+            Some(&defaults_labels),
+            Path::new("x"),
+            &mut e,
+        );
+        assert_eq!(e.len(), 1);
+        // Branch A wins → legacy message.
+        assert!(
+            e[0].message.contains("Remove the `labels` block"),
+            "Mixed case must take Branch A (operator_only non-empty); got: {}",
+            e[0].message
+        );
+        // The defaults-key must NOT be in the error (set-diff excluded it).
+        assert!(
+            !e[0].message.contains("inherited.from.defaults"),
+            "Mixed case must not leak inherited keys; got: {}",
+            e[0].message
+        );
     }
 
     // ---- LBL-06 size limits ----
