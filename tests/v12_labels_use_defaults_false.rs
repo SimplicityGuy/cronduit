@@ -7,6 +7,12 @@
 //! IMPORTANT: --test-threads=1 (project-wide convention for docker tests).
 //! Drives end-to-end through `parse_and_validate` so the apply_defaults
 //! short-circuit (use_defaults=false) is exercised on every run.
+//!
+//! Plan 17-08 (gap closure for CR-02) extends this file with a
+//! defaults-only-on-command-job regression test pinning the new Branch B
+//! error message ("set `use_defaults = false` ..."). That test is
+//! NOT `#[ignore]` — it exercises only the parse pipeline (no Docker
+//! daemon required).
 
 use bollard::Docker;
 use cronduit::config::parse_and_validate;
@@ -137,4 +143,77 @@ labels = {{ "backup.exclude" = "true" }}
             }),
         )
         .await;
+}
+
+/// CR-02 regression test (gap closure plan 17-08).
+///
+/// Pins the binary's behavior for the defaults-only-on-command-job case:
+/// when `[defaults].labels` is set and a command job has no
+/// `use_defaults = false` and no per-job labels block, `apply_defaults`
+/// merges defaults.labels into the command job, and the LBL-04 validator
+/// fires Branch B with the new remediation text. The legacy "Remove the
+/// `labels` block" phrase MUST NOT appear (the operator never wrote a
+/// labels block).
+///
+/// This test does NOT require a Docker daemon — it only exercises the
+/// parse pipeline (interpolate -> toml -> apply_defaults -> validate).
+#[tokio::test]
+async fn lbl_04_defaults_only_command_job_emits_use_defaults_false_remediation() {
+    let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[defaults]
+image = "alpine:latest"
+labels = { "watchtower.enable" = "false" }
+
+[[jobs]]
+name = "lbl-04-bare-command"
+schedule = "*/5 * * * *"
+command = "echo hi"
+timeout = "5m"
+"#;
+
+    let mut tmp = tempfile::NamedTempFile::new().expect("tempfile created");
+    tmp.write_all(toml_text.as_bytes()).expect("toml written");
+
+    let result = parse_and_validate(tmp.path());
+    let errors = result.expect_err(
+        "defaults-only-on-command-job MUST fail at config-LOAD with the LBL-04 \
+         type-gate validator firing on the merged labels",
+    );
+
+    let combined = errors
+        .iter()
+        .map(|e| e.message.clone())
+        .collect::<Vec<_>>()
+        .join(" || ");
+
+    // Branch B remediation phrase is present.
+    assert!(
+        combined.contains("set `use_defaults = false`"),
+        "expected new remediation phrase 'set `use_defaults = false`'; got: {combined}"
+    );
+
+    // Branch A legacy phrase is ABSENT (operator never wrote a labels block).
+    assert!(
+        !combined.contains("Remove the `labels` block"),
+        "Branch A legacy phrase must not appear in the defaults-only case; got: {combined}"
+    );
+
+    // Job name is present so operator knows which job to fix.
+    assert!(
+        combined.contains("lbl-04-bare-command"),
+        "error must name the offending job; got: {combined}"
+    );
+
+    // Defaults key MUST NOT leak into the error message (set-diff
+    // hides it; this is the contract pinned by
+    // `lbl_04_error_does_not_leak_defaults_keys_for_non_docker_jobs`
+    // in src/config/defaults.rs:447-509).
+    assert!(
+        !combined.contains("watchtower.enable"),
+        "defaults key must not leak into the error message; got: {combined}"
+    );
 }
