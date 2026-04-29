@@ -274,21 +274,50 @@ uat-fctx-bugfix-spot-check:
 
 # ===== Phase 18 — webhook UAT recipes (per project memory feedback_uat_use_just_commands.md) =====
 
-# Cross-cutting helper — trigger an immediate run of JOB_NAME via the
-# running cronduit's HTTP API. Used by uat-webhook-fire and ad-hoc
-# operator nudges. Cronduit must be running (`just dev`).
+# Cross-cutting helper — trigger an immediate run of a job by integer ID
+# via the running cronduit's HTTP API. The dashboard's Run Now button is
+# CSRF-protected (cookie + form token, validated by `validate_csrf` in
+# src/web/handlers/api.rs:run_now), so this recipe primes the cookie via
+# a GET on /api/jobs first, then echoes the same token back in the form
+# body when it POSTs to /api/jobs/{id}/run.
 #
-# This is the ONLY place curl is invoked in the justfile (outside the
-# pre-existing `health` and `metrics-check` recipes, which are reused by
-# the Phase 18 UAT runbook). UAT-callable recipes (`uat-webhook-fire`)
-# call THIS recipe rather than reinventing the curl call inline — keeps
-# the UAT surface free of raw shell.
+# Operators usually want to fire by NAME, not numeric ID — use
+# `uat-webhook-fire` for that. This recipe stays ID-keyed so it matches
+# the actual Axum handler signature (Path<i64>) and remains useful as a
+# narrow building block for other automation (e.g., a future operator
+# CLI). `jq` and `curl` are required.
 [group('api')]
-[doc('Trigger immediate run of JOB_NAME via cronduit HTTP API (curl wrapper)')]
-api-run-now JOB_NAME:
-    @curl -sf -X POST "http://127.0.0.1:8080/api/jobs/{{JOB_NAME}}/run-now" >/dev/null \
-      || (echo "Run Now endpoint unreachable — confirm 'just dev' is running"; exit 1)
-    @echo "OK: triggered run-now for {{JOB_NAME}}"
+[doc('Trigger immediate run of JOB_ID via cronduit HTTP API (CSRF-aware curl wrapper)')]
+api-run-now JOB_ID:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    JAR=$(mktemp)
+    trap 'rm -f "$JAR"' EXIT
+    # Prime the cronduit_csrf cookie via any GET — middleware sets it on cold requests.
+    curl -sf -c "$JAR" "http://127.0.0.1:8080/api/jobs" >/dev/null \
+      || { echo "cronduit unreachable on http://127.0.0.1:8080 — confirm 'just dev' is running"; exit 1; }
+    # Cookie jar is Netscape format: domain flag path secure expiry NAME VALUE.
+    TOKEN=$(awk '$6=="cronduit_csrf"{print $7}' "$JAR" | head -1)
+    test -n "$TOKEN" || { echo "cronduit_csrf cookie not issued — middleware misconfigured?"; exit 1; }
+    curl -sf -b "$JAR" -X POST -d "csrf_token=$TOKEN" \
+      "http://127.0.0.1:8080/api/jobs/{{JOB_ID}}/run" >/dev/null \
+      || { echo "Run Now POST failed (job_id={{JOB_ID}}) — check the cronduit log"; exit 1; }
+    echo "OK: triggered run for job_id={{JOB_ID}}"
+
+# Resolve a job NAME (the [[jobs]].name from cronduit.toml) to its
+# integer database id. Operators authoring UAT scripts read the name
+# from their config; the API is keyed on the numeric id.
+[group('api')]
+[doc('Resolve a JOB_NAME to its integer database id via /api/jobs (jq required)')]
+api-job-id JOB_NAME:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    JOB_ID=$(curl -sf "http://127.0.0.1:8080/api/jobs" \
+      | jq -r --arg n "{{JOB_NAME}}" '.[] | select(.name == $n) | .id' \
+      | head -1)
+    test -n "$JOB_ID" \
+      || { echo "Job '{{JOB_NAME}}' not found in cronduit — confirm 'just dev' is running and the job exists in your config"; exit 1; }
+    echo "$JOB_ID"
 
 # Mock HTTP receiver on 127.0.0.1:9999 — logs every request to stdout AND
 # /tmp/cronduit-webhook-mock.log. Use Ctrl-C to stop.
@@ -300,13 +329,17 @@ uat-webhook-mock:
     cargo run --example webhook_mock_server
 
 # Force a 'Run Now' on a webhook-configured job — operator confirms one
-# delivery lands at the mock receiver. Body delegates to `api-run-now`
-# so the UAT-callable surface contains zero raw curl/cargo/docker.
+# delivery lands at the mock receiver. Body composes `api-job-id`
+# (NAME → numeric id lookup) with `api-run-now` (CSRF-aware POST), so
+# the UAT-callable surface contains zero raw curl/cargo/docker.
 [group('uat')]
 [doc('Phase 18 — force Run Now on a webhook-configured job (operator-supplied JOB_NAME)')]
 uat-webhook-fire JOB_NAME:
-    @echo "▶ UAT: triggering run for {{JOB_NAME}} — watch the receiver and the cronduit log"
-    @just api-run-now {{JOB_NAME}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ UAT: triggering run for {{JOB_NAME}} — watch the receiver and the cronduit log"
+    JOB_ID=$(just api-job-id "{{JOB_NAME}}")
+    just api-run-now "$JOB_ID"
 
 # Print the last 30 lines of the mock receiver's log — maintainer hand-
 # validates the 3 Standard Webhooks v1 headers, the 16-field payload, and
