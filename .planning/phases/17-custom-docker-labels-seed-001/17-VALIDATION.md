@@ -2,7 +2,7 @@
 phase: 17
 slug: custom-docker-labels-seed-001
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-04-28
 ---
@@ -19,18 +19,18 @@ created: 2026-04-28
 |----------|-------|
 | **Framework** | `cargo test` + `cargo nextest` (runtime: tokio) |
 | **Config file** | `Cargo.toml` (no separate test runner config) |
-| **Quick run command** | `just test-quick` (unit tests only — `cargo nextest run --lib`) |
-| **Full suite command** | `just test` (full suite — `cargo nextest run --all-features`) |
-| **Estimated runtime** | ~30s quick / ~3-5m full (testcontainers integration tests dominate) |
+| **Quick run command** | `just test` (full unit suite — `cargo nextest run --all-features`) — no quick-run-only just recipe exists; lib-only sub-step is `cargo nextest run --lib` (NOT a `just` recipe) |
+| **Full suite command** | `just test` (full suite — `cargo nextest run --all-features`) — equivalent: `just nextest` |
+| **Estimated runtime** | ~30s lib-only sub-step / ~3-5m full (testcontainers integration tests dominate) |
 
 ---
 
 ## Sampling Rate
 
-- **After every task commit:** Run `just test-quick` (lib unit tests only — fast feedback)
-- **After every plan wave:** Run `just test` (full suite including testcontainers integration tier)
-- **Before `/gsd-verify-work`:** `just test` AND `just clippy` AND `just fmt-check` must all be green
-- **Max feedback latency:** ~60s for unit tier, ~5m for integration tier
+- **After every task commit:** Run `just test` (full unit suite — fast feedback). For a faster lib-only sub-step, the executor MAY inline `cargo nextest run --lib` directly (NOT prefixed with `just` — no such recipe exists; cite this as an inline cargo step in the task notes, not as a `just` recipe per D-08).
+- **After every plan wave:** Run `just test` (full suite including testcontainers integration tier behind `--ignored` per project convention; the planner notes that `cargo test --features integration -- --ignored` is the inline sub-step that exercises the `#[ignore]`-gated tests when needed — this is NOT a `just` recipe).
+- **Before `/gsd-verify-work`:** `just test` AND `just clippy` AND `just fmt-check` must all be green.
+- **Max feedback latency:** ~60s for unit tier, ~5m for integration tier.
 
 ---
 
@@ -64,7 +64,7 @@ once PLAN.md files are generated.
 - [ ] `tests/v12_labels_merge.rs` — integration test (created by planner; testcontainers — bollard inspect)
 - [ ] `tests/v12_labels_use_defaults_false.rs` — integration test (created by planner; testcontainers)
 - [ ] `tests/v12_labels_validators.rs` — integration test (or in-file unit tests in `validate.rs`) covering all four LOAD-time rejection paths
-- [ ] `examples/cronduit.toml` parse-check via `just check examples/cronduit.toml` — must succeed after labels added per CONTEXT.md D-03
+- [ ] `examples/cronduit.toml` parse-check via `just check-config examples/cronduit.toml` — must succeed after labels added per CONTEXT.md D-03
 
 *Existing infrastructure (cargo test, testcontainers harness from earlier v1.x phases, the just recipe set) is sufficient — no new test framework needed.*
 
@@ -74,8 +74,8 @@ once PLAN.md files are generated.
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| README labels subsection renders correctly with mermaid merge-precedence diagram | D-04 (CONTEXT.md) | mermaid rendering correctness needs human eyes; CI catches markdown lint but not visual readability | After README edit lands: open README on GitHub or via `mdcat README.md`; confirm the mermaid diagram renders, the merge-semantics table is readable, and the code blocks for the worked example are correct. Use the `just docs-preview` recipe if it exists; otherwise document the manual step as `view-on-github` in `17-HUMAN-UAT.md`. |
-| `examples/cronduit.toml` end-to-end via `docker-compose up` actually attaches operator labels visible to `docker inspect` on a real machine | LBL-01 (integration) | testcontainers integration covers the bollard layer; the docker-compose path is the operator-facing surface | `just docker-up` (or whatever the existing example-config recipe is named); then `docker inspect` the spawned container; confirm the Watchtower/Traefik/backup-tool labels are present alongside `cronduit.run_id` and `cronduit.job_name`. Document precise steps in `17-HUMAN-UAT.md`. |
+| README labels subsection renders correctly with mermaid merge-precedence diagram | D-04 (CONTEXT.md) | mermaid rendering correctness needs human eyes; CI catches markdown lint but not visual readability | After README edit lands: preview README on GitHub OR run `cat README.md` (no `just docs-preview` recipe exists; this is an inline manual step, NOT a `just` recipe). Confirm the mermaid diagram renders, the merge-semantics table is readable, and the code blocks for the worked example are correct. Document the manual step as `view-on-github` in `17-HUMAN-UAT.md`. |
+| `examples/cronduit.toml` end-to-end via `docker-compose up` actually attaches operator labels visible to `docker inspect` on a real machine | LBL-01 (integration) | testcontainers integration covers the bollard layer; the docker-compose path is the operator-facing surface | `just docker-compose-up` (the verified existing recipe); then `docker inspect` the spawned container; confirm the Watchtower/Traefik/backup-tool labels are present alongside `cronduit.run_id` and `cronduit.job_name`. Tear down via inline `docker compose -f examples/docker-compose.yml down` (no `just` recipe for this; inline sub-step only). Document precise steps in `17-HUMAN-UAT.md`. |
 | `.planning/seeds/SEED-001-custom-docker-labels.md` frontmatter shows `status: realized` after merge | D-05 (CONTEXT.md) | Process audit — establishes project's first realized-seed pattern | After Phase 17 PR merges to main: maintainer pulls, opens the seed file, confirms `status: realized`, `realized_in: phase-17`, `milestone: v1.2`, `realized_date: <ISO>`. Document the field expectations in `17-HUMAN-UAT.md`. |
 
 ---
@@ -87,6 +87,8 @@ once PLAN.md files are generated.
 - [ ] Wave 0 covers all MISSING references
 - [ ] No watch-mode flags
 - [ ] Feedback latency < 60s for unit tier (full integration tier may exceed)
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] `nyquist_compliant: true` set in frontmatter (flipped to true after 17-03 lands the integration tests; see 17-06 acceptance criterion U6 for the maintainer-confirmed flip)
 
 **Approval:** pending
+
+> **Note on `nyquist_compliant: true`:** Set after Plan 17-03 lands `tests/v12_labels_*.rs` and Plans 17-01/17-02 land their unit tests. Maintainer (per 17-HUMAN-UAT.md U3) confirms `just nextest` (or `just test`) exits 0 with the new tests visible — that confirmation is the gate for the `true` value here.

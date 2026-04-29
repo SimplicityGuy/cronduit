@@ -531,13 +531,15 @@ The most dangerous bug class for this phase. If `JobConfig.labels` is added but 
 
 ---
 
-## Open Questions / Risks for the Planner
+## Open Questions / Risks for the Planner (RESOLVED)
 
-The phase is heavily pre-locked. Two minor open items only:
+The phase is heavily pre-locked. Two minor open items only — both RESOLVED at planning time:
 
 1. **Examples job naming.** D-03 says "NEW job `isolated-batch` (or similarly-named — planner picks)". Suggested names: `isolated-batch`, `backup-only`, `vendor-managed-image`. Pick one that reads as "this job intentionally opts out of cronduit defaults." Planner discretion.
+   **RESOLVED: Plan 17-04 uses `isolated-batch`.**
 
 2. **`17-HUMAN-UAT.md` scope.** The four CI-observable items (validator errors, three integration-test scenarios) cover most of the surface. Maintainer-facing UAT worth adding for: (a) `just check examples/cronduit.toml` — does the new example file load cleanly? (b) `just docker-up && open http://localhost:8080` — does the README labels subsection render correctly on GitHub? Planner decides scope.
+   **RESOLVED: Plan 17-06 ships HUMAN-UAT covering README render, `just check-config examples/cronduit.toml` parse, end-to-end docker spot-check via `just docker-compose-up`, reserved-namespace error UX.**
 
 No technical risks. No scope-creep risk (CONTEXT.md exhaustively pre-locked the design surface). No new-crate risk (zero new deps). No DB migration risk (zero schema change). The five-layer parity invariant is the only failure mode that could ship silently — addressed by the §10 plan ordering and the parity regression test.
 

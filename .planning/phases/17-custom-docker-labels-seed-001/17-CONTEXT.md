@@ -155,8 +155,9 @@ SEED-001 § Notes).
 
 ### Project-rule reaffirmations (carried from prior phases)
 
-- **D-06:** All Phase 17 changes land via PR on a feature branch. No direct
-  commits to `main`. (Project rule, REQUIREMENTS.md and PROJECT.md.)
+- **D-06:** [informational] All Phase 17 changes land via PR on a feature
+  branch. No direct commits to `main`. (Project rule, REQUIREMENTS.md and
+  PROJECT.md — applies project-wide; no plan-specific implementation surface.)
 - **D-07:** All diagrams in any artifact — README, plan files, summary,
   PR description, code comments — are mermaid code blocks. The README labels
   merge-precedence diagram (D-04) is the load-bearing instance for this
@@ -166,9 +167,10 @@ SEED-001 § Notes).
   curl-URL invocations. (Project rule.)
 - **D-09:** UAT items are validated by the maintainer running them locally —
   never marked passed from Claude's own runs. (Project rule.)
-- **D-10:** The git tag and `Cargo.toml` `version` field always match. Phase
-  17 ships within the v1.2.0-rc.1 / rc.2 cycle; no version field changes
-  in this phase (Plan 15-01 already bumped to `1.2.0`). (Project rule.)
+- **D-10:** [informational] The git tag and `Cargo.toml` `version` field always
+  match. Phase 17 ships within the v1.2.0-rc.1 / rc.2 cycle; no version field
+  changes in this phase (Plan 15-01 already bumped to `1.2.0`). (Project rule
+  — no plan-specific implementation surface in Phase 17.)
 
 ### Claude's Discretion
 
