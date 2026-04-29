@@ -201,26 +201,20 @@ labels = { "backup.exclude" = "true" }
 # `just uat-webhook-mock` (listens on 127.0.0.1:9999). The 18-HUMAN-UAT.md
 # runbook walks the maintainer through each scenario.
 #
-# `${WEBHOOK_SECRET}` is interpolated from the environment at config-load
-# (Pitfall H — empty/unset is rejected by the validator). Set it in your
-# shell before running `just dev` or `just check-config`:
+# Only the unsigned example below is active by default -- it boots clean
+# under `docker compose up` without any extra setup, so the quickstart
+# smoke path stays unbroken. The signed and `fire_every = 0` examples
+# below it are commented-out templates: uncomment them after exporting
+# `WEBHOOK_SECRET` (the LOAD validator rejects unset/empty interpolated
+# secrets per Pitfall H).
 #
 #     export WEBHOOK_SECRET=my-test-secret-shh
 
-# Example A -- signed delivery, default state filter, default coalescing.
-# The dispatcher fires on `failed` and `timeout` (default states); first
-# of each new streak (default fire_every = 1).
-[[jobs]]
-name = "wh-example-signed"
-schedule = "* * * * *"
-command = "false"  # always fails -- exercises the failure firing path
-use_defaults = false
-timeout = "5m"
-webhook = { url = "http://127.0.0.1:9999/signed", secret = "${WEBHOOK_SECRET}" }
-
-# Example B -- unsigned delivery (e.g., for receivers like Slack/Discord
+# Active example -- unsigned delivery (e.g., for receivers like Slack/Discord
 # that don't HMAC-verify). The webhook-signature header is omitted entirely;
-# webhook-id and webhook-timestamp are still emitted.
+# webhook-id and webhook-timestamp are still emitted. Boots without setting
+# any env var, so CI smoke + first-run operators get a working webhook out
+# of the box.
 [[jobs]]
 name = "wh-example-unsigned"
 schedule = "*/2 * * * *"
@@ -229,12 +223,34 @@ use_defaults = false
 timeout = "5m"
 webhook = { url = "http://127.0.0.1:9999/unsigned", states = ["failed", "stopped"], unsigned = true }
 
-# Example C -- narrow filter + always-fire coalescing.
+# --- Signed-delivery templates (commented out -- uncomment to enable) ----
+#
+# These two blocks demonstrate Standard Webhooks v1 HMAC-SHA256 signing
+# (`webhook-signature: v1,<base64>` header) and `fire_every = 0` legacy
+# coalescing. Both reference `${WEBHOOK_SECRET}`, which is interpolated
+# from the environment at config-load -- leaving the env var unset (or
+# set to an empty string) makes the LOAD validator reject the entire
+# config. Set the env var FIRST, then uncomment.
+#
+# Template A -- signed delivery, default state filter, default coalescing.
+# The dispatcher fires on `failed` and `timeout` (default states); first
+# of each new streak (default fire_every = 1).
+#
+# [[jobs]]
+# name = "wh-example-signed"
+# schedule = "* * * * *"
+# command = "false"  # always fails -- exercises the failure firing path
+# use_defaults = false
+# timeout = "5m"
+# webhook = { url = "http://127.0.0.1:9999/signed", secret = "${WEBHOOK_SECRET}" }
+#
+# Template B -- narrow filter + always-fire coalescing.
 # Operator wants every timeout (no coalescing) but ignores other failures.
-[[jobs]]
-name = "wh-example-fire-every-zero"
-schedule = "*/3 * * * *"
-command = "false"
-use_defaults = false
-timeout = "5m"
-webhook = { url = "http://127.0.0.1:9999/timeouts-only", states = ["timeout"], fire_every = 0, secret = "${WEBHOOK_SECRET}" }
+#
+# [[jobs]]
+# name = "wh-example-fire-every-zero"
+# schedule = "*/3 * * * *"
+# command = "false"
+# use_defaults = false
+# timeout = "5m"
+# webhook = { url = "http://127.0.0.1:9999/timeouts-only", states = ["timeout"], fire_every = 0, secret = "${WEBHOOK_SECRET}" }

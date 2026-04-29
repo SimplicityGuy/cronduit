@@ -8,7 +8,8 @@
 |--------|--------|-------|
 | Workspace builds clean | `just ci` | Full CI gate: fmt + clippy + openssl-check + nextest + schema-diff + image |
 | rustls invariant holds | `just openssl-check` | `cargo tree -i openssl-sys` returns empty across native + arm64-musl + amd64-musl |
-| Example config validates | `WEBHOOK_SECRET=test-secret-shh just check-config examples/cronduit.toml` | Set the env var in your shell before running `just dev` |
+| Signed-delivery scenarios enabled | edit `examples/cronduit.toml` | Scenarios 1, 3, 5, 6 below exercise `wh-example-signed` and `wh-example-fire-every-zero`, which ship commented-out so `docker compose up` works clean. Uncomment those two `[[jobs]]` blocks BEFORE running `just dev` |
+| Example config validates | `WEBHOOK_SECRET=test-secret-shh just check-config examples/cronduit.toml` | Set the env var in your shell before running `just dev`. (Scenario 2's unsigned-only path works without it.) |
 
 ## Scenarios
 
