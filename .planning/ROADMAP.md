@@ -116,7 +116,19 @@ Plans:
   4. An operator who tries to set `labels = ...` on a `type = "command"` or `type = "script"` job gets a clear config-load error explaining that labels apply only to `type = "docker"`.
   5. An operator who writes `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }` sees the env var interpolated in the value at config-load (keys are never interpolated); a value > 4 KB or a label set summing > 32 KB is rejected at load.
 
-**Plans**: TBD
+**Plans:** 9 plans (6 core + 3 gap closure)
+
+Plans:
+- [x] 17-01-PLAN.md — schema + 5-layer parity + apply_defaults merge (LBL-01 + LBL-02)
+- [x] 17-02-PLAN.md — four LOAD-time validators (LBL-03, LBL-04, LBL-06, D-02 key chars)
+- [x] 17-03-PLAN.md — bollard plumb-through + 3 testcontainers integration tests (LBL-01, LBL-02, LBL-05)
+- [x] 17-04-PLAN.md — examples/cronduit.toml: 3 integration patterns
+- [x] 17-05-PLAN.md — README § Configuration > Labels subsection (mermaid + table + 6 rules)
+- [x] 17-06-PLAN.md — SEED-001 close-out + 17-HUMAN-UAT.md
+- [ ] 17-07-PLAN.md — CR-01 gap closure: README env-var interpolation prose + validator/interpolate docstrings + two key-position regression tests (LBL-05)
+- [ ] 17-08-PLAN.md — CR-02 gap closure: set-diff in `check_labels_only_on_docker_jobs` + 3 unit tests + 1 integration test (LBL-04)
+- [ ] 17-09-PLAN.md — REQUIREMENTS.md bookkeeping: flip LBL-01..LBL-06 from Pending to Complete
+
 **UI hint**: yes
 
 ### Phase 18: Webhook Payload + State-Filter + Coalescing
@@ -250,7 +262,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 15. Foundation Preamble | 5/5 | Complete    | 2026-04-26 |
 | 16. Failure-Context Schema + run.rs Bug Fix | 7/7 | Complete    | 2026-04-28 |
-| 17. Custom Docker Labels (SEED-001) | 6/6 | Complete   | 2026-04-29 |
+| 17. Custom Docker Labels (SEED-001) | 6/6 + 3 gap closure | Gap-closure pending | 2026-04-29 (core) |
 | 18. Webhook Payload + State-Filter + Coalescing | 0/— | Not started | — |
 | 19. Webhook HMAC Signing + Receiver Examples | 0/— | Not started | — |
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 0/— | Not started | — |
