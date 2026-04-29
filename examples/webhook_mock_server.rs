@@ -46,21 +46,22 @@ async fn main() -> std::io::Result<()> {
                 };
                 buf.extend_from_slice(&chunk[..n]);
 
-                if headers_end.is_none() {
-                    if let Some(idx) = find_header_end(&buf) {
-                        headers_end = Some(idx);
-                        content_length = parse_content_length(&buf[..idx]);
-                    }
+                if headers_end.is_none()
+                    && let Some(idx) = find_header_end(&buf)
+                {
+                    headers_end = Some(idx);
+                    content_length = parse_content_length(&buf[..idx]);
                 }
 
                 if let (Some(end), Some(len)) = (headers_end, content_length) {
                     if buf.len() >= end + 4 + len {
                         break; // headers + body fully received
                     }
-                } else if let Some(end) = headers_end {
-                    if content_length.is_none() && buf.len() >= end + 4 {
-                        break; // no Content-Length, no body expected
-                    }
+                } else if let Some(end) = headers_end
+                    && content_length.is_none()
+                    && buf.len() >= end + 4
+                {
+                    break; // no Content-Length, no body expected
                 }
 
                 // Safety cap: don't grow forever on a misbehaving client.

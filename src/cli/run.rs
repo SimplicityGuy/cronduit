@@ -283,27 +283,22 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
             .collect()
     };
 
-    let dispatcher: std::sync::Arc<dyn crate::webhooks::WebhookDispatcher> =
-        if webhooks.is_empty() {
-            // Zero webhooks configured anywhere — keep NoopDispatcher.
-            // No reqwest::Client is built; no rustls TLS handshake setup overhead.
-            std::sync::Arc::new(crate::webhooks::NoopDispatcher)
-        } else {
-            // At least one job has a webhook — build HttpDispatcher.
-            let http = crate::webhooks::HttpDispatcher::new(
-                pool.clone(),
-                std::sync::Arc::new(webhooks),
-            )
-            .map_err(|e| anyhow::anyhow!("HttpDispatcher init failed: {e}"))?;
-            std::sync::Arc::new(http)
-        };
+    let dispatcher: std::sync::Arc<dyn crate::webhooks::WebhookDispatcher> = if webhooks.is_empty()
+    {
+        // Zero webhooks configured anywhere — keep NoopDispatcher.
+        // No reqwest::Client is built; no rustls TLS handshake setup overhead.
+        std::sync::Arc::new(crate::webhooks::NoopDispatcher)
+    } else {
+        // At least one job has a webhook — build HttpDispatcher.
+        let http =
+            crate::webhooks::HttpDispatcher::new(pool.clone(), std::sync::Arc::new(webhooks))
+                .map_err(|e| anyhow::anyhow!("HttpDispatcher init failed: {e}"))?;
+        std::sync::Arc::new(http)
+    };
 
     let (webhook_tx, webhook_rx) = crate::webhooks::channel();
-    let webhook_worker_handle = crate::webhooks::spawn_worker(
-        webhook_rx,
-        dispatcher,
-        cancel.child_token(),
-    );
+    let webhook_worker_handle =
+        crate::webhooks::spawn_worker(webhook_rx, dispatcher, cancel.child_token());
 
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(
