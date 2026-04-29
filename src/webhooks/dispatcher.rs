@@ -107,9 +107,7 @@ impl HttpDispatcher {
             .pool_idle_timeout(Some(Duration::from_secs(90))) // keep-alive across deliveries
             .user_agent(format!("cronduit/{}", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|e| {
-                WebhookError::DispatchFailed(format!("reqwest client init: {e}"))
-            })?;
+            .map_err(|e| WebhookError::DispatchFailed(format!("reqwest client init: {e}")))?;
         Ok(Self {
             client,
             pool,
@@ -225,7 +223,11 @@ impl WebhookDispatcher for HttpDispatcher {
 
         // 7. Build payload + serialize ONCE into Vec<u8> (Pitfall B).
         let payload = crate::webhooks::payload::WebhookPayload::build(
-            event, &fctx, &run_detail, filter_position, self.cronduit_version,
+            event,
+            &fctx,
+            &run_detail,
+            filter_position,
+            self.cronduit_version,
         );
         let body_bytes = serde_json::to_vec(&payload)
             .map_err(|e| WebhookError::SerializationFailed(format!("payload to_vec: {e}")))?;
@@ -317,8 +319,8 @@ mod tests {
         let mut mac = Hmac::<Sha256>::new_from_slice(b"shh").unwrap();
         mac.update(prefix.as_bytes());
         mac.update(body);
-        let expected = base64::engine::general_purpose::STANDARD
-            .encode(mac.finalize().into_bytes());
+        let expected =
+            base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
 
         assert_eq!(sig, expected);
         assert!(!sig.is_empty());
