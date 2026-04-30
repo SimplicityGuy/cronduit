@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: shipped-pending-merge
-stopped_at: Phase 18 shipped — PR #51 open against main, awaiting CI + merge
-last_updated: "2026-04-29T23:00:00.000Z"
-last_activity: 2026-04-29 -- Phase 18 PR #51 opened (https://github.com/SimplicityGuy/cronduit/pull/51)
+status: ready
+stopped_at: Phase 18 merged to main (PR #51 squash-merged as 173dceb, 2026-04-30); ready for Phase 19
+last_updated: "2026-04-30T00:10:00.000Z"
+last_activity: 2026-04-30 -- Phase 18 merged to main; on main; ready for /gsd-discuss-phase 19
 progress:
   total_phases: 10
   completed_phases: 4
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 18 PR #51 awaiting CI + merge; queueing Phase 19 (HMAC + receiver examples)
+**Current focus:** Phase 18 merged; next up is Phase 19 (HMAC signing + Python/Go/Node receiver examples)
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 18 (webhook-payload-state-filter-coalescing) — SHIPPED (PR #51 https://github.com/SimplicityGuy/cronduit/pull/51)
+Phase: 18 (webhook-payload-state-filter-coalescing) — MERGED (PR #51 squash-commit 173dceb, 2026-04-30)
 Plan: 6 of 6 complete
-Status: Phase 18 PR #51 open against `main`; awaiting CI + maintainer merge
-Last activity: 2026-04-29 -- PR #51 opened (41 commits, 47 files, +11876/-34)
+Status: Ready to start Phase 19 — on main, working tree clean
+Last activity: 2026-04-30 -- PR #51 merged; local main fast-forwarded; phase-18-webhook-payload branch deleted
 
 Progress: [████░░░░░░] 40% (v1.2: 4/10 phases complete; 27/— plans complete)
 
@@ -173,8 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-29T23:00:00.000Z
-Stopped at: Phase 18 PR #51 opened (https://github.com/SimplicityGuy/cronduit/pull/51); awaiting CI + merge
-Resume command: after PR #51 merges, `/gsd-discuss-phase 19` for HMAC + receiver examples
+Last session: 2026-04-30T00:10:00.000Z
+Stopped at: Phase 18 merged to main (PR #51 squashed as 173dceb on 2026-04-30); local main fast-forwarded
+Resume command: `/gsd-discuss-phase 19` for HMAC + Python/Go/Node receiver examples
 
 **Planned Phase:** 19 — Webhook HMAC Signing + Receiver Examples (HMAC-SHA256 only, Standard Webhooks signing-string `webhook-id.webhook-timestamp.payload`, signature header `v1,<base64>`, Python/Go/Node receiver examples with constant-time compare)
