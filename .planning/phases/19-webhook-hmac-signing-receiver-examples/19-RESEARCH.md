@@ -775,27 +775,27 @@ uat-webhook-receiver-python:
 
 **If this table is empty:** N/A — 4 assumptions documented. A4 is the most consequential and requires planner attention.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **How to generate `payload.json` initially?**
    - What we know: It must match `serde_json::to_vec(&WebhookPayload)` for a known `RunFinalized` event with `tags=[]`, `image_digest=null` (command archetype), `started_at`/`finished_at` set to a stable past timestamp.
    - What's unclear: Whether to (a) write a one-off `examples/generate_webhook_fixture.rs` binary that prints bytes to stdout (operator pipes to `payload.json` once), or (b) ship a Rust unit test that GENERATES the fixture (as a code-test in `dispatcher.rs::tests`) and add a check that asserts the on-disk `payload.json` matches what the test would produce — locking both directions.
-   - Recommendation: **Option (b)** — the fixture-test in `src/webhooks/dispatcher.rs::tests` re-derives the expected payload bytes from a fixed `RunFinalized` event constructor + `WebhookPayload::build` + `serde_json::to_vec`, and asserts the on-disk file matches. If the on-disk file ever drifts, the test fails with a clear diff. This locks BOTH the payload schema AND the signing side in one test.
+   - **RESOLVED:** Option (b) — the fixture-test in `src/webhooks/dispatcher.rs::tests` re-derives the expected payload bytes from a fixed `RunFinalized` event constructor + `WebhookPayload::build` + `serde_json::to_vec`, and asserts the on-disk file matches. If the on-disk file ever drifts, the test fails with a clear diff. This locks BOTH the payload schema AND the signing side in one test.
 
 2. **Should the fixture timestamp be far enough in the past that the *receivers* would also reject it on their drift check?**
    - What we know: Receivers reject if `|now - ts| > 300s`. A fixture timestamp from 2026-01-01 is ~119 days old at research time — well outside the drift window.
    - What's unclear: How does the receiver's `--verify-fixture` mode handle this? Does it skip the drift check (it's a fixture, not a live delivery), or does it still enforce 300s?
-   - Recommendation: The receiver's fixture-verify mode SKIPS the drift check (the fixture is a static known-good test vector, not a live event), so the timestamp can be any stable past value. **Verify check still runs in fixture mode** — only the drift check is bypassed. Document this in the receiver code comment + `docs/WEBHOOKS.md`.
+   - **RESOLVED:** The receiver's fixture-verify mode SKIPS the drift check (the fixture is a static known-good test vector, not a live event), so the timestamp can be any stable past value. **Verify check still runs in fixture mode** — only the drift check is bypassed. Document this in the receiver code comment + `docs/WEBHOOKS.md`.
 
 3. **Should `docs/WEBHOOKS.md` ship the verbatim verify pseudocode, or only link to the receivers?**
    - What we know: D-06 lists 10 sections; section 5 is "Constant-time compare requirement + the three primitive names." Including verbatim per-language code in section 5 doubles the doc length but eliminates the round-trip operator → receiver source → primitive lookup.
    - What's unclear: The CONTEXT explicitly says "defer wire format to the spec, do NOT paraphrase" — but the constant-time compare primitive names ARE part of cronduit's docs surface, not the spec's.
-   - Recommendation: Include a short table in `docs/WEBHOOKS.md` § 5 — language / primitive / one-liner doc URL — and link to the receiver files for the full implementation. Keeps docs scannable without duplicating the receiver source.
+   - **RESOLVED:** Include a short table in `docs/WEBHOOKS.md` § 5 — language / primitive / one-liner doc URL — and link to the receiver files for the full implementation. Keeps docs scannable without duplicating the receiver source.
 
 4. **Does the Standard Webhooks spec ship canonical test vectors that Phase 19's fixture should ALSO satisfy?**
    - What we know: Deferred-Ideas section says "Fixture interop with the Standard Webhooks reference test vectors: opportunistically — IF the upstream spec ships canonical test vectors..."
    - What's unclear: I did not find official test vectors at the upstream repo. The JS/Python/Go reference implementations have unit tests with hard-coded inputs/outputs, but no published "test vectors" file.
-   - Recommendation: Skip cross-implementation interop for v1.2; revisit if upstream ships vectors.
+   - **RESOLVED:** Skip cross-implementation interop for v1.2; revisit if upstream ships vectors.
 
 ## Environment Availability
 
