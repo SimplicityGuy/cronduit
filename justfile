@@ -472,6 +472,62 @@ uat-webhook-receiver-go-verify-fixture:
 
     echo "OK: all 4 tamper variants behave correctly"
 
+# Foreground Node receiver. Maintainer Ctrl-Cs; pair with `just dev` +
+# `just uat-webhook-fire wh-example-receiver-node` in another terminal.
+[group('uat')]
+[doc('Phase 19 — start Node receiver on 127.0.0.1:9993 (logs to /tmp)')]
+uat-webhook-receiver-node:
+    @echo "Starting Node receiver on http://127.0.0.1:9993/"
+    @echo "Maintainer: in another terminal, run 'just dev', then 'just uat-webhook-fire wh-example-receiver-node'."
+    @echo "Watch this terminal for the 'verified' line. Ctrl-C to stop the receiver."
+    WEBHOOK_SECRET_FILE=tests/fixtures/webhook-v1/secret.txt node examples/webhook-receivers/node/receiver.js
+
+# Fixture-verify mode: canonical pass + 3 tamper variants must fail.
+# Used by the GHA `webhook-interop` matrix (CI gate from day one).
+[group('uat')]
+[doc('Phase 19 — verify Node receiver against fixture (canonical + 3 tamper variants)')]
+uat-webhook-receiver-node-verify-fixture:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FIX=tests/fixtures/webhook-v1
+    REC=examples/webhook-receivers/node/receiver.js
+
+    # 1. Canonical — must verify
+    node "$REC" --verify-fixture "$FIX" \
+        || { echo "FAIL: canonical fixture did not verify"; exit 1; }
+
+    # 2. Mutated secret — must FAIL
+    BAD_SECRET=$(mktemp -d)
+    cp "$FIX"/* "$BAD_SECRET"/
+    printf 'WRONG' > "$BAD_SECRET"/secret.txt
+    if node "$REC" --verify-fixture "$BAD_SECRET" 2>/dev/null; then
+        echo "FAIL: mutated-secret variant verified — should have failed"; exit 1
+    fi
+
+    # 3. Mutated body — must FAIL
+    BAD_BODY=$(mktemp -d)
+    cp "$FIX"/* "$BAD_BODY"/
+    sed -i.bak 's/"v1"/"X1"/' "$BAD_BODY"/payload.json && rm -f "$BAD_BODY"/payload.json.bak
+    if node "$REC" --verify-fixture "$BAD_BODY" 2>/dev/null; then
+        echo "FAIL: mutated-body variant verified — should have failed"; exit 1
+    fi
+
+    # 4. Mutated timestamp (HMAC mismatch via ts byte change) — must FAIL.
+    # NB: fixture-verify mode skips the drift CHECK, but the HMAC is computed
+    # over `${id}.${ts}.${body}` — mutating webhook-timestamp.txt while
+    # leaving expected-signature.txt as the canonical sig produces an HMAC
+    # mismatch for the (id, NEW_TS, body) tuple.
+    # Drift detection itself (i.e. rejecting deliveries with |now - ts| > 300s)
+    # is exercised by the U6/U7/U8 live UAT scenarios, NOT this recipe.
+    BAD_TS=$(mktemp -d)
+    cp "$FIX"/* "$BAD_TS"/
+    printf '%s' "$(($(date +%s) - 600))" > "$BAD_TS"/webhook-timestamp.txt
+    if node "$REC" --verify-fixture "$BAD_TS" 2>/dev/null; then
+        echo "FAIL: mutated-timestamp variant verified — should have failed"; exit 1
+    fi
+
+    echo "OK: all 4 tamper variants behave correctly"
+
 # -------------------- dev loop --------------------
 
 # Single-process dev loop (readable text logs, trace level for cronduit)
