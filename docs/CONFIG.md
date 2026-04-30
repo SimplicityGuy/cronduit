@@ -13,8 +13,9 @@ This document is the complete reference for every field the config file accepts.
 5. [Cron syntax](#cron-syntax)
 6. [Environment variable interpolation](#environment-variable-interpolation)
 7. [Validation](#validation)
-8. [Hot reload](#hot-reload)
-9. [Patterns and recipes](#patterns-and-recipes)
+8. [Webhooks](#webhooks)
+9. [Hot reload](#hot-reload)
+10. [Patterns and recipes](#patterns-and-recipes)
 
 ## File structure
 
@@ -571,6 +572,26 @@ Validation covers:
 - **Default merging correctness.** `cronduit check` runs `apply_defaults` before validation, so error messages reflect the merged view — if a docker job relies on `[defaults].image`, validation sees `image` as set even though the job block omits it.
 
 Validation is **not fail-fast** — Cronduit collects every error it can find and prints all of them in one pass so you can fix multiple mistakes without running `check` repeatedly. This is decision `D-21` in the project's decision log.
+
+## Webhooks
+
+Cronduit emits Standard Webhooks v1 deliveries on terminal job-run events.
+Configure per-job:
+
+```toml
+[[jobs]]
+name = "my-job"
+schedule = "* * * * *"
+command = "..."
+webhook = { url = "https://hook.example.com", secret = "${WEBHOOK_SECRET}" }
+```
+
+Or in `[defaults]` (with the `use_defaults = false` per-job disable
+pattern) — see Phase 18's `WH-01` for the merge semantics.
+
+For receiver implementation guidance (Python, Go, Node), the verify
+protocol, secret rotation, retry semantics, and constant-time compare
+primitives, see [`WEBHOOKS.md`](./WEBHOOKS.md).
 
 ## Hot reload
 
