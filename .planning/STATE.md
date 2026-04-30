@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: ready
-stopped_at: Phase 18 merged to main (PR #51 squash-merged as 173dceb, 2026-04-30); ready for Phase 19
-last_updated: "2026-04-30T00:10:00.000Z"
-last_activity: 2026-04-30 -- Phase 18 merged to main; on main; ready for /gsd-discuss-phase 19
+status: Ready to start Phase 19 — on main, working tree clean
+stopped_at: Phase 19 context gathered
+last_updated: "2026-04-30T00:29:32.464Z"
+last_activity: "2026-04-30 -- PR #51 merged; local main fast-forwarded; phase-18-webhook-payload branch deleted"
 progress:
   total_phases: 10
   completed_phases: 4
@@ -173,8 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-30T00:10:00.000Z
-Stopped at: Phase 18 merged to main (PR #51 squashed as 173dceb on 2026-04-30); local main fast-forwarded
+Last session: 2026-04-30T00:29:32.458Z
+Stopped at: Phase 19 context gathered
 Resume command: `/gsd-discuss-phase 19` for HMAC + Python/Go/Node receiver examples
 
 **Planned Phase:** 19 — Webhook HMAC Signing + Receiver Examples (HMAC-SHA256 only, Standard Webhooks signing-string `webhook-id.webhook-timestamp.payload`, signature header `v1,<base64>`, Python/Go/Node receiver examples with constant-time compare)
