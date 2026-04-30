@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 19 context gathered
-last_updated: "2026-04-30T16:42:17.784Z"
-last_activity: 2026-04-30 -- Phase 19 planning complete
+last_updated: "2026-04-30T16:52:57.312Z"
+last_activity: 2026-04-30 -- Phase 19 execution started
 progress:
   total_phases: 10
   completed_phases: 4
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 18 merged; next up is Phase 19 (HMAC signing + Python/Go/Node receiver examples)
+**Current focus:** Phase 19 — webhook-hmac-signing-receiver-examples
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 18 (webhook-payload-state-filter-coalescing) — MERGED (PR #51 squash-commit 173dceb, 2026-04-30)
-Plan: 6 of 6 complete
-Status: Ready to execute
-Last activity: 2026-04-30 -- Phase 19 planning complete
+Phase: 19 (webhook-hmac-signing-receiver-examples) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 19
+Last activity: 2026-04-30 -- Phase 19 execution started
 
 Progress: [████░░░░░░] 40% (v1.2: 4/10 phases complete; 27/— plans complete)
 

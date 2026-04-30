@@ -416,4 +416,123 @@ mod tests {
             );
         }
     }
+
+    // ----------------------------------------------------------------
+    // Phase 19 — locked interop fixture (WH-04).
+    //
+    // The fixture lives under tests/fixtures/webhook-v1/ and is
+    // consumed by 4 runtimes: this Rust test, plus Python/Go/Node
+    // receivers. The same byte stream MUST verify against `sign_v1`
+    // across all four. Drift fails CI before the per-language matrix
+    // even runs.
+    //
+    // NB: `sign_v1` is `pub(crate)` (Pitfall 1) — this test MUST live
+    // in-module. An integration test under tests/ cannot see the
+    // function.
+    // ----------------------------------------------------------------
+
+    fn build_canonical_payload_bytes_and_signature() -> (Vec<u8>, String) {
+        use crate::db::queries::{DbRunDetail, FailureContext};
+        use crate::webhooks::event::RunFinalized;
+        use crate::webhooks::payload::WebhookPayload;
+        use chrono::{TimeZone, Utc};
+
+        // Canonical event matches `payload.rs::tests::fixture_event` shape but
+        // with stable timestamps (2025-01-01T00:00:00Z .. +1s) so the fixture
+        // does not drift with the test clock.
+        let event = RunFinalized {
+            run_id: 42,
+            job_id: 7,
+            job_name: "backup-nightly".to_string(),
+            status: "failed".to_string(),
+            exit_code: Some(1),
+            started_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+            finished_at: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 1).unwrap(),
+        };
+        let fctx = FailureContext {
+            consecutive_failures: 3,
+            last_success_run_id: Some(40),
+            last_success_image_digest: Some("sha256:abc".to_string()),
+            last_success_config_hash: Some("hash-x".to_string()),
+        };
+        // Command archetype: image_digest = None, config_hash = None.
+        let run = DbRunDetail {
+            id: 42,
+            job_id: 7,
+            job_run_number: 12,
+            job_name: "backup-nightly".to_string(),
+            status: "failed".to_string(),
+            trigger: "scheduled".to_string(),
+            start_time: "2025-01-01T00:00:00Z".to_string(),
+            end_time: Some("2025-01-01T00:00:01Z".to_string()),
+            duration_ms: Some(1000),
+            exit_code: Some(1),
+            error_message: None,
+            image_digest: None,
+            config_hash: None,
+        };
+        let payload = WebhookPayload::build(&event, &fctx, &run, 1, "1.2.0");
+        let body_bytes =
+            serde_json::to_vec(&payload).expect("canonical payload must serialize");
+
+        // Fixture inputs (locked at Phase 19; see tests/fixtures/webhook-v1/README.md).
+        let secret = SecretString::from("cronduit-test-fixture-secret-not-real");
+        let webhook_id = "01HXYZTESTFIXTURE000000000";
+        let webhook_ts: i64 = 1_735_689_600; // 2025-01-01T00:00:00Z
+
+        let sig = sign_v1(&secret, webhook_id, webhook_ts, &body_bytes);
+        let header_value = format!("v1,{sig}");
+        (body_bytes, header_value)
+    }
+
+    #[test]
+    fn sign_v1_locks_interop_fixture() {
+        // Re-derive canonical payload bytes and signature.
+        let (actual_payload, actual_sig) = build_canonical_payload_bytes_and_signature();
+
+        // Compare against the on-disk fixture. Use include_bytes! /
+        // include_str! so the test reads zero files at run time and
+        // works on any cwd.
+        let expected_payload =
+            include_bytes!("../../tests/fixtures/webhook-v1/payload.json");
+        let expected_sig =
+            include_str!("../../tests/fixtures/webhook-v1/expected-signature.txt");
+
+        // payload.json may have NO trailing newline (Pitfall 3); both
+        // sides must be byte-equal (NOT trim-then-equal — that would
+        // hide drift).
+        assert_eq!(
+            actual_payload.as_slice(),
+            expected_payload.as_slice(),
+            "payload.json drift — \
+             either WebhookPayload::build / serde output changed (regenerate fixture intentionally) \
+             or fixture file was corrupted (don't regenerate; investigate)"
+        );
+
+        // expected-signature.txt may tolerate one defensive trailing \n
+        // if a future editor adds one — the assertion uses trim_end on
+        // expected only, NOT on actual.
+        let expected_sig_trimmed = expected_sig.trim_end();
+        assert_eq!(
+            actual_sig, expected_sig_trimmed,
+            "expected-signature.txt drift — \
+             either sign_v1 changed (regenerate fixture intentionally) \
+             or fixture file was corrupted (don't regenerate; investigate)"
+        );
+    }
+
+    #[test]
+    #[ignore = "manual fixture regeneration helper; run with `cargo test -- --ignored --nocapture`"]
+    fn print_canonical_payload_bytes() {
+        let (payload_bytes, header_value) = build_canonical_payload_bytes_and_signature();
+        // Print bytes to stdout so the operator can pipe via `printf '%s'`.
+        // NOTE: We deliberately use `print!` (no trailing newline) for the
+        // payload, then a separator line, then `print!` again for the
+        // signature — the operator splits on the separator.
+        print!("{}", std::str::from_utf8(&payload_bytes).unwrap());
+        println!();
+        println!("---SEPARATOR---");
+        print!("{header_value}");
+        println!();
+    }
 }

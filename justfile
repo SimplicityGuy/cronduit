@@ -351,6 +351,10 @@ uat-webhook-verify:
     @echo "Maintainer: confirm headers (webhook-id, webhook-timestamp, webhook-signature), 16-field body, signature format v1,<base64>."
     @tail -n 30 /tmp/cronduit-webhook-mock.log 2>/dev/null || echo "(log empty; ensure 'just uat-webhook-mock' is running and 'just uat-webhook-fire <JOB>' was triggered)"
 
+# === Phase 19 webhook receivers ===
+# Plans 19-02 (Python), 19-03 (Go), 19-04 (Node) each append a per-language
+# `uat-webhook-receiver-<lang>` + `uat-webhook-receiver-<lang>-verify-fixture` block AFTER this anchor.
+
 # -------------------- dev loop --------------------
 
 # Single-process dev loop (readable text logs, trace level for cronduit)
