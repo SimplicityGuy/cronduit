@@ -88,6 +88,19 @@ libc = "0.2"
 
 # Utilities
 sha2 = "0.11"
+
+# Phase 18 (WH-01..WH-09) — webhook outbound HTTP delivery.
+# NOTE: CONTEXT D-20 was written before crate-currency verification and says
+# `features = ["rustls-tls", "json"]` — that spelling is reqwest 0.12 only.
+# reqwest 0.13.x renamed the feature to `rustls`. We use the 0.13 spelling
+# per RESEARCH § "reqwest 0.12 → 0.13 Feature-Flag Rename" / Pitfall A.
+# `default-features = false` is mandatory per project rustls-only invariant
+# (CLAUDE.md / `just openssl-check`).
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+hmac    = "0.13"
+base64  = "0.22"
+ulid    = "1.2"
+
 serde_json = "1"
 url = "2"
 regex = "1"
@@ -148,6 +161,9 @@ tower = { version = "0.5", features = ["util"] }
 # deterministic race tests. The `test-util` feature is NOT included in tokio's
 # `full` feature set, so enable it here for dev builds only.
 tokio = { version = "1.51", features = ["full", "test-util"] }
+
+# Phase 18 — wiremock-based integration tests for HttpDispatcher (RESEARCH Validation Architecture).
+wiremock = "0.6"
 
 [profile.release]
 lto = "thin"

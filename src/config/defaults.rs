@@ -174,6 +174,26 @@ pub fn apply_defaults(mut job: JobConfig, defaults: Option<&DefaultsConfig>) -> 
         };
         job.labels = Some(merged);
     }
+    // Webhook merge per WH-01 / D-01:
+    //   * use_defaults = false      → already short-circuited at lines 112-114
+    //                                  (per-job webhook stays as-is; defaults.webhook discarded).
+    //   * use_defaults true / unset → if per-job webhook is Some, keep it;
+    //                                  if None, take defaults.webhook clone.
+    //
+    // Unlike `labels` (HashMap union with per-job-wins on collision), `webhook`
+    // is a SINGLE inline block — replace-on-collision semantics. The closest
+    // analog is `image`/`network`/`volumes`/`timeout`/`delete` per-field replace
+    // above (lines 125-153), NOT the labels HashMap merge (lines 154-176).
+    //
+    // NO type-gate (unlike LBL-04 which gated `labels` on docker jobs):
+    // webhooks fire on RunFinalized for ALL job types (command/script/docker).
+    // The dispatcher (Plan 04) reads `webhook` from a bin-layer per-job
+    // HashMap; it never touches DockerJobConfig.
+    if job.webhook.is_none()
+        && let Some(v) = &defaults.webhook
+    {
+        job.webhook = Some(v.clone());
+    }
     // NOTE: random_min_gap is intentionally NOT merged -- see module doc.
     // NOTE: cmd is per-job ONLY -- DefaultsConfig has no `cmd` field.
     // NOTE: container_name is per-job ONLY -- two containers cannot share a name.
@@ -204,6 +224,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            webhook: None,
         }
     }
 
@@ -216,6 +237,7 @@ mod tests {
             delete: Some(true),
             timeout: Some(Duration::from_secs(300)),
             random_min_gap: Some(Duration::from_secs(90 * 60)),
+            webhook: None,
         }
     }
 
@@ -230,6 +252,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.image.as_deref(), Some("alpine:latest"));
@@ -246,6 +269,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.network.as_deref(), Some("container:vpn"));
@@ -262,6 +286,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(
@@ -281,6 +306,7 @@ mod tests {
             delete: None,
             timeout: Some(Duration::from_secs(300)),
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.timeout, Some(Duration::from_secs(300)));
@@ -297,6 +323,7 @@ mod tests {
             delete: Some(true),
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.delete, Some(true));
@@ -381,6 +408,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -428,6 +456,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -475,6 +504,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -525,6 +555,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            webhook: None,
         };
         let merged = apply_defaults(job, None);
         assert_eq!(merged.image, None);
@@ -551,6 +582,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: Some(Duration::from_secs(90 * 60)),
+            webhook: None,
         };
         let defaults_without_gap = DefaultsConfig {
             image: Some("alpine:latest".into()),
@@ -560,6 +592,7 @@ mod tests {
             delete: None,
             timeout: None,
             random_min_gap: None,
+            webhook: None,
         };
 
         let merged_with = apply_defaults(job_with_gap, Some(&defaults_with_gap));
@@ -706,6 +739,7 @@ mod tests {
             timeout: Some(Duration::from_secs(300)),
             delete: Some(true),
             cmd: Some(vec!["echo".to_string(), "parity".to_string()]),
+            webhook: None,
         };
 
         let json_str = sync::serialize_config_json(&job);
@@ -799,6 +833,187 @@ mod tests {
         assert_eq!(
             djc_labels, job_labels,
             "round-trip labels must equal source"
+        );
+    }
+
+    // ---- Phase 18 / WH-01 webhook merge ----
+
+    #[test]
+    fn apply_defaults_fills_webhook_from_defaults() {
+        use crate::config::WebhookConfig;
+        let job = JobConfig {
+            name: "j".into(),
+            schedule: "* * * * *".into(),
+            command: Some("true".into()),
+            script: None,
+            image: None,
+            use_defaults: None,
+            env: BTreeMap::new(),
+            volumes: None,
+            labels: None,
+            network: None,
+            container_name: None,
+            timeout: None,
+            delete: None,
+            cmd: None,
+            webhook: None,
+        };
+        let defaults = DefaultsConfig {
+            image: None,
+            network: None,
+            volumes: None,
+            labels: None,
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+            webhook: Some(WebhookConfig {
+                url: "https://h/x".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        };
+        let merged = apply_defaults(job, Some(&defaults));
+        let wh = merged.webhook.expect("webhook filled from defaults");
+        assert_eq!(wh.url, "https://h/x");
+        assert_eq!(wh.fire_every, 1);
+    }
+
+    #[test]
+    fn apply_defaults_use_defaults_false_discards_webhook() {
+        use crate::config::WebhookConfig;
+        let job = JobConfig {
+            name: "j".into(),
+            schedule: "* * * * *".into(),
+            command: Some("true".into()),
+            script: None,
+            image: None,
+            use_defaults: Some(false), // <-- explicit disable
+            env: BTreeMap::new(),
+            volumes: None,
+            labels: None,
+            network: None,
+            container_name: None,
+            timeout: None,
+            delete: None,
+            cmd: None,
+            webhook: None,
+        };
+        let defaults = DefaultsConfig {
+            image: None,
+            network: None,
+            volumes: None,
+            labels: None,
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+            webhook: Some(WebhookConfig {
+                url: "https://h/x".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        };
+        let merged = apply_defaults(job, Some(&defaults));
+        assert!(
+            merged.webhook.is_none(),
+            "use_defaults=false must discard defaults webhook"
+        );
+    }
+
+    #[test]
+    fn apply_defaults_per_job_webhook_overrides_defaults_entirely() {
+        use crate::config::WebhookConfig;
+        let per_job_wh = WebhookConfig {
+            url: "https://per-job/".into(),
+            states: vec!["timeout".into()],
+            secret: None,
+            unsigned: true,
+            fire_every: 5,
+        };
+        let job = JobConfig {
+            name: "j".into(),
+            schedule: "* * * * *".into(),
+            command: Some("true".into()),
+            script: None,
+            image: None,
+            use_defaults: None,
+            env: BTreeMap::new(),
+            volumes: None,
+            labels: None,
+            network: None,
+            container_name: None,
+            timeout: None,
+            delete: None,
+            cmd: None,
+            webhook: Some(per_job_wh.clone()),
+        };
+        let defaults = DefaultsConfig {
+            image: None,
+            network: None,
+            volumes: None,
+            labels: None,
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+            webhook: Some(WebhookConfig {
+                url: "https://defaults/".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        };
+        let merged = apply_defaults(job, Some(&defaults));
+        let wh = merged.webhook.unwrap();
+        assert_eq!(wh.url, "https://per-job/");
+        assert_eq!(wh.fire_every, 5);
+        assert!(wh.unsigned);
+    }
+
+    #[test]
+    fn apply_defaults_webhook_applies_to_command_jobs() {
+        // Sanity: no type-gate. Command job receives defaults webhook same as docker.
+        use crate::config::WebhookConfig;
+        let job = JobConfig {
+            name: "cmd".into(),
+            schedule: "* * * * *".into(),
+            command: Some("true".into()), // <-- command job
+            script: None,
+            image: None,
+            use_defaults: None,
+            env: BTreeMap::new(),
+            volumes: None,
+            labels: None,
+            network: None,
+            container_name: None,
+            timeout: None,
+            delete: None,
+            cmd: None,
+            webhook: None,
+        };
+        let defaults = DefaultsConfig {
+            image: None,
+            network: None,
+            volumes: None,
+            labels: None,
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+            webhook: Some(WebhookConfig {
+                url: "https://h/".into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        };
+        let merged = apply_defaults(job, Some(&defaults));
+        assert!(
+            merged.webhook.is_some(),
+            "webhook must apply to command jobs (no type-gate)"
         );
     }
 }

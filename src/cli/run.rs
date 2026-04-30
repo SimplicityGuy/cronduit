@@ -247,12 +247,58 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     // worker before the scheduler drains would race finalize_run's last
     // try_send calls with the worker's exit and produce noisy
     // TrySendError::Closed errors in production logs.
+
+    // Phase 18 / WH-01..09 — build the per-job webhook map from validated config.
+    // The map is keyed by post-sync DbJob.id; values are clones of the
+    // (already-defaults-merged) WebhookConfig from JobConfig.webhook. Empty map
+    // means no webhook is configured anywhere — keep NoopDispatcher to avoid
+    // spinning a reqwest::Client. Per RESEARCH Open Q 1, this map is the
+    // SOLE source of webhook config at delivery time; no DB round-trip
+    // through `config_json` (5-layer parity exempt — Plan 02 must-haves).
+    //
+    // ALIGNMENT (T-18-36 mitigation): Building the map by NAME-keyed lookup
+    // rather than blind `zip(cfg.jobs, sync_result.jobs)` because index-aligning
+    // those two slices is fragile — if `sync_config_to_db` ever reorders or
+    // filters (e.g., to skip a job), a single-job test cannot detect the
+    // mis-wiring. Name lookup makes the alignment explicit.
+    let webhooks: std::collections::HashMap<i64, crate::config::WebhookConfig> = {
+        // First: build a per-name view of cfg.jobs[].webhook (only the entries
+        // that actually have a webhook configured).
+        let by_name: std::collections::HashMap<&str, &crate::config::WebhookConfig> = cfg
+            .jobs
+            .iter()
+            .filter_map(|j| j.webhook.as_ref().map(|wh| (j.name.as_str(), wh)))
+            .collect();
+        // Then: for each post-sync DbJob, resolve its WebhookConfig by name.
+        // (Names are unique post-validation; cfg-validators reject duplicate
+        // job names at LOAD time, and sync preserves the same uniqueness.)
+        sync_result
+            .jobs
+            .iter()
+            .filter_map(|db_job| {
+                by_name
+                    .get(db_job.name.as_str())
+                    .map(|wh| (db_job.id, (*wh).clone()))
+            })
+            .collect()
+    };
+
+    let dispatcher: std::sync::Arc<dyn crate::webhooks::WebhookDispatcher> = if webhooks.is_empty()
+    {
+        // Zero webhooks configured anywhere — keep NoopDispatcher.
+        // No reqwest::Client is built; no rustls TLS handshake setup overhead.
+        std::sync::Arc::new(crate::webhooks::NoopDispatcher)
+    } else {
+        // At least one job has a webhook — build HttpDispatcher.
+        let http =
+            crate::webhooks::HttpDispatcher::new(pool.clone(), std::sync::Arc::new(webhooks))
+                .map_err(|e| anyhow::anyhow!("HttpDispatcher init failed: {e}"))?;
+        std::sync::Arc::new(http)
+    };
+
     let (webhook_tx, webhook_rx) = crate::webhooks::channel();
-    let webhook_worker_handle = crate::webhooks::spawn_worker(
-        webhook_rx,
-        std::sync::Arc::new(crate::webhooks::NoopDispatcher),
-        cancel.child_token(),
-    );
+    let webhook_worker_handle =
+        crate::webhooks::spawn_worker(webhook_rx, dispatcher, cancel.child_token());
 
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: "Phase 17 MERGED (PR #48, squash a34cad0); v1.2: 1 phase shipped"
-stopped_at: Phase 17 context gathered
-last_updated: "2026-04-29T17:41:38.606Z"
-last_activity: "2026-04-29 -- Phase 17 merged to main via PR #48"
+status: shipped-pending-merge
+stopped_at: Phase 18 shipped — PR #51 open against main, awaiting CI + merge
+last_updated: "2026-04-29T23:00:00.000Z"
+last_activity: 2026-04-29 -- Phase 18 PR #51 opened (https://github.com/SimplicityGuy/cronduit/pull/51)
 progress:
   total_phases: 10
-  completed_phases: 2
-  total_plans: 14
-  completed_plans: 14
+  completed_phases: 4
+  total_plans: 27
+  completed_plans: 27
   percent: 100
 ---
 
@@ -21,18 +21,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 17 — custom-docker-labels-seed-001 (gap closure complete; awaiting next-phase decision)
+**Current focus:** Phase 18 PR #51 awaiting CI + merge; queueing Phase 19 (HMAC + receiver examples)
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 17 (custom-docker-labels-seed-001) — COMPLETE (gap closure passed verification 2026-04-29; see 17-VERIFICATION-GAP-CLOSURE.md)
-Plan: 9 of 9 (all gap-closure plans landed: 17-07 CR-01, 17-08 CR-02, 17-09 bookkeeping)
-Status: Phase 17 MERGED (PR #48, squash a34cad0); v1.2: 1 phase shipped
-Last activity: 2026-04-29 -- Phase 17 merged to main via PR #48
+Phase: 18 (webhook-payload-state-filter-coalescing) — SHIPPED (PR #51 https://github.com/SimplicityGuy/cronduit/pull/51)
+Plan: 6 of 6 complete
+Status: Phase 18 PR #51 open against `main`; awaiting CI + maintainer merge
+Last activity: 2026-04-29 -- PR #51 opened (41 commits, 47 files, +11876/-34)
 
-Progress: [█░░░░░░░░░] 10% (v1.2: 1/10 phases complete; 9/— plans complete)
+Progress: [████░░░░░░] 40% (v1.2: 4/10 phases complete; 27/— plans complete)
 
 ## v1.2 Roadmap Summary
 
@@ -173,8 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-04-28T22:18:56.529Z
-Stopped at: Phase 17 context gathered
-Resume command: `/gsd-plan-phase 17 --gaps` — plan gap-closure for CR-01 (README contract) + CR-02 (LBL-04 error wording)
+Last session: 2026-04-29T23:00:00.000Z
+Stopped at: Phase 18 PR #51 opened (https://github.com/SimplicityGuy/cronduit/pull/51); awaiting CI + merge
+Resume command: after PR #51 merges, `/gsd-discuss-phase 19` for HMAC + receiver examples
 
-**Planned Phase:** 15 — Foundation Preamble (Cargo 1.1.0→1.2.0 bump; cargo-deny CI preamble (non-blocking); webhook delivery worker foundation: bounded mpsc(1024) + dedicated worker task + drop counter; FOUND-15, FOUND-16, WH-02)
+**Planned Phase:** 19 — Webhook HMAC Signing + Receiver Examples (HMAC-SHA256 only, Standard Webhooks signing-string `webhook-id.webhook-timestamp.payload`, signature header `v1,<base64>`, Python/Go/Node receiver examples with constant-time compare)

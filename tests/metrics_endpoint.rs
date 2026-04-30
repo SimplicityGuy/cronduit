@@ -77,6 +77,24 @@ fn metrics_families_described_from_boot() {
         body.contains("# TYPE cronduit_webhook_delivery_dropped_total counter"),
         "missing TYPE for cronduit_webhook_delivery_dropped_total; body: {body}"
     );
+
+    // Phase 18 — sent + failed counters describe-from-boot regression.
+    assert!(
+        body.contains("# HELP cronduit_webhook_delivery_sent_total"),
+        "expected sent_total HELP line; rendered:\n{body}"
+    );
+    assert!(
+        body.contains("# TYPE cronduit_webhook_delivery_sent_total counter"),
+        "expected sent_total TYPE counter; rendered:\n{body}"
+    );
+    assert!(
+        body.contains("# HELP cronduit_webhook_delivery_failed_total"),
+        "expected failed_total HELP line; rendered:\n{body}"
+    );
+    assert!(
+        body.contains("# TYPE cronduit_webhook_delivery_failed_total counter"),
+        "expected failed_total TYPE counter; rendered:\n{body}"
+    );
 }
 
 // The stubs below remain intentional Nyquist compliance placeholders. They are
