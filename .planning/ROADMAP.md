@@ -168,10 +168,10 @@ Plans:
   2. An operator running the shipped Python, Go, and Node receiver examples successfully verifies signatures from a real cronduit delivery; each example uses a constant-time compare primitive (Python `hmac.compare_digest`, Go `hmac.Equal`, Node `crypto.timingSafeEqual`) — NOT `==` on hex bytes.
   3. An operator reviewing the receiver-example docs sees an explicit note that v1.2 ships SHA-256 only (no algorithm-agility / multi-secret rotation cronduit-side; rotation is a receiver concern).
 
-**Plans:** 6 plans
+**Plans:** 1/6 plans executed
 
 Plans:
-- [ ] 19-01-PLAN.md — Wave 1: tests/fixtures/webhook-v1/* fixture + in-module sign_v1_locks_interop_fixture Rust test (Pitfall 1: pub(crate))
+- [x] 19-01-PLAN.md — Wave 1: tests/fixtures/webhook-v1/* fixture + in-module sign_v1_locks_interop_fixture Rust test (Pitfall 1: pub(crate))
 - [ ] 19-02-PLAN.md — Wave 2: examples/webhook-receivers/python/ stdlib receiver + 2 just recipes (port 9991, hmac.compare_digest)
 - [ ] 19-03-PLAN.md — Wave 2: examples/webhook-receivers/go/ stdlib receiver + 2 just recipes (port 9992, hmac.Equal)
 - [ ] 19-04-PLAN.md — Wave 2: examples/webhook-receivers/node/ stdlib receiver + 2 just recipes (port 9993, crypto.timingSafeEqual + Pitfall 2 length guard)
@@ -280,7 +280,7 @@ Plans:
 | 16. Failure-Context Schema + run.rs Bug Fix | 7/7 | Complete    | 2026-04-28 |
 | 17. Custom Docker Labels (SEED-001) | 6/6 + 3 gap closure | Gap-closure pending | 2026-04-29 (core) |
 | 18. Webhook Payload + State-Filter + Coalescing | 6/6 | Complete   | 2026-04-29 |
-| 19. Webhook HMAC Signing + Receiver Examples | 0/6 | Planned     | — |
+| 19. Webhook HMAC Signing + Receiver Examples | 1/6 | In Progress|  |
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 0/— | Not started | — |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 0/— | Not started | — |
 | 22. Job Tagging Schema + Validators | 0/— | Not started | — |
