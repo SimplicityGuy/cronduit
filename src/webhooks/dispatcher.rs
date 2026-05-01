@@ -268,14 +268,14 @@ impl WebhookDispatcher for HttpDispatcher {
         // 11. Classify return value.
         //
         // Phase 20 / WH-11 / D-22 BREAKING CHANGE: the two unlabeled P18 flat
-        // counters (the `_sent_total` and `_failed_total` counter increments
-        // that lived here in P18) are REMOVED. The labeled per-DELIVERY counter
+        // counters (the success and failure flat counters that lived here in
+        // P18) are REMOVED. The labeled per-DELIVERY counter
         // `cronduit_webhook_deliveries_total{job, status}` (closed enum status
         // ∈ {success, failed, dropped}) increments at the OUTER
         // RetryingDispatcher::deliver boundary because the operator-visible
         // truth is per-DELIVERY (the outcome of the full retry chain), not
-        // per-ATTEMPT. The P15 channel-saturation `_delivery_dropped_total`
-        // counter is preserved verbatim in src/scheduler/run.rs (D-26 split).
+        // per-ATTEMPT. The P15 channel-saturation drop counter (in
+        // src/scheduler/run.rs) is preserved verbatim per D-26 split.
         match response {
             Ok(resp) if resp.status().is_success() => {
                 tracing::debug!(
