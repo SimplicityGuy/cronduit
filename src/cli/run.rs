@@ -153,6 +153,22 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     let metrics_handle = crate::telemetry::setup_metrics();
     metrics::gauge!("cronduit_scheduler_up").set(1.0);
 
+    // Phase 20 / WH-11 (D-23, RESEARCH §4.6): per-job × per-status seed for the
+    // labeled webhook family. Forces Prometheus to render zero-baseline rows
+    // for every configured job × {success, failed, dropped} combo so operator
+    // alerts (e.g., `rate(cronduit_webhook_deliveries_total{status="failed"}[5m]) > 0`)
+    // fire correctly from the first scrape. Cardinality: n_jobs × 3.
+    for job in &sync_result.jobs {
+        for status in ["success", "failed", "dropped"] {
+            metrics::counter!(
+                "cronduit_webhook_deliveries_total",
+                "job" => job.name.clone(),
+                "status" => status,
+            )
+            .increment(0);
+        }
+    }
+
     let active_runs =
         std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
@@ -289,26 +305,41 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         // No reqwest::Client is built; no rustls TLS handshake setup overhead.
         std::sync::Arc::new(crate::webhooks::NoopDispatcher)
     } else {
-        // At least one job has a webhook — build HttpDispatcher.
-        let http =
-            crate::webhooks::HttpDispatcher::new(pool.clone(), std::sync::Arc::new(webhooks))
-                .map_err(|e| anyhow::anyhow!("HttpDispatcher init failed: {e}"))?;
-        std::sync::Arc::new(http)
+        // At least one job has a webhook — build HttpDispatcher then wrap in
+        // RetryingDispatcher (Phase 20 / WH-05). Construct the Arc ONCE; share
+        // between HttpDispatcher and RetryingDispatcher so the DLQ url-lookup
+        // at write-time uses the same map HttpDispatcher uses for sending.
+        // (B2 regression-locked by tests/v12_webhook_dlq.rs::dlq_url_matches_configured_url.)
+        let webhooks_arc = std::sync::Arc::new(webhooks);
+        let http = crate::webhooks::HttpDispatcher::new(pool.clone(), webhooks_arc.clone())
+            .map_err(|e| anyhow::anyhow!("HttpDispatcher init failed: {e}"))?;
+        let retrying = crate::webhooks::RetryingDispatcher::new(
+            http,
+            pool.clone(),
+            cancel.child_token(),
+            webhooks_arc,
+        );
+        std::sync::Arc::new(retrying)
     };
 
     let (webhook_tx, webhook_rx) = crate::webhooks::channel();
-    // Phase 20 / WH-10 / D-15: webhook worker drain grace on SIGTERM. Plan 06
-    // owns the proper bin-layer wiring (`cfg.server.webhook_drain_grace`).
-    // Until then, a 30-second default matches the locked
-    // `webhook_drain_grace = "30s"` value from the spec so the runtime
-    // behavior is correct out of the box; Plan 06 will replace this hardcode
-    // with `cfg.server.webhook_drain_grace`.
-    let webhook_drain_grace = std::time::Duration::from_secs(30);
+    // Phase 20 / WH-10 / D-15..D-18: webhook worker drain grace on SIGTERM.
+    // Sourced from `[server].webhook_drain_grace` (humantime; default 30s).
+    // In-flight HTTP requests are NOT cancelled, so worst-case shutdown
+    // ceiling = `webhook_drain_grace + 10s` (reqwest's per-attempt timeout,
+    // P18 D-18 / Pitfall 8). Operators with strict shutdown budgets should
+    // tune this in concert with `shutdown_grace`.
+    tracing::info!(
+        target: "cronduit.webhooks",
+        shutdown_grace_secs = cfg.server.shutdown_grace.as_secs(),
+        webhook_drain_grace_secs = cfg.server.webhook_drain_grace.as_secs(),
+        "shutdown grace + webhook drain grace configured (worst-case shutdown = drain_grace + 10s reqwest cap)"
+    );
     let webhook_worker_handle = crate::webhooks::spawn_worker(
         webhook_rx,
         dispatcher,
         cancel.child_token(),
-        webhook_drain_grace,
+        cfg.server.webhook_drain_grace,
     );
 
     // Spawn the scheduler loop.
