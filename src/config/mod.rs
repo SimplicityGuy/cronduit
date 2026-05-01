@@ -43,6 +43,14 @@ pub struct ServerConfig {
     pub timezone: String,
     #[serde(default = "default_shutdown_grace", with = "humantime_serde")]
     pub shutdown_grace: Duration,
+    /// Phase 20 / WH-10 (D-16): Maximum time the webhook worker waits to drain
+    /// queued events on SIGTERM before dropping the remainder. In-flight HTTP
+    /// requests are NOT cancelled — worst-case shutdown ceiling is
+    /// `webhook_drain_grace + 10s` (reqwest's per-attempt timeout, P18 D-18).
+    /// Operators with strict shutdown budgets should set this in concert with
+    /// `shutdown_grace` (D-18 + Pitfall 8). Default: 30s.
+    #[serde(default = "default_webhook_drain_grace", with = "humantime_serde")]
+    pub webhook_drain_grace: Duration,
     #[serde(default = "default_log_retention", with = "humantime_serde")]
     pub log_retention: Duration,
     /// Enable file watcher for automatic config reload (D-10, RELOAD-03).
@@ -63,6 +71,9 @@ fn default_db_url() -> SecretString {
     SecretString::from(url)
 }
 fn default_shutdown_grace() -> Duration {
+    Duration::from_secs(30)
+}
+fn default_webhook_drain_grace() -> Duration {
     Duration::from_secs(30)
 }
 fn default_log_retention() -> Duration {
