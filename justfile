@@ -351,6 +351,243 @@ uat-webhook-verify:
     @echo "Maintainer: confirm headers (webhook-id, webhook-timestamp, webhook-signature), 16-field body, signature format v1,<base64>."
     @tail -n 30 /tmp/cronduit-webhook-mock.log 2>/dev/null || echo "(log empty; ensure 'just uat-webhook-mock' is running and 'just uat-webhook-fire <JOB>' was triggered)"
 
+# === Phase 19 webhook receivers ===
+# Plans 19-02 (Python), 19-03 (Go), 19-04 (Node) each append a per-language
+# `uat-webhook-receiver-<lang>` + `uat-webhook-receiver-<lang>-verify-fixture` block AFTER this anchor.
+
+# -------------------- Phase 19: webhook receivers --------------------
+# Mirrors the Phase 18 uat-webhook-* family. Each language ships:
+#   - uat-webhook-receiver-{lang}                (foreground; real cronduit delivery)
+#   - uat-webhook-receiver-{lang}-verify-fixture  (CI gate; canonical + 3 tamper variants)
+
+# Foreground Python receiver. Maintainer Ctrl-Cs; pair with `just dev` +
+# `just uat-webhook-fire wh-example-receiver-python` in another terminal.
+[group('uat')]
+[doc('Phase 19 — start Python receiver on 127.0.0.1:9991 (logs to /tmp)')]
+uat-webhook-receiver-python:
+    @echo "Starting Python receiver on http://127.0.0.1:9991/"
+    @echo "Maintainer: in another terminal, run 'just dev', then 'just uat-webhook-fire wh-example-receiver-python'."
+    @echo "Watch this terminal for the 'verified' line. Ctrl-C to stop the receiver."
+    WEBHOOK_SECRET_FILE=tests/fixtures/webhook-v1/secret.txt python3 examples/webhook-receivers/python/receiver.py
+
+# Fixture-verify mode: canonical pass + 3 tamper variants must fail.
+# Used by the GHA `webhook-interop` matrix (CI gate from day one).
+[group('uat')]
+[doc('Phase 19 — verify Python receiver against fixture (canonical + 3 tamper variants)')]
+uat-webhook-receiver-python-verify-fixture:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FIX=tests/fixtures/webhook-v1
+    REC=examples/webhook-receivers/python/receiver.py
+
+    # 1. Canonical — must verify
+    python3 "$REC" --verify-fixture "$FIX" \
+        || { echo "FAIL: canonical fixture did not verify"; exit 1; }
+
+    # 2. Mutated secret — must FAIL
+    BAD_SECRET=$(mktemp -d)
+    cp "$FIX"/* "$BAD_SECRET"/
+    printf 'WRONG' > "$BAD_SECRET"/secret.txt
+    if python3 "$REC" --verify-fixture "$BAD_SECRET" 2>/dev/null; then
+        echo "FAIL: mutated-secret variant verified — should have failed"; exit 1
+    fi
+
+    # 3. Mutated body — must FAIL
+    BAD_BODY=$(mktemp -d)
+    cp "$FIX"/* "$BAD_BODY"/
+    sed -i.bak 's/"v1"/"X1"/' "$BAD_BODY"/payload.json && rm -f "$BAD_BODY"/payload.json.bak
+    if python3 "$REC" --verify-fixture "$BAD_BODY" 2>/dev/null; then
+        echo "FAIL: mutated-body variant verified — should have failed"; exit 1
+    fi
+
+    # 4. Mutated timestamp (HMAC mismatch via ts byte change) — must FAIL.
+    # NB: fixture-verify mode skips the drift CHECK, but the HMAC is computed
+    # over `${id}.${ts}.${body}` — mutating webhook-timestamp.txt while
+    # leaving expected-signature.txt as the canonical sig produces an HMAC
+    # mismatch for the (id, NEW_TS, body) tuple.
+    # Drift detection itself (i.e. rejecting deliveries with |now - ts| > 300s)
+    # is exercised by the U6/U7/U8 live UAT scenarios, NOT this recipe.
+    BAD_TS=$(mktemp -d)
+    cp "$FIX"/* "$BAD_TS"/
+    printf '%s' "$(($(date +%s) - 600))" > "$BAD_TS"/webhook-timestamp.txt
+    if python3 "$REC" --verify-fixture "$BAD_TS" 2>/dev/null; then
+        echo "FAIL: mutated-timestamp variant verified — should have failed"; exit 1
+    fi
+
+    # 5. Wire-format strictness — non-canonical-decimal timestamp must STILL
+    # verify (regression vector for review BL-01: receivers must sign over
+    # the RAW `webhook-timestamp` header bytes, not a parsed-and-re-serialized
+    # integer). We rewrite the timestamp to a leading-zero form
+    # ("01735689600" — same int as canonical "1735689600", different bytes),
+    # re-sign HMAC-SHA256 over `${id}.${NEW_TS}.${body}` using the canonical
+    # secret, and confirm the receiver verifies. This locks "raw header
+    # bytes" as the signing-string contract across all four runtimes.
+    NONCANON_TS=$(mktemp -d)
+    cp "$FIX"/* "$NONCANON_TS"/
+    WID=$(cat "$FIX"/webhook-id.txt)
+    NEW_WTS="01735689600"
+    printf '%s' "$NEW_WTS" > "$NONCANON_TS"/webhook-timestamp.txt
+    SECRET=$(cat "$FIX"/secret.txt)
+    NEW_SIG=$({ printf '%s.%s.' "$WID" "$NEW_WTS"; cat "$FIX"/payload.json; } \
+        | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
+    printf 'v1,%s' "$NEW_SIG" > "$NONCANON_TS"/expected-signature.txt
+    python3 "$REC" --verify-fixture "$NONCANON_TS" \
+        || { echo "FAIL: non-canonical-decimal timestamp variant did not verify (BL-01 regression)"; exit 1; }
+
+    echo "OK: all 5 fixture variants behave correctly"
+
+# Foreground Go receiver. Maintainer Ctrl-Cs; pair with `just dev` +
+# `just uat-webhook-fire wh-example-receiver-go` in another terminal.
+[group('uat')]
+[doc('Phase 19 — start Go receiver on 127.0.0.1:9992 (logs to /tmp)')]
+uat-webhook-receiver-go:
+    @echo "Starting Go receiver on http://127.0.0.1:9992/"
+    @echo "Maintainer: in another terminal, run 'just dev', then 'just uat-webhook-fire wh-example-receiver-go'."
+    @echo "Watch this terminal for the 'verified' line. Ctrl-C to stop the receiver."
+    WEBHOOK_SECRET_FILE=tests/fixtures/webhook-v1/secret.txt go run examples/webhook-receivers/go/receiver.go
+
+# Fixture-verify mode: canonical pass + 3 tamper variants must fail.
+# Used by the GHA `webhook-interop` matrix (CI gate from day one).
+[group('uat')]
+[doc('Phase 19 — verify Go receiver against fixture (canonical + 3 tamper variants)')]
+uat-webhook-receiver-go-verify-fixture:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FIX=tests/fixtures/webhook-v1
+    REC=examples/webhook-receivers/go/receiver.go
+
+    # 1. Canonical — must verify
+    go run "$REC" --verify-fixture "$FIX" \
+        || { echo "FAIL: canonical fixture did not verify"; exit 1; }
+
+    # 2. Mutated secret — must FAIL
+    BAD_SECRET=$(mktemp -d)
+    cp "$FIX"/* "$BAD_SECRET"/
+    printf 'WRONG' > "$BAD_SECRET"/secret.txt
+    if go run "$REC" --verify-fixture "$BAD_SECRET" 2>/dev/null; then
+        echo "FAIL: mutated-secret variant verified — should have failed"; exit 1
+    fi
+
+    # 3. Mutated body — must FAIL
+    BAD_BODY=$(mktemp -d)
+    cp "$FIX"/* "$BAD_BODY"/
+    sed -i.bak 's/"v1"/"X1"/' "$BAD_BODY"/payload.json && rm -f "$BAD_BODY"/payload.json.bak
+    if go run "$REC" --verify-fixture "$BAD_BODY" 2>/dev/null; then
+        echo "FAIL: mutated-body variant verified — should have failed"; exit 1
+    fi
+
+    # 4. Mutated timestamp (HMAC mismatch via ts byte change) — must FAIL.
+    # NB: fixture-verify mode skips the drift CHECK, but the HMAC is computed
+    # over `${id}.${ts}.${body}` — mutating webhook-timestamp.txt while
+    # leaving expected-signature.txt as the canonical sig produces an HMAC
+    # mismatch for the (id, NEW_TS, body) tuple.
+    # Drift detection itself (i.e. rejecting deliveries with |now - ts| > 300s)
+    # is exercised by the U6/U7/U8 live UAT scenarios, NOT this recipe.
+    BAD_TS=$(mktemp -d)
+    cp "$FIX"/* "$BAD_TS"/
+    printf '%s' "$(($(date +%s) - 600))" > "$BAD_TS"/webhook-timestamp.txt
+    if go run "$REC" --verify-fixture "$BAD_TS" 2>/dev/null; then
+        echo "FAIL: mutated-timestamp variant verified — should have failed"; exit 1
+    fi
+
+    # 5. Wire-format strictness — non-canonical-decimal timestamp must STILL
+    # verify (regression vector for review BL-01: receivers must sign over
+    # the RAW `webhook-timestamp` header bytes, not a parsed-and-re-serialized
+    # integer). We rewrite the timestamp to a leading-zero form
+    # ("01735689600" — same int as canonical "1735689600", different bytes),
+    # re-sign HMAC-SHA256 over `${id}.${NEW_TS}.${body}` using the canonical
+    # secret, and confirm the receiver verifies. This locks "raw header
+    # bytes" as the signing-string contract across all four runtimes.
+    NONCANON_TS=$(mktemp -d)
+    cp "$FIX"/* "$NONCANON_TS"/
+    WID=$(cat "$FIX"/webhook-id.txt)
+    NEW_WTS="01735689600"
+    printf '%s' "$NEW_WTS" > "$NONCANON_TS"/webhook-timestamp.txt
+    SECRET=$(cat "$FIX"/secret.txt)
+    NEW_SIG=$({ printf '%s.%s.' "$WID" "$NEW_WTS"; cat "$FIX"/payload.json; } \
+        | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
+    printf 'v1,%s' "$NEW_SIG" > "$NONCANON_TS"/expected-signature.txt
+    go run "$REC" --verify-fixture "$NONCANON_TS" \
+        || { echo "FAIL: non-canonical-decimal timestamp variant did not verify (BL-01 regression)"; exit 1; }
+
+    echo "OK: all 5 fixture variants behave correctly"
+
+# Foreground Node receiver. Maintainer Ctrl-Cs; pair with `just dev` +
+# `just uat-webhook-fire wh-example-receiver-node` in another terminal.
+[group('uat')]
+[doc('Phase 19 — start Node receiver on 127.0.0.1:9993 (logs to /tmp)')]
+uat-webhook-receiver-node:
+    @echo "Starting Node receiver on http://127.0.0.1:9993/"
+    @echo "Maintainer: in another terminal, run 'just dev', then 'just uat-webhook-fire wh-example-receiver-node'."
+    @echo "Watch this terminal for the 'verified' line. Ctrl-C to stop the receiver."
+    WEBHOOK_SECRET_FILE=tests/fixtures/webhook-v1/secret.txt node examples/webhook-receivers/node/receiver.js
+
+# Fixture-verify mode: canonical pass + 3 tamper variants must fail.
+# Used by the GHA `webhook-interop` matrix (CI gate from day one).
+[group('uat')]
+[doc('Phase 19 — verify Node receiver against fixture (canonical + 3 tamper variants)')]
+uat-webhook-receiver-node-verify-fixture:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FIX=tests/fixtures/webhook-v1
+    REC=examples/webhook-receivers/node/receiver.js
+
+    # 1. Canonical — must verify
+    node "$REC" --verify-fixture "$FIX" \
+        || { echo "FAIL: canonical fixture did not verify"; exit 1; }
+
+    # 2. Mutated secret — must FAIL
+    BAD_SECRET=$(mktemp -d)
+    cp "$FIX"/* "$BAD_SECRET"/
+    printf 'WRONG' > "$BAD_SECRET"/secret.txt
+    if node "$REC" --verify-fixture "$BAD_SECRET" 2>/dev/null; then
+        echo "FAIL: mutated-secret variant verified — should have failed"; exit 1
+    fi
+
+    # 3. Mutated body — must FAIL
+    BAD_BODY=$(mktemp -d)
+    cp "$FIX"/* "$BAD_BODY"/
+    sed -i.bak 's/"v1"/"X1"/' "$BAD_BODY"/payload.json && rm -f "$BAD_BODY"/payload.json.bak
+    if node "$REC" --verify-fixture "$BAD_BODY" 2>/dev/null; then
+        echo "FAIL: mutated-body variant verified — should have failed"; exit 1
+    fi
+
+    # 4. Mutated timestamp (HMAC mismatch via ts byte change) — must FAIL.
+    # NB: fixture-verify mode skips the drift CHECK, but the HMAC is computed
+    # over `${id}.${ts}.${body}` — mutating webhook-timestamp.txt while
+    # leaving expected-signature.txt as the canonical sig produces an HMAC
+    # mismatch for the (id, NEW_TS, body) tuple.
+    # Drift detection itself (i.e. rejecting deliveries with |now - ts| > 300s)
+    # is exercised by the U6/U7/U8 live UAT scenarios, NOT this recipe.
+    BAD_TS=$(mktemp -d)
+    cp "$FIX"/* "$BAD_TS"/
+    printf '%s' "$(($(date +%s) - 600))" > "$BAD_TS"/webhook-timestamp.txt
+    if node "$REC" --verify-fixture "$BAD_TS" 2>/dev/null; then
+        echo "FAIL: mutated-timestamp variant verified — should have failed"; exit 1
+    fi
+
+    # 5. Wire-format strictness — non-canonical-decimal timestamp must STILL
+    # verify (regression vector for review BL-01: receivers must sign over
+    # the RAW `webhook-timestamp` header bytes, not a parsed-and-re-serialized
+    # integer). We rewrite the timestamp to a leading-zero form
+    # ("01735689600" — same int as canonical "1735689600", different bytes),
+    # re-sign HMAC-SHA256 over `${id}.${NEW_TS}.${body}` using the canonical
+    # secret, and confirm the receiver verifies. This locks "raw header
+    # bytes" as the signing-string contract across all four runtimes.
+    NONCANON_TS=$(mktemp -d)
+    cp "$FIX"/* "$NONCANON_TS"/
+    WID=$(cat "$FIX"/webhook-id.txt)
+    NEW_WTS="01735689600"
+    printf '%s' "$NEW_WTS" > "$NONCANON_TS"/webhook-timestamp.txt
+    SECRET=$(cat "$FIX"/secret.txt)
+    NEW_SIG=$({ printf '%s.%s.' "$WID" "$NEW_WTS"; cat "$FIX"/payload.json; } \
+        | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
+    printf 'v1,%s' "$NEW_SIG" > "$NONCANON_TS"/expected-signature.txt
+    node "$REC" --verify-fixture "$NONCANON_TS" \
+        || { echo "FAIL: non-canonical-decimal timestamp variant did not verify (BL-01 regression)"; exit 1; }
+
+    echo "OK: all 5 fixture variants behave correctly"
+
 # -------------------- dev loop --------------------
 
 # Single-process dev loop (readable text logs, trace level for cronduit)

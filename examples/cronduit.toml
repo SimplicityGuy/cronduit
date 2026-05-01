@@ -254,3 +254,34 @@ webhook = { url = "http://127.0.0.1:9999/unsigned", states = ["failed", "stopped
 # use_defaults = false
 # timeout = "5m"
 # webhook = { url = "http://127.0.0.1:9999/timeouts-only", states = ["timeout"], fire_every = 0, secret = "${WEBHOOK_SECRET}" }
+
+# --- Phase 19 receiver examples (loopback HMAC verification) ----------------
+#
+# These three jobs target the Python/Go/Node example receivers shipped at
+# examples/webhook-receivers/{python,go,node}/. They are commented-out
+# templates by default -- uncomment to enable, and `export WEBHOOK_SECRET` first.
+# See docs/WEBHOOKS.md for the receiver run instructions.
+#
+# [[jobs]]
+# name = "wh-example-receiver-python"
+# schedule = "* * * * *"
+# command = "false"
+# use_defaults = false
+# timeout = "5m"
+# webhook = { url = "http://127.0.0.1:9991/", secret = "${WEBHOOK_SECRET}" }
+#
+# [[jobs]]
+# name = "wh-example-receiver-go"
+# schedule = "* * * * *"
+# command = "false"
+# use_defaults = false
+# timeout = "5m"
+# webhook = { url = "http://127.0.0.1:9992/", secret = "${WEBHOOK_SECRET}" }
+#
+# [[jobs]]
+# name = "wh-example-receiver-node"
+# schedule = "* * * * *"
+# command = "false"
+# use_defaults = false
+# timeout = "5m"
+# webhook = { url = "http://127.0.0.1:9993/", secret = "${WEBHOOK_SECRET}" }

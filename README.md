@@ -173,6 +173,7 @@ Cronduit is configured via a single TOML file. The config file is the source of 
 
 > **New to Cronduit?** Start with **[docs/QUICKSTART.md](./docs/QUICKSTART.md)** for a zero-to-first-scheduled-job walkthrough.
 > **Looking up a specific field?** The complete reference is in **[docs/CONFIG.md](./docs/CONFIG.md)**. The section below is a cheat sheet.
+> **Verifying webhook deliveries?** Receiver examples (Python/Go/Node) and the verify protocol live in **[docs/WEBHOOKS.md](./docs/WEBHOOKS.md)**.
 
 ### Server Settings
 

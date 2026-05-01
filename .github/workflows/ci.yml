@@ -376,3 +376,37 @@ jobs:
         env:
           COMPOSE_FILE: ${{ matrix.compose }}
         run: docker compose -f "${COMPOSE_FILE}" down -v
+
+  # Phase 19 — webhook-interop matrix. Verifies the Python/Go/Node example
+  # receivers against the locked Standard Webhooks v1 wire-format fixture
+  # at tests/fixtures/webhook-v1/. Each cell exercises 4 tamper variants
+  # (canonical pass + mutated-secret + mutated-body + drift). CI gate from
+  # day one (NOT continue-on-error) — interop drift is more dangerous than
+  # dependency-policy drift (CONTEXT D-15). matrix.lang is a static set
+  # (python|go|node) — no untrusted github.event input flows into run:.
+  webhook-interop:
+    name: webhook-interop (${{ matrix.lang }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [python, go, node]
+    steps:
+      - uses: actions/checkout@v4
+      - if: matrix.lang == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - if: matrix.lang == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - if: matrix.lang == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: extractions/setup-just@v2
+      - run: just uat-webhook-receiver-${{ matrix.lang }}-verify-fixture

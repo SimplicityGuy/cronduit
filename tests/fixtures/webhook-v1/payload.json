@@ -1,0 +1,1 @@
+{"payload_version":"v1","event_type":"run_finalized","run_id":42,"job_id":7,"job_name":"backup-nightly","status":"failed","exit_code":1,"started_at":"2025-01-01T00:00:00Z","finished_at":"2025-01-01T00:00:01Z","duration_ms":1000,"streak_position":1,"consecutive_failures":3,"image_digest":null,"config_hash":null,"tags":[],"cronduit_version":"1.2.0"}
