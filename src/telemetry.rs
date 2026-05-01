@@ -69,6 +69,19 @@ pub fn setup_metrics() -> PrometheusHandle {
                     &[1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1800.0, 3600.0],
                 )
                 .expect("valid bucket config")
+                // Phase 20 / WH-11 / D-24 + RESEARCH §4.4: operator-tuned
+                // bucket boundaries for per-attempt webhook HTTP duration.
+                // 50ms..10s — top bucket matches reqwest's per-attempt
+                // timeout (P18 D-18). Eight buckets cover the typical
+                // homelab response-time range (LAN: 50-250ms; WAN: 1-5s;
+                // DNS-lookup-blocked / firewalled: timeout at 10s).
+                .set_buckets_for_metric(
+                    Matcher::Full(
+                        "cronduit_webhook_delivery_duration_seconds".to_string(),
+                    ),
+                    &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+                )
+                .expect("valid webhook bucket config")
                 .install_recorder()
                 .expect("metrics recorder not yet installed");
 
@@ -112,24 +125,49 @@ pub fn setup_metrics() -> PrometheusHandle {
                 "cronduit_webhook_delivery_dropped_total",
                 "Total webhook events dropped because the bounded delivery channel was \
                  saturated. Closed-cardinality (no labels in P15). Increments correlate \
-                 with WARN-level events on the cronduit.webhooks tracing target. The \
-                 full cronduit_webhook_* family lands in P20 / WH-11."
+                 with WARN-level events on the cronduit.webhooks tracing target. \
+                 PRESERVED in P20 per D-26 — this counts CHANNEL-SATURATION drops \
+                 (scheduler-side `try_send` failure under sustained backpressure) \
+                 and is semantically DISTINCT from the P20 \
+                 `cronduit_webhook_deliveries_total{status=\"dropped\"}` family \
+                 which counts DRAIN-ON-SHUTDOWN drops at SIGTERM budget expiry."
             );
-            // Phase 18 — successful and failed webhook delivery counters.
-            // Both are closed-cardinality (no labels) per D-17 / WH-09 hardening.
-            // Phase 20's RetryingDispatcher may eventually distinguish 4xx (permanent)
-            // vs 5xx/network (transient) — Phase 18 stays unlabeled.
+            // Phase 20 / WH-11 / D-22+D-24+D-25 — labeled webhook delivery family.
+            //
+            // BREAKING CHANGE: replaces the unlabeled P18 `_sent_total` and
+            // `_failed_total` flat counters. Operators dashboard queries that
+            // referenced those names need to migrate to:
+            //   sum by (status) (cronduit_webhook_deliveries_total)
+            // Documented in docs/WEBHOOKS.md § Metrics + the rc.1 release notes.
+            //
+            // The `status` label is a CLOSED ENUM with exactly three values:
+            // {success, failed, dropped} — ALWAYS set from `&'static str`
+            // literals, NEVER from response status codes or runtime strings
+            // (T-20-05 cardinality mitigation, Pitfall 5). Reason granularity
+            // (4xx vs 5xx vs network vs timeout) lives in the
+            // `webhook_deliveries.dlq_reason` SQL audit column, NOT in metric
+            // labels.
             metrics::describe_counter!(
-                "cronduit_webhook_delivery_sent_total",
-                "Total successful webhook deliveries (HTTP 2xx response). \
-                 Closed-cardinality in Phase 18 (no labels). Phase 20 may add a `job` \
-                 label when load patterns warrant it."
+                "cronduit_webhook_deliveries_total",
+                "Total webhook delivery outcomes labeled by job + closed-enum status \
+                 (success/failed/dropped). Replaces the P18 _sent_total/_failed_total \
+                 unlabeled counters per Phase 20 D-22 (BREAKING). Note: \
+                 `_delivery_dropped_total` (P15) is a SEPARATE counter for channel- \
+                 saturation drops (D-26)."
             );
-            metrics::describe_counter!(
-                "cronduit_webhook_delivery_failed_total",
-                "Total failed webhook deliveries (non-2xx response or network error). \
-                 Closed-cardinality in Phase 18. Phase 20 distinguishes 4xx (permanent) \
-                 vs 5xx/network (transient) for retry decisioning."
+            metrics::describe_histogram!(
+                "cronduit_webhook_delivery_duration_seconds",
+                "Duration of a single webhook HTTP attempt in seconds (NOT the \
+                 full retry chain wall time), labeled by job. Buckets cover \
+                 50ms..10s; the 10s top-bucket matches reqwest's per-attempt \
+                 timeout cap (P18 D-18)."
+            );
+            metrics::describe_gauge!(
+                "cronduit_webhook_queue_depth",
+                "Current depth of the webhook delivery channel, sampled by the \
+                 worker on each rx.recv() boundary (D-25). Approximate under \
+                 contention — mpsc::Receiver::len() is a snapshot, not a \
+                 strongly-consistent count (Pitfall 7)."
             );
             metrics::describe_gauge!(
                 "cronduit_docker_reachable",
@@ -146,10 +184,13 @@ pub fn setup_metrics() -> PrometheusHandle {
             metrics::counter!("cronduit_runs_total").increment(0);
             metrics::histogram!("cronduit_run_duration_seconds").record(0.0);
             metrics::counter!("cronduit_run_failures_total").increment(0);
+            // P15 channel-saturation counter PRESERVED per D-26.
             metrics::counter!("cronduit_webhook_delivery_dropped_total").increment(0);
-            // Phase 18 zero-baseline so /metrics shows the family from boot (Pitfall 3 mitigation).
-            metrics::counter!("cronduit_webhook_delivery_sent_total").increment(0);
-            metrics::counter!("cronduit_webhook_delivery_failed_total").increment(0);
+            // Phase 20 / WH-11 / D-24 + D-25: histogram + gauge zero-baselines
+            // so /metrics renders the family from boot (mirrors the existing
+            // cronduit_run_duration_seconds zero-baseline pattern above).
+            metrics::histogram!("cronduit_webhook_delivery_duration_seconds").record(0.0);
+            metrics::gauge!("cronduit_webhook_queue_depth").set(0.0);
             metrics::gauge!("cronduit_docker_reachable").set(0.0);
 
             // Phase 10 / T-V11-STOP-16 / PITFALLS §1.6: pre-declare each
@@ -179,6 +220,22 @@ pub fn setup_metrics() -> PrometheusHandle {
             ] {
                 metrics::counter!("cronduit_runs_total", "status" => status.to_string())
                     .increment(0);
+            }
+
+            // Phase 20 / WH-11 / D-22 + D-23: closed-enum status pre-seed for
+            // the labeled webhook delivery family. Only the `status` dimension
+            // is seeded here (no `job` label) — per-job × per-status seeding
+            // lives in src/cli/run.rs AFTER `sync_result.jobs` is in scope
+            // (Plan 06 owns that wiring per RESEARCH §4.6). The intent here is
+            // identical to the cronduit_runs_total status seed above:
+            // dashboards keying off `cronduit_webhook_deliveries_total{status="dropped"}`
+            // see the row materialize at boot, not first-shutdown-with-drain.
+            for status in ["success", "failed", "dropped"] {
+                metrics::counter!(
+                    "cronduit_webhook_deliveries_total",
+                    "status" => status.to_string(),
+                )
+                .increment(0);
             }
 
             handle
