@@ -84,7 +84,15 @@ async fn webhook_queue_saturation_drops_events_and_increments_counter() {
 
     // Spawn the worker with the StalledDispatcher so the channel cannot
     // drain during the push loop.
-    let _worker_handle = spawn_worker(rx, Arc::new(StalledDispatcher), cancel.clone());
+    // Phase 20 / WH-10: spawn_worker now takes drain_grace. Use 30s — these
+    // tests don't exercise drain semantics so any value works; 30s matches
+    // the production default.
+    let _worker_handle = spawn_worker(
+        rx,
+        Arc::new(StalledDispatcher),
+        cancel.clone(),
+        Duration::from_secs(30),
+    );
 
     // Push 20 events into a capacity-4 channel. With the dispatcher
     // stalled, only 4 + 1 = 5 should fit (4 in the channel, 1 in-flight
@@ -154,7 +162,18 @@ async fn webhook_channel_drains_cleanly_under_noop_dispatcher() {
     let _handle = setup_metrics();
     let (tx, rx) = channel_with_capacity(4);
     let cancel = CancellationToken::new();
-    let worker_handle = spawn_worker(rx, Arc::new(NoopDispatcher), cancel.clone());
+    // Phase 20 / WH-10: under the new drain-on-shutdown semantics, cancel
+    // does not exit the worker immediately — it enters drain mode for
+    // `drain_grace` then exits. Use a small drain_grace so the existing 2s
+    // exit assertion below holds without changing test intent (this test
+    // proves NoopDispatcher drains a queue cleanly; it doesn't exercise
+    // drain-budget-expiry-drops semantics — that's tests/v12_webhook_drain.rs).
+    let worker_handle = spawn_worker(
+        rx,
+        Arc::new(NoopDispatcher),
+        cancel.clone(),
+        Duration::from_millis(50),
+    );
 
     // Push 50 events one-by-one with a small await between each so the
     // worker (running NoopDispatcher) can drain. None should drop.
