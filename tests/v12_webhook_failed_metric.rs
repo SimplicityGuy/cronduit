@@ -105,7 +105,11 @@ async fn webhook_failed_metric_increments_failed_total_on_non_2xx() {
         started_at: Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap(),
         finished_at: Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 1).unwrap(),
     };
-    dispatcher.deliver(&event).await.unwrap();
+    // Phase 20 / WH-05: HttpDispatcher now returns Err on non-2xx so the
+    // RetryingDispatcher can decide whether to retry. The failed-metric
+    // increment still fires inside HttpDispatcher::deliver. Accept either Ok
+    // or Err here — what matters for this test is the counter delta.
+    let _ = dispatcher.deliver(&event).await;
 
     let final_sent = read_counter(&handle.render(), "cronduit_webhook_delivery_sent_total");
     let final_failed = read_counter(&handle.render(), "cronduit_webhook_delivery_failed_total");
