@@ -472,8 +472,7 @@ mod tests {
             config_hash: None,
         };
         let payload = WebhookPayload::build(&event, &fctx, &run, 1, "1.2.0");
-        let body_bytes =
-            serde_json::to_vec(&payload).expect("canonical payload must serialize");
+        let body_bytes = serde_json::to_vec(&payload).expect("canonical payload must serialize");
 
         // Fixture inputs (locked at Phase 19; see tests/fixtures/webhook-v1/README.md).
         let secret = SecretString::from("cronduit-test-fixture-secret-not-real");
@@ -493,10 +492,8 @@ mod tests {
         // Compare against the on-disk fixture. Use include_bytes! /
         // include_str! so the test reads zero files at run time and
         // works on any cwd.
-        let expected_payload =
-            include_bytes!("../../tests/fixtures/webhook-v1/payload.json");
-        let expected_sig =
-            include_str!("../../tests/fixtures/webhook-v1/expected-signature.txt");
+        let expected_payload = include_bytes!("../../tests/fixtures/webhook-v1/payload.json");
+        let expected_sig = include_str!("../../tests/fixtures/webhook-v1/expected-signature.txt");
 
         // payload.json may have NO trailing newline (Pitfall 3); both
         // sides must be byte-equal (NOT trim-then-equal — that would
