@@ -252,12 +252,32 @@ impl WebhookDispatcher for HttpDispatcher {
         }
 
         // 10. Send the EXACT body_bytes (Pitfall B — same Vec<u8> we signed).
+        // Phase 20 / WH-11 / D-24: time the per-attempt HTTP call. The histogram
+        // is recorded regardless of attempt outcome (success, non-2xx, transport
+        // error) — the truth this metric measures is "how long did the wire
+        // round-trip take," and that's meaningful for failures too.
+        let attempt_start = tokio::time::Instant::now();
         let response = req.body(body_bytes).send().await;
+        let attempt_dur = attempt_start.elapsed().as_secs_f64();
+        metrics::histogram!(
+            "cronduit_webhook_delivery_duration_seconds",
+            "job" => event.job_name.clone(),
+        )
+        .record(attempt_dur);
 
-        // 11. Classify + record metrics.
+        // 11. Classify return value.
+        //
+        // Phase 20 / WH-11 / D-22 BREAKING CHANGE: the two unlabeled P18 flat
+        // counters (the success and failure flat counters that lived here in
+        // P18) are REMOVED. The labeled per-DELIVERY counter
+        // `cronduit_webhook_deliveries_total{job, status}` (closed enum status
+        // ∈ {success, failed, dropped}) increments at the OUTER
+        // RetryingDispatcher::deliver boundary because the operator-visible
+        // truth is per-DELIVERY (the outcome of the full retry chain), not
+        // per-ATTEMPT. The P15 channel-saturation drop counter (in
+        // src/scheduler/run.rs) is preserved verbatim per D-26 split.
         match response {
             Ok(resp) if resp.status().is_success() => {
-                metrics::counter!("cronduit_webhook_delivery_sent_total").increment(1);
                 tracing::debug!(
                     target: "cronduit.webhooks",
                     run_id = event.run_id, job_name = %event.job_name,
@@ -267,7 +287,6 @@ impl WebhookDispatcher for HttpDispatcher {
                 Ok(())
             }
             Ok(resp) => {
-                metrics::counter!("cronduit_webhook_delivery_failed_total").increment(1);
                 let code = resp.status().as_u16();
                 // D-07: parse Retry-After BEFORE consuming the body. The helper
                 // lives in src/webhooks/retry.rs (Phase 20 / WH-05) and is `pub`
@@ -290,7 +309,6 @@ impl WebhookDispatcher for HttpDispatcher {
                 Err(WebhookError::HttpStatus { code, retry_after })
             }
             Err(e) => {
-                metrics::counter!("cronduit_webhook_delivery_failed_total").increment(1);
                 let kind = if e.is_timeout() {
                     "timeout"
                 } else if e.is_connect() {

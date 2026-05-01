@@ -319,6 +319,17 @@ impl<D: WebhookDispatcher> WebhookDispatcher for RetryingDispatcher<D> {
                             DlqReason::ShutdownDrain,
                             &first_attempt_at,
                         ).await;
+                        // Phase 20 / WH-11 / D-22: per-delivery terminal-failure
+                        // counter (closed-enum status="failed") at the chain-
+                        // terminal boundary. ShutdownDrain is a terminal failure
+                        // outcome from the metric's perspective — operators
+                        // disambiguate via dlq_reason in the SQL audit table.
+                        metrics::counter!(
+                            "cronduit_webhook_deliveries_total",
+                            "job" => event.job_name.clone(),
+                            "status" => "failed",
+                        )
+                        .increment(1);
                         return Err(WebhookError::DispatchFailed("shutdown drain".into()));
                     }
                 }
@@ -330,7 +341,18 @@ impl<D: WebhookDispatcher> WebhookDispatcher for RetryingDispatcher<D> {
             // (capped by reqwest's existing 10s per-attempt timeout, P18 D-18).
             // Cancel checks happen ONLY on the sleep-between-attempts boundary.
             match self.inner.deliver(event).await {
-                Ok(()) => return Ok(()), // success — no DLQ row
+                Ok(()) => {
+                    // Phase 20 / WH-11 / D-22: per-delivery success counter at
+                    // the chain-success boundary (NOT per-attempt). Closed-enum
+                    // status="success" — never a runtime string.
+                    metrics::counter!(
+                        "cronduit_webhook_deliveries_total",
+                        "job" => event.job_name.clone(),
+                        "status" => "success",
+                    )
+                    .increment(1);
+                    return Ok(());
+                }
                 Err(e) => {
                     let cls = classify(&e);
                     // Capture per-variant fields BEFORE matching takes ownership.
@@ -392,6 +414,17 @@ impl<D: WebhookDispatcher> WebhookDispatcher for RetryingDispatcher<D> {
             &first_attempt_at,
         )
         .await;
+        // Phase 20 / WH-11 / D-22: per-delivery terminal-failure counter at the
+        // chain-terminal boundary (4xx-permanent OR retry-exhausted-transient).
+        // Closed-enum status="failed" — reason granularity (4xx vs 5xx vs
+        // network vs timeout) lives in webhook_deliveries.dlq_reason, NOT in
+        // metric labels (T-20-05 cardinality mitigation).
+        metrics::counter!(
+            "cronduit_webhook_deliveries_total",
+            "job" => event.job_name.clone(),
+            "status" => "failed",
+        )
+        .increment(1);
         Err(WebhookError::DispatchFailed("retry exhausted".into()))
     }
 }
