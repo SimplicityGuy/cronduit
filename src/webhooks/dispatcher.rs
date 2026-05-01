@@ -34,7 +34,10 @@ pub enum WebhookError {
     // make retry/classify/Retry-After decisions; the worker_loop pattern-match
     // still routes everything through the existing `DispatchFailed` log path.
     #[error("webhook HTTP non-2xx: status={code}")]
-    HttpStatus { code: u16, retry_after: Option<std::time::Duration> },
+    HttpStatus {
+        code: u16,
+        retry_after: Option<std::time::Duration>,
+    },
     #[error("webhook network error: {0}")]
     Network(String),
     #[error("webhook request timed out")]
