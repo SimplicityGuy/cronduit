@@ -193,7 +193,7 @@ Plans:
   4. An operator scraping `/metrics` sees the new `cronduit_webhook_*` family eagerly described at boot: `cronduit_webhook_deliveries_total{job, status}` (closed enum: success/failed/dropped), `cronduit_webhook_delivery_duration_seconds{job}` histogram, `cronduit_webhook_queue_depth` gauge.
   5. An operator pushing the `v1.2.0-rc.1` tag sees the GHCR image published at `ghcr.io/SimplicityGuy/cronduit:v1.2.0-rc.1` on both amd64 and arm64; the `:latest` tag still points at `v1.1.0` (rc tag gating from v1.1's D-10 holds).
 
-**Plans:** 7/9 plans executed
+**Plans:** 8/9 plans executed
 
 Plans:
 **Wave 1**
@@ -214,7 +214,7 @@ Plans:
 - [x] 20-07-PLAN.md — docs/WEBHOOKS.md 6-section extension + 2 mermaid diagrams + TM5 forward-pointer stub
 
 **Wave 6** *(blocked on Wave 5 completion)*
-- [ ] 20-08-PLAN.md — UAT recipes (uat-webhook-retry/drain/dlq-query/https-required) + 20-HUMAN-UAT.md (autonomous=false)
+- [x] 20-08-PLAN.md — UAT recipes (uat-webhook-retry/drain/dlq-query/https-required) + 20-HUMAN-UAT.md (autonomous=false)
 
 **Wave 7** *(blocked on Wave 6 completion)*
 - [ ] 20-09-PLAN.md — rc.1 pre-flight checklist (autonomous=false; maintainer cuts v1.2.0-rc.1 tag locally; no release.yml/cliff.toml/release-rc.md edits per D-30)
@@ -308,7 +308,7 @@ Plans:
 | 17. Custom Docker Labels (SEED-001) | 6/6 + 3 gap closure | Gap-closure pending | 2026-04-29 (core) |
 | 18. Webhook Payload + State-Filter + Coalescing | 6/6 | Complete   | 2026-04-29 |
 | 19. Webhook HMAC Signing + Receiver Examples | 6/6 | Complete   | 2026-04-30 |
-| 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 7/9 | In Progress|  |
+| 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 8/9 | In Progress|  |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 0/— | Not started | — |
 | 22. Job Tagging Schema + Validators | 0/— | Not started | — |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 0/— | Not started | — |
