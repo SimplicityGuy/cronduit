@@ -225,13 +225,16 @@ function _sanitizeFixtureArg(rawArg) {
   if (/[\x00-\x1f\x7f]/.test(rawArg)) {
     throw new Error('fixture directory argument contains control characters');
   }
-  // Reject parent-directory traversal segments.
-  const normalized = path.normalize(rawArg);
-  const segments = normalized.split(path.sep);
-  if (segments.includes('..')) {
+  // Reject parent-traversal segments in the RAW argument BEFORE normalize.
+  // `path.normalize` collapses embedded `..` (e.g. 'foo/../etc' -> 'etc',
+  // '/foo/../etc/passwd' -> '/etc/passwd'), which would silently slip past
+  // a post-normalize check. Splitting on both '/' and '\' makes the check
+  // platform-correct (path.sep is OS-specific; the argument may use either
+  // separator on Windows). See review WR-02.
+  if (rawArg.split(/[\\/]/).includes('..')) {
     throw new Error('fixture directory argument contains parent traversal');
   }
-  return normalized;
+  return path.normalize(rawArg);
 }
 
 function _resolveFixtureDir(rawArg) {
