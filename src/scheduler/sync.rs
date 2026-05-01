@@ -248,6 +248,7 @@ mod tests {
             database_url: SecretString::from("sqlite::memory:"),
             timezone: "UTC".into(),
             shutdown_grace: Duration::from_secs(30),
+            webhook_drain_grace: Duration::from_secs(30),
             log_retention: Duration::from_secs(86400),
             watch_config: true,
         }
