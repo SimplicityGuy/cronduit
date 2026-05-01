@@ -1510,6 +1510,119 @@ pub async fn delete_old_runs_batch(
     }
 }
 
+// ── Phase 20 webhook DLQ helpers (WH-05 / D-10..D-14) ───────────────────
+
+/// Phase 20 / WH-05 (D-10): One-row-per-FAILED-delivery payload for the
+/// `webhook_deliveries` DLQ table. Constructed by `RetryingDispatcher::deliver`
+/// (src/webhooks/retry.rs) and persisted via `insert_webhook_dlq_row` below.
+///
+/// NO payload/header/signature fields here — D-12 secret/PII hygiene.
+/// `last_error` is truncated to <=500 chars at the call site (D-10 column comment).
+#[derive(Debug, Clone)]
+pub struct WebhookDlqRow {
+    pub run_id: i64,
+    pub job_id: i64,
+    pub url: String,
+    pub attempts: i64,
+    pub last_status: Option<i64>,
+    pub last_error: Option<String>,
+    pub dlq_reason: String,
+    pub first_attempt_at: String,
+    pub last_attempt_at: String,
+}
+
+/// Phase 20 / WH-05: Append one DLQ row for a webhook delivery that failed
+/// to reach 2xx. Returns `Ok(())` on success; on DB error, the caller
+/// (RetryingDispatcher) logs at WARN and continues (RESEARCH §4.8 — DLQ-insert
+/// failure is a second-order failure; promoting it to a worker crash is worse).
+pub async fn insert_webhook_dlq_row(
+    pool: &DbPool,
+    row: WebhookDlqRow,
+) -> Result<(), sqlx::Error> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            sqlx::query(
+                "INSERT INTO webhook_deliveries \
+                 (run_id, job_id, url, attempts, last_status, last_error, \
+                  dlq_reason, first_attempt_at, last_attempt_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )
+            .bind(row.run_id)
+            .bind(row.job_id)
+            .bind(&row.url)
+            .bind(row.attempts)
+            .bind(row.last_status)
+            .bind(&row.last_error)
+            .bind(&row.dlq_reason)
+            .bind(&row.first_attempt_at)
+            .bind(&row.last_attempt_at)
+            .execute(p)
+            .await?;
+            Ok(())
+        }
+        PoolRef::Postgres(p) => {
+            sqlx::query(
+                "INSERT INTO webhook_deliveries \
+                 (run_id, job_id, url, attempts, last_status, last_error, \
+                  dlq_reason, first_attempt_at, last_attempt_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            )
+            .bind(row.run_id)
+            .bind(row.job_id)
+            .bind(&row.url)
+            .bind(row.attempts)
+            .bind(row.last_status)
+            .bind(&row.last_error)
+            .bind(&row.dlq_reason)
+            .bind(&row.first_attempt_at)
+            .bind(&row.last_attempt_at)
+            .execute(p)
+            .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Phase 20 / WH-05 (D-14): Batch-delete `webhook_deliveries` rows older
+/// than `cutoff` (RFC3339). Mirrors `delete_old_logs_batch`/`delete_old_runs_batch`
+/// shape. The retention pruner calls this in a loop until rows_affected < batch_size.
+pub async fn delete_old_webhook_deliveries_batch(
+    pool: &DbPool,
+    cutoff: &str,
+    batch_size: i64,
+) -> Result<i64, sqlx::Error> {
+    match pool.writer() {
+        PoolRef::Sqlite(p) => {
+            let result = sqlx::query(
+                "DELETE FROM webhook_deliveries WHERE rowid IN (
+                    SELECT rowid FROM webhook_deliveries
+                    WHERE last_attempt_at < ?1
+                    LIMIT ?2
+                 )",
+            )
+            .bind(cutoff)
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+        PoolRef::Postgres(p) => {
+            let result = sqlx::query(
+                "DELETE FROM webhook_deliveries WHERE id IN (
+                    SELECT id FROM webhook_deliveries
+                    WHERE last_attempt_at < $1
+                    LIMIT $2
+                 )",
+            )
+            .bind(cutoff)
+            .bind(batch_size)
+            .execute(p)
+            .await?;
+            Ok(result.rows_affected() as i64)
+        }
+    }
+}
+
 /// Issue WAL checkpoint on SQLite to reclaim space after large deletes.
 /// No-op on Postgres (auto-vacuum handles it).
 pub async fn wal_checkpoint(pool: &DbPool) -> Result<(), sqlx::Error> {

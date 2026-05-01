@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 20 context gathered
-last_updated: "2026-05-01T18:59:49.365Z"
-last_activity: 2026-05-01 -- Phase 20 planning complete
+last_updated: "2026-05-01T19:49:57.174Z"
+last_activity: 2026-05-01 -- Phase 20 execution started
 progress:
   total_phases: 10
   completed_phases: 5
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 19 merged; next up is Phase 20 (Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1)
+**Current focus:** Phase 20 — webhook-ssrf-https-posture-retry-drain-metrics-rc-1
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 19 (webhook-hmac-signing-receiver-examples) — MERGED (PR #53 squash-commit 984872b, 2026-05-01)
-Plan: 6 of 6 complete
-Status: Ready to execute
-Last activity: 2026-05-01 -- Phase 20 planning complete
+Phase: 20 (webhook-ssrf-https-posture-retry-drain-metrics-rc-1) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 20
+Last activity: 2026-05-01 -- Phase 20 execution started
 
 Progress: [█████░░░░░] 50% (v1.2: 5/10 phases complete; 33/— plans complete)
 
