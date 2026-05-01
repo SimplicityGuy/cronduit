@@ -72,8 +72,14 @@ function _verifyWithDrift(secret, headers, body, checkDrift) {
   const wts = headers['webhook-timestamp'];
   const wsig = headers['webhook-signature'];
   if (!wid || !wts || !wsig) return false;
+  // Strict unsigned-decimal validation per Standard Webhooks v1 wire format.
+  // `Number.parseInt` truncates trailing junk (`"1735abc"` -> 1735), accepts
+  // a leading "+", whitespace, and silently lossy values above MAX_SAFE_INTEGER
+  // — all of which would diverge from the signing-string raw-bytes contract
+  // (see BL-01) and the WR-01 review note.
+  if (!/^\d+$/.test(wts)) return false;
   const ts = Number.parseInt(wts, 10);
-  if (!Number.isFinite(ts)) return false;
+  if (!Number.isFinite(ts) || ts > Number.MAX_SAFE_INTEGER) return false;
   if (checkDrift &&
       Math.abs(Math.floor(Date.now() / 1000) - ts) > MAX_TIMESTAMP_DRIFT_SECONDS) {
     return false;
@@ -163,8 +169,15 @@ function handleRequest(req, res) {
       if (!wid || !wts || !wsig) {
         res.writeHead(400); res.end('missing required headers'); return;
       }
+      // Strict unsigned-decimal validation per Standard Webhooks v1 wire
+      // format. `parseInt` would accept whitespace, leading "+", and trailing
+      // junk that disagree with the signing-string raw-bytes contract
+      // (BL-01/WR-01).
+      if (!/^\d+$/.test(wts)) {
+        res.writeHead(400); res.end('malformed webhook-timestamp'); return;
+      }
       const ts = Number.parseInt(wts, 10);
-      if (!Number.isFinite(ts)) {
+      if (!Number.isFinite(ts) || ts > Number.MAX_SAFE_INTEGER) {
         res.writeHead(400); res.end('malformed webhook-timestamp'); return;
       }
       if (Math.abs(Math.floor(Date.now() / 1000) - ts) > MAX_TIMESTAMP_DRIFT_SECONDS) {

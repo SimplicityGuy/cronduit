@@ -58,10 +58,13 @@ def _verify_with_drift(secret_bytes, headers, body_bytes, *, check_drift):
     wsig = headers.get('webhook-signature')
     if not (wid and wts and wsig):
         return False
-    try:
-        ts = int(wts)
-    except ValueError:
+    # Strict unsigned-decimal validation per Standard Webhooks v1 wire format.
+    # Python's `int()` accepts leading/trailing whitespace and a leading "+",
+    # which would parse OK but produce a header that disagrees with the
+    # signing-string raw-bytes contract (see BL-01) and the WR-01 review note.
+    if not (wts.isascii() and wts.isdigit()):
         return False
+    ts = int(wts)
     if check_drift and abs(int(time.time()) - ts) > MAX_TIMESTAMP_DRIFT_SECONDS:
         return False
     # Sign over the RAW header bytes (`wts`), not the parsed integer (`ts`).
@@ -139,11 +142,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             if not (wid and wts and wsig):
                 self._respond(400, b"missing required headers")
                 return
-            try:
-                ts = int(wts)
-            except ValueError:
+            # Strict unsigned-decimal validation per Standard Webhooks v1 wire
+            # format. `int()` would accept whitespace and a leading "+" that
+            # disagree with the signing-string raw-bytes contract (BL-01/WR-01).
+            if not (wts.isascii() and wts.isdigit()):
                 self._respond(400, b"malformed webhook-timestamp")
                 return
+            ts = int(wts)
             if abs(int(time.time()) - ts) > MAX_TIMESTAMP_DRIFT_SECONDS:
                 self._respond(400, b"timestamp drift > 5min")
                 return
