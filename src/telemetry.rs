@@ -76,9 +76,7 @@ pub fn setup_metrics() -> PrometheusHandle {
                 // homelab response-time range (LAN: 50-250ms; WAN: 1-5s;
                 // DNS-lookup-blocked / firewalled: timeout at 10s).
                 .set_buckets_for_metric(
-                    Matcher::Full(
-                        "cronduit_webhook_delivery_duration_seconds".to_string(),
-                    ),
+                    Matcher::Full("cronduit_webhook_delivery_duration_seconds".to_string()),
                     &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
                 )
                 .expect("valid webhook bucket config")
