@@ -379,9 +379,60 @@ fn check_label_key_chars(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigEr
     });
 }
 
+/// Phase 20 / WH-07 (D-19): Classify an HTTP webhook URL's host against the
+/// locked loopback + RFC1918 + ULA allowlist. Returns `Ok(class_str)` for
+/// allowed destinations (used for the boot-time INFO log) or `Err(())` for
+/// rejected. NO DNS resolution at LOAD time (D-20) — hostnames that are not
+/// literal `localhost` and not parseable as `IpAddr` are rejected.
+///
+/// Pitfall 4 (RESEARCH §8): we use `url::Url::host()` returning `Host<&str>`
+/// so IPv6 literals are matched as `Host::Ipv6(_)` directly — NOT
+/// `host_str().parse::<IpAddr>()`, which round-trips through brackets.
+fn classify_http_destination(url: &url::Url) -> Result<&'static str, ()> {
+    match url.host() {
+        Some(url::Host::Ipv4(v4)) => {
+            if v4.is_loopback() {
+                Ok("loopback")
+            } else if v4.is_private() {
+                Ok("RFC1918")
+            } else {
+                Err(())
+            }
+        }
+        Some(url::Host::Ipv6(v6)) => {
+            if v6.is_loopback() {
+                Ok("loopback")
+            } else if v6.is_unique_local() {
+                // RESEARCH §4.1: stdlib `is_unique_local` covers RFC 4193
+                // `fc00::/7` (broader than the success-criterion-literal
+                // `fd00::/8`). The broader range NEVER rejects a spec-allowed
+                // address; we accept the broader range and keep the operator
+                // error message citing `fd00::/8` for clarity.
+                Ok("ULA")
+            } else {
+                Err(())
+            }
+        }
+        Some(url::Host::Domain(name)) => {
+            // No DNS resolution (D-20). Only the literal hostname `localhost`
+            // is accepted via this arm; everything else is rejected at LOAD.
+            if name.eq_ignore_ascii_case("localhost") {
+                Ok("localhost")
+            } else {
+                Err(())
+            }
+        }
+        None => Err(()), // unreachable for parsed http(s) URLs
+    }
+}
+
 /// WH-01 / D-04 — verify `webhook.url` parses and uses an allowed scheme.
-/// HTTPS-for-non-loopback is Phase 20 / WH-07; this check only enforces
-/// parseability + http/https scheme.
+/// Phase 20 / WH-07 (D-19): also enforces HTTPS-for-non-loopback narrowing.
+/// HTTP is permitted only for `127/8`, `::1`, `10/8`, `172.16/12`,
+/// `192.168/16`, and ULA (`fd00::/8` per spec; `fc00::/7` per stdlib helper —
+/// see RESEARCH §4.1) plus the literal hostname `localhost`. HTTPS is always
+/// accepted (silent, no log). HTTP-allowed paths emit a boot-time INFO log
+/// naming the URL + classified-net so operators see the validator's call.
 fn check_webhook_url(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
     let Some(wh) = &job.webhook else {
         return;
@@ -412,6 +463,39 @@ fn check_webhook_url(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>
                         job.name, scheme
                     ),
                 });
+                return;
+            }
+
+            // Phase 20 / WH-07 (D-19): HTTPS required for non-loopback /
+            // non-RFC1918 destinations. HTTPS path: silent acceptance, no log.
+            if scheme == "http" {
+                match classify_http_destination(&parsed) {
+                    Ok(class) => {
+                        // D-19 + RESEARCH §13.2: emit INFO log so operators
+                        // see classification at LOAD time. Targeted to
+                        // `cronduit.config` so operators can grep / filter.
+                        tracing::info!(
+                            target: "cronduit.config",
+                            job = %job.name,
+                            url = %wh.url,
+                            classified_net = %class,
+                            "webhook URL accepted on local net"
+                        );
+                    }
+                    Err(()) => {
+                        // D-21 verbatim error message:
+                        errors.push(ConfigError {
+                            file: path.into(),
+                            line: 0,
+                            col: 0,
+                            message: format!(
+                                "[[jobs]] `{}`: webhook.url `{}` requires HTTPS for non-loopback / non-RFC1918 destinations. \
+                                 Use `https://` or one of the allowed local nets: 127/8, ::1, 10/8, 172.16/12, 192.168/16, fd00::/8.",
+                                job.name, wh.url
+                            ),
+                        });
+                    }
+                }
             }
         }
     }
@@ -1387,7 +1471,10 @@ mod tests {
     fn https_anywhere_accepted_silent() {
         // HTTPS URLs are accepted regardless of host (no classification, no log).
         let errors = run_webhook_url_check("https://example.com/hook");
-        assert!(errors.is_empty(), "https://example.com should pass: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "https://example.com should pass: {errors:?}"
+        );
     }
 
     #[test]
@@ -1395,7 +1482,9 @@ mod tests {
         let errors = run_webhook_url_check("http://example.com/hook");
         assert_eq!(errors.len(), 1, "expected 1 error: {errors:?}");
         assert!(
-            errors[0].message.contains("requires HTTPS for non-loopback"),
+            errors[0]
+                .message
+                .contains("requires HTTPS for non-loopback"),
             "D-21 wording missing: {}",
             errors[0].message
         );
@@ -1404,7 +1493,10 @@ mod tests {
     #[test]
     fn http_localhost_accepted() {
         let errors = run_webhook_url_check("http://localhost/hook");
-        assert!(errors.is_empty(), "http://localhost should pass: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "http://localhost should pass: {errors:?}"
+        );
     }
 
     #[test]
@@ -1413,7 +1505,10 @@ mod tests {
         // crate, but the validator's match must still be case-insensitive
         // for safety.
         let errors = run_webhook_url_check("http://LOCALHOST/hook");
-        assert!(errors.is_empty(), "http://LOCALHOST should pass: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "http://LOCALHOST should pass: {errors:?}"
+        );
     }
 
     #[test]
@@ -1457,7 +1552,10 @@ mod tests {
     fn http_ula_v6_fd_accepted() {
         // Success-criterion-literal: fd00::/8
         let errors = run_webhook_url_check("http://[fd00::1]/hook");
-        assert!(errors.is_empty(), "http://[fd00::1] should pass: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "http://[fd00::1] should pass: {errors:?}"
+        );
     }
 
     #[test]
@@ -1465,7 +1563,10 @@ mod tests {
         // RESEARCH §4.1: is_unique_local covers the broader fc00::/7
         // (NEVER rejects spec-allowed). Regression-lock the broader behavior.
         let errors = run_webhook_url_check("http://[fc00::1]/hook");
-        assert!(errors.is_empty(), "http://[fc00::1] should pass: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "http://[fc00::1] should pass: {errors:?}"
+        );
     }
 
     #[test]
@@ -1473,7 +1574,11 @@ mod tests {
         // 198.51.100.0/24 = TEST-NET-2 (RFC 5737)
         let errors = run_webhook_url_check("http://198.51.100.1/hook");
         assert_eq!(errors.len(), 1, "expected 1 error: {errors:?}");
-        assert!(errors[0].message.contains("requires HTTPS for non-loopback"));
+        assert!(
+            errors[0]
+                .message
+                .contains("requires HTTPS for non-loopback")
+        );
     }
 
     #[test]
@@ -1488,7 +1593,11 @@ mod tests {
         // Hostnames that are not literal `localhost` and not an IpAddr → rejected.
         let errors = run_webhook_url_check("http://example.org/hook");
         assert_eq!(errors.len(), 1, "expected 1 error: {errors:?}");
-        assert!(errors[0].message.contains("requires HTTPS for non-loopback"));
+        assert!(
+            errors[0]
+                .message
+                .contains("requires HTTPS for non-loopback")
+        );
     }
 
     #[test]
