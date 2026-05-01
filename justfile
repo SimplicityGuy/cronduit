@@ -808,6 +808,44 @@ uat-webhook-https-required:
     fi
     echo "▶ PASS: 'cronduit check' rejected http://example.com with non-zero exit."
 
+# Surface the Phase 20 cronduit_webhook_* metric family from the running
+# cronduit's /metrics endpoint. Distinct from `metrics-check` (P14, which
+# greps cronduit_scheduler_up + cronduit_runs_total only) — that recipe is
+# v1.1's HUMAN-UAT contract and is intentionally NOT widened. This recipe
+# is the Phase 20 / WH-11 maintainer-validation surface for the labeled
+# deliveries family + duration histogram + queue depth gauge + the P15
+# saturation drop counter (preserved per D-26).
+[group('uat')]
+[doc('Phase 20 — grep /metrics for cronduit_webhook_* family (WH-11 surface)')]
+uat-webhook-metrics-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ UAT: WH-11 metrics surface — cronduit_webhook_* family from /metrics"
+    echo "▶ PRE: 'just dev' must be running and reachable at http://127.0.0.1:8080"
+    curl -sf http://127.0.0.1:8080/metrics \
+        | grep -E '^(# (HELP|TYPE) )?cronduit_webhook_(deliveries_total|delivery_duration_seconds|queue_depth|delivery_dropped_total)\b' \
+        || { echo "▶ FAIL: no cronduit_webhook_* metrics surfaced — confirm 'just dev' is running."; exit 1; }
+    echo ""
+    echo "▶ EXPECT (per docs/WEBHOOKS.md § Metrics family):"
+    echo "▶   - cronduit_webhook_deliveries_total{job=\"<name>\",status=\"success\"} ≥ 0"
+    echo "▶   - cronduit_webhook_deliveries_total{job=\"<name>\",status=\"failed\"}  ≥ 0"
+    echo "▶   - cronduit_webhook_deliveries_total{job=\"<name>\",status=\"dropped\"} ≥ 0"
+    echo "▶   - cronduit_webhook_delivery_duration_seconds_bucket{le=\"...\"}        (histogram)"
+    echo "▶   - cronduit_webhook_queue_depth                                         (gauge)"
+    echo "▶   - cronduit_webhook_delivery_dropped_total                              (P15 counter, preserved per D-26)"
+
+# Confirm the rustls invariant — no openssl-sys in the dep tree across
+# native + linux/amd64-musl + linux/arm64-musl. This is a thin wrapper
+# around the existing `openssl-check` recipe that surfaces it under the
+# [uat] group with a Phase-20-flavored doc string so 20-HUMAN-UAT.md
+# Scenario 6 maps cleanly. The actual check logic lives in
+# `openssl-check` (Pitfall 14 / FOUND-06) — DO NOT duplicate it here.
+[group('uat')]
+[doc('Phase 20 — verify rustls invariant (cargo tree -i openssl-sys empty across all targets; D-38)')]
+uat-webhook-rustls-check:
+    @echo "▶ UAT: rustls invariant (D-38) — delegating to 'just openssl-check'"
+    @just openssl-check
+
 # -------------------- dev loop --------------------
 
 # Single-process dev loop (readable text logs, trace level for cronduit)
