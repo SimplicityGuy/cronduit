@@ -414,7 +414,27 @@ uat-webhook-receiver-python-verify-fixture:
         echo "FAIL: mutated-timestamp variant verified — should have failed"; exit 1
     fi
 
-    echo "OK: all 4 tamper variants behave correctly"
+    # 5. Wire-format strictness — non-canonical-decimal timestamp must STILL
+    # verify (regression vector for review BL-01: receivers must sign over
+    # the RAW `webhook-timestamp` header bytes, not a parsed-and-re-serialized
+    # integer). We rewrite the timestamp to a leading-zero form
+    # ("01735689600" — same int as canonical "1735689600", different bytes),
+    # re-sign HMAC-SHA256 over `${id}.${NEW_TS}.${body}` using the canonical
+    # secret, and confirm the receiver verifies. This locks "raw header
+    # bytes" as the signing-string contract across all four runtimes.
+    NONCANON_TS=$(mktemp -d)
+    cp "$FIX"/* "$NONCANON_TS"/
+    WID=$(cat "$FIX"/webhook-id.txt)
+    NEW_WTS="01735689600"
+    printf '%s' "$NEW_WTS" > "$NONCANON_TS"/webhook-timestamp.txt
+    SECRET=$(cat "$FIX"/secret.txt)
+    NEW_SIG=$({ printf '%s.%s.' "$WID" "$NEW_WTS"; cat "$FIX"/payload.json; } \
+        | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
+    printf 'v1,%s' "$NEW_SIG" > "$NONCANON_TS"/expected-signature.txt
+    python3 "$REC" --verify-fixture "$NONCANON_TS" \
+        || { echo "FAIL: non-canonical-decimal timestamp variant did not verify (BL-01 regression)"; exit 1; }
+
+    echo "OK: all 5 fixture variants behave correctly"
 
 # Foreground Go receiver. Maintainer Ctrl-Cs; pair with `just dev` +
 # `just uat-webhook-fire wh-example-receiver-go` in another terminal.
@@ -470,7 +490,27 @@ uat-webhook-receiver-go-verify-fixture:
         echo "FAIL: mutated-timestamp variant verified — should have failed"; exit 1
     fi
 
-    echo "OK: all 4 tamper variants behave correctly"
+    # 5. Wire-format strictness — non-canonical-decimal timestamp must STILL
+    # verify (regression vector for review BL-01: receivers must sign over
+    # the RAW `webhook-timestamp` header bytes, not a parsed-and-re-serialized
+    # integer). We rewrite the timestamp to a leading-zero form
+    # ("01735689600" — same int as canonical "1735689600", different bytes),
+    # re-sign HMAC-SHA256 over `${id}.${NEW_TS}.${body}` using the canonical
+    # secret, and confirm the receiver verifies. This locks "raw header
+    # bytes" as the signing-string contract across all four runtimes.
+    NONCANON_TS=$(mktemp -d)
+    cp "$FIX"/* "$NONCANON_TS"/
+    WID=$(cat "$FIX"/webhook-id.txt)
+    NEW_WTS="01735689600"
+    printf '%s' "$NEW_WTS" > "$NONCANON_TS"/webhook-timestamp.txt
+    SECRET=$(cat "$FIX"/secret.txt)
+    NEW_SIG=$({ printf '%s.%s.' "$WID" "$NEW_WTS"; cat "$FIX"/payload.json; } \
+        | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
+    printf 'v1,%s' "$NEW_SIG" > "$NONCANON_TS"/expected-signature.txt
+    go run "$REC" --verify-fixture "$NONCANON_TS" \
+        || { echo "FAIL: non-canonical-decimal timestamp variant did not verify (BL-01 regression)"; exit 1; }
+
+    echo "OK: all 5 fixture variants behave correctly"
 
 # Foreground Node receiver. Maintainer Ctrl-Cs; pair with `just dev` +
 # `just uat-webhook-fire wh-example-receiver-node` in another terminal.
@@ -526,7 +566,27 @@ uat-webhook-receiver-node-verify-fixture:
         echo "FAIL: mutated-timestamp variant verified — should have failed"; exit 1
     fi
 
-    echo "OK: all 4 tamper variants behave correctly"
+    # 5. Wire-format strictness — non-canonical-decimal timestamp must STILL
+    # verify (regression vector for review BL-01: receivers must sign over
+    # the RAW `webhook-timestamp` header bytes, not a parsed-and-re-serialized
+    # integer). We rewrite the timestamp to a leading-zero form
+    # ("01735689600" — same int as canonical "1735689600", different bytes),
+    # re-sign HMAC-SHA256 over `${id}.${NEW_TS}.${body}` using the canonical
+    # secret, and confirm the receiver verifies. This locks "raw header
+    # bytes" as the signing-string contract across all four runtimes.
+    NONCANON_TS=$(mktemp -d)
+    cp "$FIX"/* "$NONCANON_TS"/
+    WID=$(cat "$FIX"/webhook-id.txt)
+    NEW_WTS="01735689600"
+    printf '%s' "$NEW_WTS" > "$NONCANON_TS"/webhook-timestamp.txt
+    SECRET=$(cat "$FIX"/secret.txt)
+    NEW_SIG=$({ printf '%s.%s.' "$WID" "$NEW_WTS"; cat "$FIX"/payload.json; } \
+        | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
+    printf 'v1,%s' "$NEW_SIG" > "$NONCANON_TS"/expected-signature.txt
+    node "$REC" --verify-fixture "$NONCANON_TS" \
+        || { echo "FAIL: non-canonical-decimal timestamp variant did not verify (BL-01 regression)"; exit 1; }
+
+    echo "OK: all 5 fixture variants behave correctly"
 
 # -------------------- dev loop --------------------
 
