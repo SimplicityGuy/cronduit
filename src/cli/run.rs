@@ -297,8 +297,19 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     };
 
     let (webhook_tx, webhook_rx) = crate::webhooks::channel();
-    let webhook_worker_handle =
-        crate::webhooks::spawn_worker(webhook_rx, dispatcher, cancel.child_token());
+    // Phase 20 / WH-10 / D-15: webhook worker drain grace on SIGTERM. Plan 06
+    // owns the proper bin-layer wiring (`cfg.server.webhook_drain_grace`).
+    // Until then, a 30-second default matches the locked
+    // `webhook_drain_grace = "30s"` value from the spec so the runtime
+    // behavior is correct out of the box; Plan 06 will replace this hardcode
+    // with `cfg.server.webhook_drain_grace`.
+    let webhook_drain_grace = std::time::Duration::from_secs(30);
+    let webhook_worker_handle = crate::webhooks::spawn_worker(
+        webhook_rx,
+        dispatcher,
+        cancel.child_token(),
+        webhook_drain_grace,
+    );
 
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(

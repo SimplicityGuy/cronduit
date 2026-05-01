@@ -59,7 +59,13 @@ async fn try_send_does_not_block_when_dispatcher_is_stalled() {
     // dispatcher is stalled).
     let (tx, rx) = channel_with_capacity(1024);
     let cancel = CancellationToken::new();
-    let _worker_handle = spawn_worker(rx, Arc::new(StalledDispatcher), cancel.clone());
+    // Phase 20 / WH-10: spawn_worker now takes drain_grace. Use 30s.
+    let _worker_handle = spawn_worker(
+        rx,
+        Arc::new(StalledDispatcher),
+        cancel.clone(),
+        Duration::from_secs(30),
+    );
 
     // Simulate 5 jobs each firing once per second for 5 seconds. At
     // each tick we record the wall-clock Instant the try_send happens.
