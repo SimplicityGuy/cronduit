@@ -21,8 +21,13 @@ export WEBHOOK_SECRET_FILE=/path/to/your-webhook-secret.txt
 node examples/webhook-receivers/node/receiver.js
 ```
 
-The receiver listens on `http://127.0.0.1:9993/` and logs to stdout AND
+The receiver listens on `http://127.0.0.1:9993/` and logs to stderr AND
 `/tmp/cronduit-webhook-receiver-node.log`. Ctrl-C to stop.
+
+(stderr is the conventional choice for log lines: stdout is reserved for
+primary program output, and the receiver prints `OK`/`FAIL` lines to
+stdout in `--verify-fixture` mode. If you want to capture logs with
+shell redirection, use `node receiver.js 2> log.txt`.)
 
 For fixture-verify mode (CI / smoke):
 
