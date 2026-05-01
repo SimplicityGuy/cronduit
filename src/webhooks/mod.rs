@@ -18,9 +18,11 @@ pub mod coalesce;
 pub mod dispatcher;
 pub mod event;
 pub mod payload;
+pub mod retry;
 pub mod worker;
 
 pub use dispatcher::{HttpDispatcher, NoopDispatcher, WebhookDispatcher, WebhookError};
 pub use event::RunFinalized;
 pub use payload::WebhookPayload;
+pub use retry::RetryingDispatcher;
 pub use worker::{CHANNEL_CAPACITY, channel, channel_with_capacity, spawn_worker};

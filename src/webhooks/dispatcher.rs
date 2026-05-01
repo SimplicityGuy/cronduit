@@ -30,20 +30,18 @@ pub enum WebhookError {
     #[error("webhook dispatch failed: {0}")]
     DispatchFailed(String),
     // Phase 18 — explicit variants for richer Phase 20 retry decisioning.
-    // For Phase 18 they are largely funneled through the existing
-    // `DispatchFailed` log path so the worker_loop's pattern-match at
-    // src/webhooks/worker.rs stays simple. Phase 20 RetryingDispatcher
-    // surfaces these distinctly.
-    #[allow(dead_code)] // Phase 20 RetryingDispatcher consumes.
-    #[error("webhook HTTP non-2xx: status={0}")]
-    HttpStatus(u16),
-    #[allow(dead_code)] // Phase 20 RetryingDispatcher consumes.
+    // Phase 20 RetryingDispatcher (src/webhooks/retry.rs) consumes these to
+    // make retry/classify/Retry-After decisions; the worker_loop pattern-match
+    // still routes everything through the existing `DispatchFailed` log path.
+    #[error("webhook HTTP non-2xx: status={code}")]
+    HttpStatus {
+        code: u16,
+        retry_after: Option<std::time::Duration>,
+    },
     #[error("webhook network error: {0}")]
     Network(String),
-    #[allow(dead_code)] // Phase 20 RetryingDispatcher consumes.
     #[error("webhook request timed out")]
     Timeout,
-    #[allow(dead_code)] // Phase 20 RetryingDispatcher consumes.
     #[error("invalid webhook URL: {0}")]
     InvalidUrl(String),
     #[error("webhook payload serialization failed: {0}")]
@@ -270,16 +268,26 @@ impl WebhookDispatcher for HttpDispatcher {
             }
             Ok(resp) => {
                 metrics::counter!("cronduit_webhook_delivery_failed_total").increment(1);
-                let status = resp.status().as_u16();
+                let code = resp.status().as_u16();
+                // D-07: parse Retry-After BEFORE consuming the body. The helper
+                // lives in src/webhooks/retry.rs (Phase 20 / WH-05) and is `pub`
+                // so the dispatcher can populate the WebhookError::HttpStatus
+                // retry_after field for the RetryingDispatcher to honor.
+                let retry_after = crate::webhooks::retry::parse_retry_after_from_response(
+                    resp.headers(),
+                    &cfg.url,
+                    code,
+                );
                 let body_preview = resp.text().await.unwrap_or_default();
                 let truncated: String = body_preview.chars().take(200).collect();
                 tracing::warn!(
                     target: "cronduit.webhooks",
                     run_id = event.run_id, job_name = %event.job_name,
-                    url = %cfg.url, status, body_preview = %truncated,
+                    url = %cfg.url, status = code, body_preview = %truncated,
+                    retry_after = ?retry_after,
                     "webhook non-2xx"
                 );
-                Ok(()) // Phase 18 posture per D-21; never propagate to worker
+                Err(WebhookError::HttpStatus { code, retry_after })
             }
             Err(e) => {
                 metrics::counter!("cronduit_webhook_delivery_failed_total").increment(1);
@@ -296,7 +304,11 @@ impl WebhookDispatcher for HttpDispatcher {
                     url = %cfg.url, kind, error = %e,
                     "webhook network error"
                 );
-                Ok(()) // Phase 18 posture per D-21
+                if e.is_timeout() {
+                    Err(WebhookError::Timeout)
+                } else {
+                    Err(WebhookError::Network(format!("{e}")))
+                }
             }
         }
     }
