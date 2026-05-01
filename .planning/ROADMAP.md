@@ -46,7 +46,7 @@
 - [x] **Phase 17: Custom Docker Labels (SEED-001)** — operator-defined `labels` plumbed through to `bollard::Config::labels`, merge semantics, `cronduit.*` reserved-namespace validator, type-gated validator, `${ENV_VAR}` interpolation in values, size limits (completed 2026-04-29)
 - [x] **Phase 18: Webhook Payload + State-Filter + Coalescing** — Standard Webhooks v1 payload schema (`payload_version: "v1"`), per-job + `[defaults]` config with `use_defaults = false` disable, edge-triggered streak coalescing (default fires on `streak_position == 1`, `fire_every` per-job override) (completed 2026-04-29)
 - [x] **Phase 19: Webhook HMAC Signing + Receiver Examples** — HMAC-SHA256 only, Standard Webhooks signing-string `webhook-id.webhook-timestamp.payload`, signature header `v1,<base64>`, Python/Go/Node receiver examples with constant-time compare (completed 2026-04-30)
-- [ ] **Phase 20: Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1** — HTTPS required for non-loopback/non-RFC1918, 3-attempt full-jitter exponential backoff (t=0/30s/300s × 0.8-1.2× rand), `webhook_deliveries` dead-letter table, 30s drain on shutdown, `cronduit_webhook_*` metric family; **cuts `v1.2.0-rc.1`**
+- [x] **Phase 20: Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1** — HTTPS required for non-loopback/non-RFC1918, 3-attempt full-jitter exponential backoff (t=0/30s/300s × 0.8-1.2× rand), `webhook_deliveries` dead-letter table, 30s drain on shutdown, `cronduit_webhook_*` metric family; **cuts `v1.2.0-rc.1`** (completed 2026-05-01)
 - [ ] **Phase 21: Failure-Context UI Panel + Exit-Code Histogram Card — rc.2** — Inline collapsed-by-default panel on run-detail with 5 P1 signals (time deltas, image-digest delta, config-hash delta, duration-vs-p50, scheduler-fire-skew), 10-bucket exit-code histogram on job-detail with `stopped` as distinct bucket and exit `0` as separate stat; **cuts `v1.2.0-rc.2`**
 - [ ] **Phase 22: Job Tagging Schema + Validators** — `jobs.tags` JSON column, single-file additive migration, lowercase+trim normalization, charset regex `^[a-z0-9][a-z0-9_-]{0,30}$`, reserved-tag rejection, substring-collision check at config-load
 - [ ] **Phase 23: Job Tagging Dashboard Filter Chips — rc.3** — CSS-only chip components on dashboard, AND filter semantics, untagged-hidden when filter active, URL state via repeated `?tag=`, HTMX dashboard partial swap on chip toggle; **cuts `v1.2.0-rc.3`**
@@ -193,7 +193,7 @@ Plans:
   4. An operator scraping `/metrics` sees the new `cronduit_webhook_*` family eagerly described at boot: `cronduit_webhook_deliveries_total{job, status}` (closed enum: success/failed/dropped), `cronduit_webhook_delivery_duration_seconds{job}` histogram, `cronduit_webhook_queue_depth` gauge.
   5. An operator pushing the `v1.2.0-rc.1` tag sees the GHCR image published at `ghcr.io/SimplicityGuy/cronduit:v1.2.0-rc.1` on both amd64 and arm64; the `:latest` tag still points at `v1.1.0` (rc tag gating from v1.1's D-10 holds).
 
-**Plans:** 8/9 plans executed
+**Plans:** 9/9 plans complete
 
 Plans:
 **Wave 1**
@@ -217,7 +217,7 @@ Plans:
 - [x] 20-08-PLAN.md — UAT recipes (uat-webhook-retry/drain/dlq-query/https-required) + 20-HUMAN-UAT.md (autonomous=false)
 
 **Wave 7** *(blocked on Wave 6 completion)*
-- [ ] 20-09-PLAN.md — rc.1 pre-flight checklist (autonomous=false; maintainer cuts v1.2.0-rc.1 tag locally; no release.yml/cliff.toml/release-rc.md edits per D-30)
+- [x] 20-09-PLAN.md — rc.1 pre-flight checklist (autonomous=false; maintainer cuts v1.2.0-rc.1 tag locally; no release.yml/cliff.toml/release-rc.md edits per D-30)
 
 **Cross-cutting constraints:**
 - Per D-38: Cargo.toml unchanged; `cargo tree -i openssl-sys` empty.
@@ -308,7 +308,7 @@ Plans:
 | 17. Custom Docker Labels (SEED-001) | 6/6 + 3 gap closure | Gap-closure pending | 2026-04-29 (core) |
 | 18. Webhook Payload + State-Filter + Coalescing | 6/6 | Complete   | 2026-04-29 |
 | 19. Webhook HMAC Signing + Receiver Examples | 6/6 | Complete   | 2026-04-30 |
-| 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 8/9 | In Progress|  |
+| 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 0/— | Not started | — |
 | 22. Job Tagging Schema + Validators | 0/— | Not started | — |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 0/— | Not started | — |
