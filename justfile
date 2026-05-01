@@ -588,6 +588,226 @@ uat-webhook-receiver-node-verify-fixture:
 
     echo "OK: all 5 fixture variants behave correctly"
 
+# === Phase 20 webhook posture (D-34) ===
+# Plan 20-08 — 4 maintainer-facing recipes for the rc.1 UAT runbook
+# (`.planning/phases/20-webhook-ssrf-https-posture-retry-drain-metrics-rc-1/20-HUMAN-UAT.md`).
+# Composes the P18 baseline (`uat-webhook-mock` / `uat-webhook-fire` /
+# `uat-webhook-verify`) and adds two helper mocks (`uat-webhook-mock-500`
+# returns 500 for the retry chain; `uat-webhook-mock-slow` delays 5s for the
+# drain-on-shutdown scenario). Both helper mocks use Python 3 stdlib
+# (`http.server.BaseHTTPRequestHandler`) — `python3` is already a documented
+# Phase 19 prerequisite (see 19-HUMAN-UAT.md). The Rust example
+# `examples/webhook_mock_server.rs` hardcodes port 9999 + status 200 and
+# does NOT accept `--port` / `--status` flags; extending it just to support
+# UAT mode-switching is out of scope for Plan 20-08 (per project memory
+# `feedback_uat_use_just_commands.md` the recipe set is the deliverable, not
+# a reshape of the example binary).
+
+# Mock receiver returning 500 for ALL POSTs — drives the retry chain UAT.
+# Logs every request to stdout AND /tmp/cronduit-webhook-mock-500.log.
+# Pair with `just uat-webhook-retry <JOB>` (see below).
+[group('uat')]
+[doc('Phase 20 — start mock HTTP receiver on 127.0.0.1:9999 returning 500 (forces 3-attempt retry chain)')]
+uat-webhook-mock-500:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ UAT: starting mock receiver on http://127.0.0.1:9999/ returning 500 for ALL POSTs"
+    echo "▶ Logs streaming to /tmp/cronduit-webhook-mock-500.log"
+    echo "▶ Press Ctrl-C to stop."
+    : > /tmp/cronduit-webhook-mock-500.log
+    # Heredoc body is indented to match the recipe block (just requires this);
+    # `sed 's/^    //'` strips the 4-space recipe prefix so Python sees a
+    # zero-indent module. Same trick used in the slow-mock recipe below.
+    SCRIPT=$(mktemp /tmp/cronduit-webhook-mock-500-XXXXXX.py)
+    trap 'rm -f "$SCRIPT"' EXIT
+    sed 's/^    //' > "$SCRIPT" <<'PYEOF'
+    import http.server, sys, datetime
+    LOG = "/tmp/cronduit-webhook-mock-500.log"
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n) if n else b""
+            line = "%s %s %s 500 bytes=%d\n" % (
+                datetime.datetime.utcnow().isoformat() + "Z",
+                self.command, self.path, len(body),
+            )
+            sys.stderr.write(line); sys.stderr.flush()
+            with open(LOG, "a") as f:
+                f.write(line)
+            self.send_response(500)
+            self.send_header("Connection", "close")
+            self.send_header("Content-Length", "12")
+            self.end_headers()
+            self.wfile.write(b"server-fail\n")
+        def log_message(self, *a, **k):
+            pass
+    http.server.HTTPServer(("127.0.0.1", 9999), H).serve_forever()
+    PYEOF
+    python3 -u "$SCRIPT" 2>&1 | tee -a /tmp/cronduit-webhook-mock-500.log
+
+# Mock receiver returning 200 after a 5s sleep — exercises drain-on-shutdown.
+# Operator pairs this with `just uat-webhook-drain` (see below).
+[group('uat')]
+[doc('Phase 20 — start slow mock HTTP receiver on 127.0.0.1:9999 (200 after 5s sleep; for drain UAT)')]
+uat-webhook-mock-slow:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ UAT: starting SLOW mock receiver on http://127.0.0.1:9999/ (200 after 5s sleep)"
+    echo "▶ Logs streaming to /tmp/cronduit-webhook-mock-slow.log"
+    echo "▶ Press Ctrl-C to stop."
+    : > /tmp/cronduit-webhook-mock-slow.log
+    SCRIPT=$(mktemp /tmp/cronduit-webhook-mock-slow-XXXXXX.py)
+    trap 'rm -f "$SCRIPT"' EXIT
+    sed 's/^    //' > "$SCRIPT" <<'PYEOF'
+    import http.server, sys, time, datetime
+    LOG = "/tmp/cronduit-webhook-mock-slow.log"
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n) if n else b""
+            recv = datetime.datetime.utcnow().isoformat() + "Z"
+            sys.stderr.write("%s RECV %s bytes=%d (sleeping 5s)\n" % (recv, self.path, len(body)))
+            sys.stderr.flush()
+            time.sleep(5)
+            sent = datetime.datetime.utcnow().isoformat() + "Z"
+            line = "%s SENT 200 %s bytes=%d\n" % (sent, self.path, len(body))
+            sys.stderr.write(line); sys.stderr.flush()
+            with open(LOG, "a") as f:
+                f.write(line)
+            self.send_response(200)
+            self.send_header("Connection", "close")
+            self.send_header("Content-Length", "3")
+            self.end_headers()
+            self.wfile.write(b"ok\n")
+        def log_message(self, *a, **k):
+            pass
+    http.server.HTTPServer(("127.0.0.1", 9999), H).serve_forever()
+    PYEOF
+    python3 -u "$SCRIPT" 2>&1 | tee -a /tmp/cronduit-webhook-mock-slow.log
+
+# Trigger a webhook-configured job pointed at the 500-mock and instruct the
+# maintainer how to verify the 3-attempt retry chain landed in
+# /tmp/cronduit-webhook-mock-500.log + the DLQ. Recipe-calls-recipe: composes
+# `uat-webhook-fire` (P18) → operator inspection → `uat-webhook-dlq-query`.
+[group('uat')]
+[doc('Phase 20 — fire a job pointed at the 500-mock + verify retry chain produced 3 attempts')]
+uat-webhook-retry JOB_NAME:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ UAT: triggering retry chain for {{JOB_NAME}}"
+    echo "▶ PRE: 'just uat-webhook-mock-500' must be running in another terminal."
+    echo "▶ PRE: 'just dev' must be running with {{JOB_NAME}} configured to POST"
+    echo "▶      to http://127.0.0.1:9999/ (the 500-mock)."
+    just uat-webhook-fire "{{JOB_NAME}}"
+    echo ""
+    echo "▶ Wait ~6 minutes (full chain = t=0 + ~30s + ~300s, plus 10s reqwest cap per attempt)."
+    echo "▶ Then verify in another terminal:"
+    echo "▶   tail -n 30 /tmp/cronduit-webhook-mock-500.log"
+    echo "▶ EXPECT: 3 lines like 'POST /<path> 500 bytes=<N>' (one per retry attempt)."
+    echo "▶ Then run:"
+    echo "▶   just uat-webhook-dlq-query"
+    echo "▶ EXPECT: at least one webhook_deliveries row with attempts=3,"
+    echo "▶         dlq_reason='http_5xx'."
+
+# Document the manual-SIGTERM drain scenario. Cronduit must observe a worst-
+# case shutdown ceiling = `webhook_drain_grace + 10s` (D-18 / docs/WEBHOOKS.md
+# § Drain on shutdown). This recipe prints the procedure; the maintainer
+# coordinates the 4 terminals and times the actual shutdown.
+[group('uat')]
+[doc('Phase 20 — drain-on-shutdown UAT: send SIGTERM during in-flight delivery; verify worst-case ceiling = drain_grace + 10s')]
+uat-webhook-drain:
+    @echo "▶ UAT: drain-on-shutdown scenario (D-15 / D-18 / WH-10)."
+    @echo ""
+    @echo "▶ Step 1: in terminal A:"
+    @echo "▶          just uat-webhook-mock-slow      # 200 after 5s sleep"
+    @echo ""
+    @echo "▶ Step 2: in terminal B (with a webhook-configured job pointed at 127.0.0.1:9999):"
+    @echo "▶          just dev"
+    @echo ""
+    @echo "▶ Step 3: in terminal C, trigger an immediate run:"
+    @echo "▶          just uat-webhook-fire <JOB_NAME>"
+    @echo ""
+    @echo "▶ Step 4: within ~1s, send Ctrl-C (SIGINT) to terminal B."
+    @echo "▶          Time the shutdown with a wall clock (or use 'time' in front of"
+    @echo "▶          'just dev' and read the 'real' value at exit)."
+    @echo ""
+    @echo "▶ EXPECT (per docs/WEBHOOKS.md § Drain on shutdown):"
+    @echo "▶   - cronduit logs 'webhook worker entering drain mode (budget: 30s)'"
+    @echo "▶   - the in-flight POST completes (terminal A logs 'SENT 200 ...')"
+    @echo "▶   - any queued events not yet sent at budget expiry yield"
+    @echo "▶     cronduit_webhook_deliveries_total{status=\"dropped\"} increments +"
+    @echo "▶     a webhook_deliveries row with dlq_reason='shutdown_drain'"
+    @echo "▶   - total shutdown time ≤ webhook_drain_grace (default 30s) + reqwest"
+    @echo "▶     per-attempt cap (10s) ≈ 40s worst case"
+    @echo ""
+    @echo "▶ Maintainer: confirm timings match docs/WEBHOOKS.md and tick the box"
+    @echo "▶            in 20-HUMAN-UAT.md Scenario 4."
+
+# Print recent rows from the webhook_deliveries DLQ table on the dev SQLite
+# DB. Mirrors the existing `uat-fctx-bugfix-spot-check` precedent (sqlite3
+# directly against cronduit.dev.db). Operators inspect the DLQ via SQL only
+# in v1.2 — no UI surface (D-37); the dashboard query lands in v1.3.
+[group('uat')]
+[doc('Phase 20 — query webhook_deliveries DLQ table from the dev SQLite DB (last 1 hour)')]
+uat-webhook-dlq-query:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DB="${CRONDUIT_DEV_DB:-cronduit.dev.db}"
+    if [[ ! -f "$DB" ]]; then
+        echo "ERROR: $DB not found — run 'just dev' first to create + migrate it,"
+        echo "       or set CRONDUIT_DEV_DB=path/to/your.db before invoking this recipe."
+        exit 1
+    fi
+    echo "▶ UAT: webhook_deliveries DLQ rows in the last 1 hour (DB: $DB)"
+    sqlite3 -header -column "$DB" \
+        "SELECT id, run_id, job_id, attempts, last_status, dlq_reason, last_attempt_at \
+         FROM webhook_deliveries \
+         WHERE last_attempt_at > datetime('now', '-1 hour') \
+         ORDER BY last_attempt_at DESC \
+         LIMIT 50;"
+    echo ""
+    echo "▶ EXPECT (after 'just uat-webhook-retry <JOB>'):"
+    echo "▶   - At least 1 row with attempts=3, dlq_reason='http_5xx'"
+    echo "▶ EXPECT (after 'just uat-webhook-drain' with mid-chain SIGTERM):"
+    echo "▶   - At least 1 row with dlq_reason='shutdown_drain'"
+
+# Verify the LOAD-time HTTPS-required validator (D-19 / WH-07) rejects an
+# `http://` URL pointing at a non-loopback / non-RFC1918 host. Builds a
+# minimal cronduit.toml in /tmp, runs `cargo run -- check`, asserts the
+# command fails. The cronduit binary is the cronduit binary — operators do
+# the same thing when they 'cronduit check ./cronduit.toml' against a bad
+# config (per src/cli/mod.rs::Command::Check). 'cargo run' is the just-recipe-
+# blessed entry point for the daemon binary throughout this justfile (see
+# 'just dev', 'just check-config').
+[group('uat')]
+[doc('Phase 20 — verify HTTPS-required validator rejects http://example.com at config-load')]
+uat-webhook-https-required:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ UAT: HTTPS-required validator (D-19 / WH-07)"
+    TMP=$(mktemp /tmp/cronduit-bad-webhook-XXXXXX.toml)
+    trap 'rm -f "$TMP"' EXIT
+    cat > "$TMP" <<'TOML'
+    [server]
+    timezone      = "UTC"
+    bind          = "127.0.0.1:8080"
+    database_url  = "sqlite::memory:"
+
+    [[jobs]]
+    name     = "uat-https-required"
+    schedule = "* * * * *"
+    type     = "command"
+    command  = "echo hi"
+    webhook  = { url = "http://example.com/hook" }
+    TOML
+    echo "▶ Wrote bad config to $TMP — running 'cargo run --quiet -- check $TMP'"
+    if cargo run --quiet -- check "$TMP" 2>&1; then
+        echo "▶ FAIL: 'cronduit check' unexpectedly succeeded — the validator did NOT"
+        echo "▶       reject http://example.com (regression of D-19 / WH-07)."
+        exit 1
+    fi
+    echo "▶ PASS: 'cronduit check' rejected http://example.com with non-zero exit."
+
 # -------------------- dev loop --------------------
 
 # Single-process dev loop (readable text logs, trace level for cronduit)
