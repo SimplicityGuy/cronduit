@@ -129,8 +129,50 @@ async fn run_prune_cycle(pool: &DbPool, retention: Duration, cancel: &Cancellati
         }
     }
 
+    // Phase 4: Delete old webhook DLQ rows (Phase 20 / WH-05 D-14).
+    // Reuses [server].log_retention as the cutoff (CONTEXT D-14) — operators
+    // get one cadence to reason about; webhook DLQ retention does not require
+    // a second config field. Runs AFTER Phase 2 runs delete and BEFORE the
+    // WAL checkpoint check, so the WAL threshold sums all three deletes.
+    let mut total_webhook_dlq_deleted: i64 = 0;
+    loop {
+        if cancel.is_cancelled() {
+            tracing::warn!(
+                target: "cronduit.retention",
+                webhook_dlq_deleted = total_webhook_dlq_deleted,
+                "prune interrupted by shutdown after webhook_dlq phase"
+            );
+            return;
+        }
+        match queries::delete_old_webhook_deliveries_batch(pool, &cutoff_str, BATCH_SIZE).await {
+            Ok(deleted) => {
+                total_webhook_dlq_deleted += deleted;
+                if deleted > 0 {
+                    tracing::debug!(
+                        target: "cronduit.retention",
+                        deleted,
+                        total = total_webhook_dlq_deleted,
+                        "prune_batch: webhook_dlq"
+                    );
+                }
+                if deleted < BATCH_SIZE {
+                    break;
+                }
+                tokio::time::sleep(BATCH_SLEEP).await;
+            }
+            Err(e) => {
+                tracing::error!(
+                    target: "cronduit.retention",
+                    error = %e,
+                    "retention prune: failed to delete webhook_dlq batch"
+                );
+                break;
+            }
+        }
+    }
+
     // Phase 3: WAL checkpoint if large prune (SQLite only).
-    let total_deleted = total_logs_deleted + total_runs_deleted;
+    let total_deleted = total_logs_deleted + total_runs_deleted + total_webhook_dlq_deleted;
     if total_deleted > WAL_CHECKPOINT_THRESHOLD {
         tracing::info!(
             target: "cronduit.retention",
@@ -150,6 +192,7 @@ async fn run_prune_cycle(pool: &DbPool, retention: Duration, cancel: &Cancellati
         target: "cronduit.retention",
         logs_deleted = total_logs_deleted,
         runs_deleted = total_runs_deleted,
+        webhook_dlq_deleted = total_webhook_dlq_deleted,
         "retention prune cycle completed"
     );
 }
