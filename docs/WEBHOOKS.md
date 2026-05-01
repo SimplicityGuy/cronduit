@@ -137,12 +137,14 @@ Each language ships a stdlib constant-time primitive:
 | Go | [`hmac.Equal(macA, macB)`](https://pkg.go.dev/crypto/hmac#Equal) | `crypto/hmac` | No (handles unequal length internally) |
 | Node | [`crypto.timingSafeEqual(bufA, bufB)`](https://nodejs.org/api/crypto.html#cryptotimingsafeequala-b) | `crypto` (built-in) | **YES** — throws `RangeError` on length mismatch |
 
-The Node receiver's MANDATORY length guard (`if (received.length !== expected.length) continue;`)
-prevents the receiver from crashing when a malformed signature with the
-wrong byte-length arrives. The length check itself is non-constant-time,
-which is fine: HMAC-SHA256 output is fixed at 32 bytes, so a length
-mismatch only means the signature is structurally malformed (no secret
-material is leaked).
+The Node receiver requires a MANDATORY length guard
+(`if (received.length !== expected.length) continue;`) before every
+`crypto.timingSafeEqual` call to avoid a `RangeError` on malformed
+signatures. See the inline rationale in
+[`examples/webhook-receivers/node/receiver.js`](../examples/webhook-receivers/node/receiver.js)
+(search for "length guard MANDATORY") — the receiver source is the
+single source of truth for that rationale, this hub doc just flags
+that it exists.
 
 The receiver verify decision tree:
 
