@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: ready
-stopped_at: Phase 19 merged to main (PR #53 squash-merged as 984872b, 2026-05-01); ready for Phase 20
-last_updated: "2026-05-01T16:30:00.000Z"
-last_activity: 2026-05-01 -- Phase 19 merged to main; on main; ready for /gsd-discuss-phase 20
+status: executing
+stopped_at: Phase 20 context gathered
+last_updated: "2026-05-01T18:59:49.365Z"
+last_activity: 2026-05-01 -- Phase 20 planning complete
 progress:
   total_phases: 10
-  completed_phases: 4
-  total_plans: 33
-  completed_plans: 27
-  percent: 82
+  completed_phases: 5
+  total_plans: 42
+  completed_plans: 33
+  percent: 79
 ---
 
 # Project State
@@ -29,10 +29,10 @@ Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 19 (webhook-hmac-signing-receiver-examples) — MERGED (PR #53 squash-commit 984872b, 2026-05-01)
 Plan: 6 of 6 complete
-Status: Ready to start Phase 20 — on main, working tree clean
-Last activity: 2026-05-01 -- PR #53 merged; local main fast-forwarded; phase-19-webhook-hmac-receivers branch deleted
+Status: Ready to execute
+Last activity: 2026-05-01 -- Phase 20 planning complete
 
-Progress: [████░░░░░░] 40% (v1.2: 4/10 phases complete; 27/— plans complete)
+Progress: [█████░░░░░] 50% (v1.2: 5/10 phases complete; 33/— plans complete)
 
 ## v1.2 Roadmap Summary
 
@@ -173,8 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-01T16:30:00.000Z
-Stopped at: Phase 19 merged to main (PR #53 squashed as 984872b on 2026-05-01); local main fast-forwarded
+Last session: 2026-05-01T17:26:16.264Z
+Stopped at: Phase 20 context gathered
 Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
 
 **Planned Phase:** 20 — Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1 (HTTPS-required for non-loopback/non-RFC1918, SSRF guards, retry schedule t=0/30s/300s with full-jitter, 30s drain on shutdown, Prometheus metrics)

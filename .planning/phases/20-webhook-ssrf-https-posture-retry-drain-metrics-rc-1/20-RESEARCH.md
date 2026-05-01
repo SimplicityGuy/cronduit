@@ -1189,7 +1189,7 @@ CREATE INDEX idx_webhook_deliveries_last_attempt ON webhook_deliveries (last_att
 
 ---
 
-## 16. Open Questions
+## 16. Open Questions (RESOLVED)
 
 None for the planner. Every researcher-decision and every gray area is resolved above. Two minor planner-judgment-call items:
 
@@ -1307,7 +1307,7 @@ No missing dependencies. Phase 20 has no new external infra requirements.
 | Pitfalls | HIGH | Each pitfall verified against stdlib / RFC text / in-tree usage |
 | Validation Architecture | HIGH | Every requirement mapped to a named test file with concrete asserts |
 
-### Open Questions
+### Open Questions (RESOLVED)
 
 None. Two minor planner-judgment-call items (migration filename date stamp; UAT recipe wording).
 

@@ -193,7 +193,34 @@ Plans:
   4. An operator scraping `/metrics` sees the new `cronduit_webhook_*` family eagerly described at boot: `cronduit_webhook_deliveries_total{job, status}` (closed enum: success/failed/dropped), `cronduit_webhook_delivery_duration_seconds{job}` histogram, `cronduit_webhook_queue_depth` gauge.
   5. An operator pushing the `v1.2.0-rc.1` tag sees the GHCR image published at `ghcr.io/SimplicityGuy/cronduit:v1.2.0-rc.1` on both amd64 and arm64; the `:latest` tag still points at `v1.1.0` (rc tag gating from v1.1's D-10 holds).
 
-**Plans**: TBD
+**Plans:** 9 plans
+
+Plans:
+**Wave 1**
+- [ ] 20-01-PLAN.md — DLQ migration (sqlite + postgres) + WebhookDlqRow/insert/delete helpers + retention Phase 4 + 7 Wave 0 test stubs
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 20-02-PLAN.md — RetryingDispatcher<D> in src/webhooks/retry.rs + classification + jitter + Retry-After + DLQ writes + 4 integration tests
+- [ ] 20-03-PLAN.md — HTTPS-required validator extension in src/config/validate.rs + INFO log + integration tests
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 20-05-PLAN.md — labeled metric family migration (deliveries_total{job,status} + delivery_duration_seconds + queue_depth); P15 dropped counter preserved
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 20-04-PLAN.md — worker_loop drain budget (3rd select! arm) + queue_depth gauge + drain integration tests
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 20-06-PLAN.md — webhook_drain_grace config field + RetryingDispatcher wiring + per-job metric pre-seed in src/cli/run.rs
+- [ ] 20-07-PLAN.md — docs/WEBHOOKS.md 6-section extension + 2 mermaid diagrams + TM5 forward-pointer stub
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 20-08-PLAN.md — UAT recipes (uat-webhook-retry/drain/dlq-query/https-required) + 20-HUMAN-UAT.md (autonomous=false)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 20-09-PLAN.md — rc.1 pre-flight checklist (autonomous=false; maintainer cuts v1.2.0-rc.1 tag locally; no release.yml/cliff.toml/release-rc.md edits per D-30)
+
+**Cross-cutting constraints:**
+- Per D-38: Cargo.toml unchanged; `cargo tree -i openssl-sys` empty.
 
 ### Phase 21: Failure-Context UI Panel + Exit-Code Histogram Card — rc.2
 
@@ -281,7 +308,7 @@ Plans:
 | 17. Custom Docker Labels (SEED-001) | 6/6 + 3 gap closure | Gap-closure pending | 2026-04-29 (core) |
 | 18. Webhook Payload + State-Filter + Coalescing | 6/6 | Complete   | 2026-04-29 |
 | 19. Webhook HMAC Signing + Receiver Examples | 6/6 | Complete   | 2026-04-30 |
-| 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 0/— | Not started | — |
+| 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 0/9 | Planned | — |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 0/— | Not started | — |
 | 22. Job Tagging Schema + Validators | 0/— | Not started | — |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 0/— | Not started | — |
