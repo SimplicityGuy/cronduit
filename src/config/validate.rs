@@ -1360,4 +1360,155 @@ mod tests {
             "valid unsigned config should pass: {errors:?}"
         );
     }
+
+    // ---- Phase 20 / WH-07 webhook HTTPS-required validator (D-19/D-20/D-21) ----
+
+    /// Helper that builds a job with the given webhook URL and runs the URL
+    /// validator. Returns the collected errors so tests can pattern-match.
+    fn run_webhook_url_check(url: &str) -> Vec<ConfigError> {
+        use crate::config::WebhookConfig;
+        use secrecy::SecretString;
+        let job = make_webhook_job(
+            "j",
+            Some(WebhookConfig {
+                url: url.into(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("s")),
+                unsigned: false,
+                fire_every: 1,
+            }),
+        );
+        let mut errors = Vec::new();
+        check_webhook_url(&job, Path::new("test.toml"), &mut errors);
+        errors
+    }
+
+    #[test]
+    fn https_anywhere_accepted_silent() {
+        // HTTPS URLs are accepted regardless of host (no classification, no log).
+        let errors = run_webhook_url_check("https://example.com/hook");
+        assert!(errors.is_empty(), "https://example.com should pass: {errors:?}");
+    }
+
+    #[test]
+    fn http_public_rejected() {
+        let errors = run_webhook_url_check("http://example.com/hook");
+        assert_eq!(errors.len(), 1, "expected 1 error: {errors:?}");
+        assert!(
+            errors[0].message.contains("requires HTTPS for non-loopback"),
+            "D-21 wording missing: {}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn http_localhost_accepted() {
+        let errors = run_webhook_url_check("http://localhost/hook");
+        assert!(errors.is_empty(), "http://localhost should pass: {errors:?}");
+    }
+
+    #[test]
+    fn http_localhost_uppercase_accepted() {
+        // eq_ignore_ascii_case — URL host is normalized to lowercase by `url`
+        // crate, but the validator's match must still be case-insensitive
+        // for safety.
+        let errors = run_webhook_url_check("http://LOCALHOST/hook");
+        assert!(errors.is_empty(), "http://LOCALHOST should pass: {errors:?}");
+    }
+
+    #[test]
+    fn http_localhost_with_port_accepted() {
+        let errors = run_webhook_url_check("http://localhost:8080/hook");
+        assert!(
+            errors.is_empty(),
+            "http://localhost:8080 should pass: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn http_loopback_v4_accepted() {
+        for url in ["http://127.0.0.1/hook", "http://127.0.0.1:9000/path"] {
+            let errors = run_webhook_url_check(url);
+            assert!(errors.is_empty(), "{url} should pass: {errors:?}");
+        }
+    }
+
+    #[test]
+    fn http_rfc1918_v4_accepted() {
+        for url in [
+            "http://10.5.5.5/hook",
+            "http://10.0.0.1/hook",
+            "http://172.16.0.1/hook",
+            "http://172.31.255.255/hook",
+            "http://192.168.1.1/hook",
+        ] {
+            let errors = run_webhook_url_check(url);
+            assert!(errors.is_empty(), "{url} should pass: {errors:?}");
+        }
+    }
+
+    #[test]
+    fn http_loopback_v6_accepted() {
+        let errors = run_webhook_url_check("http://[::1]/hook");
+        assert!(errors.is_empty(), "http://[::1] should pass: {errors:?}");
+    }
+
+    #[test]
+    fn http_ula_v6_fd_accepted() {
+        // Success-criterion-literal: fd00::/8
+        let errors = run_webhook_url_check("http://[fd00::1]/hook");
+        assert!(errors.is_empty(), "http://[fd00::1] should pass: {errors:?}");
+    }
+
+    #[test]
+    fn http_ula_v6_fc_accepted_broader_than_spec() {
+        // RESEARCH §4.1: is_unique_local covers the broader fc00::/7
+        // (NEVER rejects spec-allowed). Regression-lock the broader behavior.
+        let errors = run_webhook_url_check("http://[fc00::1]/hook");
+        assert!(errors.is_empty(), "http://[fc00::1] should pass: {errors:?}");
+    }
+
+    #[test]
+    fn http_public_v4_rejected() {
+        // 198.51.100.0/24 = TEST-NET-2 (RFC 5737)
+        let errors = run_webhook_url_check("http://198.51.100.1/hook");
+        assert_eq!(errors.len(), 1, "expected 1 error: {errors:?}");
+        assert!(errors[0].message.contains("requires HTTPS for non-loopback"));
+    }
+
+    #[test]
+    fn http_link_local_v4_rejected() {
+        // Link-local 169.254/16 is explicitly NOT in the allowlist (RESEARCH §5).
+        let errors = run_webhook_url_check("http://169.254.0.1/hook");
+        assert_eq!(errors.len(), 1, "link-local must be rejected: {errors:?}");
+    }
+
+    #[test]
+    fn http_public_dns_rejected() {
+        // Hostnames that are not literal `localhost` and not an IpAddr → rejected.
+        let errors = run_webhook_url_check("http://example.org/hook");
+        assert_eq!(errors.len(), 1, "expected 1 error: {errors:?}");
+        assert!(errors[0].message.contains("requires HTTPS for non-loopback"));
+    }
+
+    #[test]
+    fn http_public_v6_rejected() {
+        // 2001:db8::/32 = documentation prefix; not in allowlist.
+        let errors = run_webhook_url_check("http://[2001:db8::1]/hook");
+        assert_eq!(errors.len(), 1, "expected 1 error: {errors:?}");
+    }
+
+    #[test]
+    fn d21_error_message_lists_allowed_local_nets_verbatim() {
+        // The error message must list the allowed local nets verbatim per D-21.
+        let errors = run_webhook_url_check("http://example.com/hook");
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0]
+                .message
+                .contains("127/8, ::1, 10/8, 172.16/12, 192.168/16, fd00::/8"),
+            "D-21 verbatim allowed-nets list missing: {}",
+            errors[0].message
+        );
+    }
 }
