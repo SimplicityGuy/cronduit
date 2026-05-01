@@ -118,10 +118,32 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         try:
             # loopback-only — secret presence checked after body read; justified per D-09 receiver responsibility model
             # 1. Body cap before read (Pitfall: don't grow forever).
-            cl = int(self.headers.get('content-length') or 0)
-            if cl > MAX_BODY_BYTES:
-                _log(f"[python-receiver] body too large ({cl} bytes); rejecting 400")
-                self._respond(400, b"body too large")
+            # Reject chunked transfers explicitly (RFC 7230 forbids
+            # Transfer-Encoding + Content-Length together; cronduit's
+            # reqwest-based dispatcher always sets Content-Length, but a
+            # third-party signer using chunked encoding would otherwise
+            # silently read 0 bytes and 401 with a misleading reason —
+            # see review WR-03). Node and Go receivers handle chunked
+            # transparently via streaming readers; Python's stdlib HTTP
+            # server does not, so reject up-front with 400.
+            if self.headers.get('transfer-encoding', '').lower() == 'chunked':
+                _log("[python-receiver] chunked transfer not supported; rejecting 400")
+                self._respond(400, b"chunked transfer not supported")
+                return
+            cl_str = self.headers.get('content-length')
+            if cl_str is None:
+                _log("[python-receiver] missing Content-Length; rejecting 411")
+                self._respond(411, b"length required")
+                return
+            try:
+                cl = int(cl_str)
+            except ValueError:
+                _log(f"[python-receiver] malformed Content-Length: {cl_str!r}; rejecting 400")
+                self._respond(400, b"malformed content-length")
+                return
+            if cl < 0 or cl > MAX_BODY_BYTES:
+                _log(f"[python-receiver] body length out of range ({cl}); rejecting 400")
+                self._respond(400, b"body length out of range")
                 return
             body_bytes = self.rfile.read(cl) if cl > 0 else b""
 
