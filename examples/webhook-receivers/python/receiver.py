@@ -64,7 +64,13 @@ def _verify_with_drift(secret_bytes, headers, body_bytes, *, check_drift):
         return False
     if check_drift and abs(int(time.time()) - ts) > MAX_TIMESTAMP_DRIFT_SECONDS:
         return False
-    signing_str = f"{wid}.{ts}.".encode() + body_bytes
+    # Sign over the RAW header bytes (`wts`), not the parsed integer (`ts`).
+    # The cronduit Rust dispatcher and the Standard Webhooks v1 spec both
+    # treat the timestamp portion of the signing string as the byte-exact
+    # value of the `webhook-timestamp` header. Using the parsed int would
+    # silently diverge for any non-canonical-decimal form (leading zeros,
+    # leading `+`, surrounding whitespace, etc.). See review BL-01.
+    signing_str = f"{wid}.{wts}.".encode() + body_bytes
     expected = hmac.new(secret_bytes, signing_str, hashlib.sha256).digest()
     # Multi-token parse per Standard Webhooks v1 (forward-compat with v1.3+
     # multi-secret rotation; cronduit currently emits one v1, token).

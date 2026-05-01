@@ -79,7 +79,14 @@ function _verifyWithDrift(secret, headers, body, checkDrift) {
     return false;
   }
   const mac = crypto.createHmac('sha256', secret);
-  mac.update(`${wid}.${ts}.`);
+  // Sign over the RAW header bytes (`wts`), not the parsed integer (`ts`).
+  // The cronduit Rust dispatcher and the Standard Webhooks v1 spec both
+  // treat the timestamp portion of the signing string as the byte-exact
+  // value of the `webhook-timestamp` header. Using the parsed int would
+  // silently diverge for any non-canonical-decimal form (leading zeros,
+  // leading `+`, embedded whitespace, trailing junk that parseInt
+  // truncates, etc.). See review BL-01.
+  mac.update(`${wid}.${wts}.`);
   mac.update(body);
   const expected = mac.digest(); // Buffer (32 bytes — HMAC-SHA256 output)
   // Multi-token parse per Standard Webhooks v1 (forward-compat with v1.3+).
