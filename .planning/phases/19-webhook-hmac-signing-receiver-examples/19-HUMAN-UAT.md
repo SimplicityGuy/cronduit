@@ -25,7 +25,7 @@
   3. Confirm `just openssl-check` (called inside `just ci`) reports empty `cargo tree -i openssl-sys` for native + arm64-musl + amd64-musl (D-24 — zero new Rust crates).
 - **Pass criteria:** `just ci` exits 0; `cargo tree -i openssl-sys` empty across all targets.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (after fix `2136605` resolved cargo fmt drift in dispatcher.rs tests)
 
 ### U2 — Rust fixture lock test green
 
@@ -38,46 +38,46 @@
   3. In the test output, confirm `webhooks::dispatcher::tests::sign_v1_locks_interop_fixture` appears as PASSED.
 - **Pass criteria:** `just nextest` exits 0 and the fixture lock test is in the passed list.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
-### U3 — Python verify-fixture recipe green (4 tamper variants)
+### U3 — Python verify-fixture recipe green (5 fixture variants)
 
-**What this proves:** Plan 19-02 — Python receiver verifies cronduit's wire format and rejects all 3 tamper variants (mutated secret, mutated body, drift).
+**What this proves:** Plan 19-02 — Python receiver verifies cronduit's wire format, rejects all tamper variants, and accepts the BL-01 non-canonical-decimal regression variant.
 
 - **Recipe:** `just uat-webhook-receiver-python-verify-fixture`
 - **Steps:**
   1. Run `just uat-webhook-receiver-python-verify-fixture`.
   2. Confirm the recipe exits 0.
-  3. Confirm stdout contains `OK: all 4 tamper variants behave correctly`.
-- **Pass criteria:** Recipe exits 0; the 4-variant OK line is printed.
+  3. Confirm stdout contains `OK: all 5 fixture variants behave correctly`.
+- **Pass criteria:** Recipe exits 0; the 5-variant OK line is printed.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
-### U4 — Go verify-fixture recipe green (4 tamper variants)
+### U4 — Go verify-fixture recipe green (5 fixture variants)
 
-**What this proves:** Plan 19-03 — Go receiver verifies cronduit's wire format and rejects all 3 tamper variants.
+**What this proves:** Plan 19-03 — Go receiver verifies cronduit's wire format, rejects all tamper variants, and accepts the BL-01 non-canonical-decimal regression variant.
 
 - **Recipe:** `just uat-webhook-receiver-go-verify-fixture`
 - **Steps:**
   1. Run `just uat-webhook-receiver-go-verify-fixture`.
   2. Confirm the recipe exits 0.
-  3. Confirm stdout contains `OK: all 4 tamper variants behave correctly`.
-- **Pass criteria:** Recipe exits 0; the 4-variant OK line is printed.
+  3. Confirm stdout contains `OK: all 5 fixture variants behave correctly`.
+- **Pass criteria:** Recipe exits 0; the 5-variant OK line is printed.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
-### U5 — Node verify-fixture recipe green (4 tamper variants)
+### U5 — Node verify-fixture recipe green (5 fixture variants)
 
-**What this proves:** Plan 19-04 — Node receiver verifies cronduit's wire format and rejects all 3 tamper variants. Pitfall 2 length guard prevents `RangeError`.
+**What this proves:** Plan 19-04 — Node receiver verifies cronduit's wire format, rejects all tamper variants, accepts the BL-01 non-canonical-decimal regression variant, and the Pitfall 2 length guard prevents `RangeError`.
 
 - **Recipe:** `just uat-webhook-receiver-node-verify-fixture`
 - **Steps:**
   1. Run `just uat-webhook-receiver-node-verify-fixture`.
   2. Confirm the recipe exits 0.
-  3. Confirm stdout contains `OK: all 4 tamper variants behave correctly`.
-- **Pass criteria:** Recipe exits 0; the 4-variant OK line is printed; no `RangeError` traceback in any subprocess output.
+  3. Confirm stdout contains `OK: all 5 fixture variants behave correctly`.
+- **Pass criteria:** Recipe exits 0; the 5-variant OK line is printed; no `RangeError` traceback in any subprocess output.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### U6 — Python receiver end-to-end against real cronduit
 
@@ -93,7 +93,7 @@
   6. In terminal A, watch for the `[python-receiver] verified webhook-id=<ULID> bytes=<N>` line.
 - **Pass criteria:** Terminal A logs the `verified` line within ~2 seconds of the fire; terminal B's cronduit log shows a 200 response from `127.0.0.1:9991`.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### U7 — Go receiver end-to-end against real cronduit
 
@@ -103,7 +103,7 @@
 - **Steps:** Identical to U6, but uncomment `wh-example-receiver-go` and use `just uat-webhook-receiver-go` + `just uat-webhook-fire wh-example-receiver-go`.
 - **Pass criteria:** Terminal A logs `[go-receiver] verified webhook-id=<ULID> bytes=<N>`; terminal B's cronduit log shows 200 from 127.0.0.1:9992.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### U8 — Node receiver end-to-end against real cronduit
 
@@ -113,7 +113,7 @@
 - **Steps:** Identical to U6, but uncomment `wh-example-receiver-node` and use `just uat-webhook-receiver-node` + `just uat-webhook-fire wh-example-receiver-node`.
 - **Pass criteria:** Terminal A logs `[node-receiver] verified webhook-id=<ULID> bytes=<N>`; terminal B's cronduit log shows 200 from 127.0.0.1:9993.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### U9 — `docs/WEBHOOKS.md` renders cleanly on GitHub
 
