@@ -130,7 +130,7 @@
   7. Confirm: NO ASCII-art diagrams anywhere (no `┌`, `└`, `├`, `┤`, `─` box-drawing characters).
 - **Pass criteria:** All 3 mermaid diagrams render; tables render; SHA-256-only note visible; no ASCII art.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (PR #53 Files-changed render)
 
 ### U10 — README + CONFIG.md cross-references render
 
@@ -143,7 +143,7 @@
   3. Click both links and confirm they navigate to `docs/WEBHOOKS.md`.
 - **Pass criteria:** Both links resolve; both renderings are clean (no broken markdown).
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (PR #53 Files-changed render)
 
 ### U11 — `webhook-interop` CI matrix passes on the PR
 
@@ -153,10 +153,10 @@
 - **Steps:**
   1. Open the PR's "Checks" tab.
   2. Confirm `webhook-interop (python)`, `webhook-interop (go)`, `webhook-interop (node)` are all GREEN.
-  3. Click into one of them and confirm the final step (`just uat-webhook-receiver-<lang>-verify-fixture`) printed `OK: all 4 tamper variants behave correctly`.
+  3. Click into one of them and confirm the final step (`just uat-webhook-receiver-<lang>-verify-fixture`) printed `OK: all 5 fixture variants behave correctly`.
 - **Pass criteria:** All 3 matrix cells GREEN.
 
-[ ] Maintainer-validated
+[x] Maintainer-validated (PR #53 — all 3 matrix cells green: python 10s, go 28s, node 8s)
 
 ## After All Boxes Ticked
 
@@ -164,4 +164,4 @@
 - `gsd-execute-phase` (or the orchestrator) treats the phase as complete only after the human-validation comment lands.
 - Post-merge, `.planning/STATE.md` and `.planning/ROADMAP.md` are updated to reflect WH-04 → Validated.
 
-**Validated by:** _[Maintainer flips this line on UAT completion: e.g., `Maintainer (Robert) on YYYY-MM-DD — all 11 UAT items passed locally per D-22.`]_
+**Validated by:** Maintainer (Robert) on 2026-04-30 — all 11 UAT items passed locally per D-22.
