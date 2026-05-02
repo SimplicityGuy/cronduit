@@ -47,6 +47,19 @@ struct RunDetailPage {
     /// compare SSE `event.lastEventId` against it and skip already-rendered
     /// lines on reconnect (D-08 / D-09).
     last_log_id: i64,
+    /// Phase 21 FCTX-01: panel visibility gate. True iff
+    /// `run.status ∈ {failed, timeout}` AND `get_failure_context()` succeeded.
+    /// Soft-fails to false on DB error (D-12) so the rest of the page renders.
+    /// Fields tolerated as `dead_code` until plan 21-06 lands the askama
+    /// template insert that consumes them.
+    #[allow(dead_code)]
+    show_fctx_panel: bool,
+    /// Phase 21 FCTX-01..06: pre-formatted view-model for the failure-context
+    /// panel. `None` when `show_fctx_panel` is false. The askama template
+    /// substitutes `{{ value }}` with zero logic — every conditional copy
+    /// rendering happens in `build_fctx_view` per UI-SPEC § Copywriting Contract.
+    #[allow(dead_code)]
+    fctx: Option<FctxView>,
 }
 
 #[derive(Template)]
@@ -99,6 +112,58 @@ pub struct RunDetailView {
     pub duration_display: String,
     pub exit_code: Option<i32>,
     pub error_message: Option<String>,
+    /// Phase 16 FOUND-14: image digest captured post-start by
+    /// `inspect_container`. `None` for command/script jobs (no image) and for
+    /// pre-v1.2 docker rows. Consumed by Phase 21 FCTX panel IMAGE DIGEST row
+    /// (`build_fctx_view`); the askama template never reads it directly.
+    pub image_digest: Option<String>,
+    /// Phase 16 FCTX-04: per-run config_hash captured at fire time by
+    /// `insert_running_run`. `None` on pre-v1.2 rows. Consumed by Phase 21
+    /// FCTX panel CONFIG row via the literal `run.config_hash !=
+    /// last_success.config_hash` compare per D-14.
+    pub config_hash: Option<String>,
+    /// Phase 21 FCTX-06 (D-02 / D-04): fire-decision-time RFC3339 timestamp.
+    /// `None` on pre-v1.2 rows that landed before migration
+    /// `*_000009_scheduled_for_add.up.sql` AND on legacy scheduler-RunNow
+    /// fallback paths. The FIRE SKEW row hides on `None` per UI-SPEC.
+    pub scheduled_for: Option<String>,
+}
+
+/// Phase 21 failure-context panel pre-formatted view-model (research §H,
+/// 11 fields LOCKED). Every conditional copy rendering happens in
+/// `build_fctx_view` per UI-SPEC § Copywriting Contract — the askama template
+/// substitutes `{{ value }}` and carries zero logic.
+///
+/// Field gating summary:
+/// - `consecutive_failures` / `summary_meta` — always populated when the
+///   panel renders (FCTX-02 / streak summary).
+/// - `last_success_run_id` / `last_success_run_url` — `None` when the job
+///   has never succeeded (D-13).
+/// - `time_deltas_value` — locked copy varies on `last_success_run_id`
+///   presence per UI-SPEC § Copywriting Contract.
+/// - `is_docker_job` / `image_digest_value` — IMAGE DIGEST row hides when
+///   `is_docker_job=false` (FCTX-03) or when never-succeeded (D-13);
+///   `image_digest_value=None` triggers the hide.
+/// - `config_changed_value` — `None` on never-succeeded (D-13); literal
+///   compare per D-14 otherwise.
+/// - `has_duration_samples` / `duration_value` — DURATION row gated to
+///   `N >= 5` successful samples per UI-SPEC FCTX-05 (NOT 20).
+/// - `fire_skew_value` — `None` when `scheduled_for IS NULL` per D-04.
+///
+/// Field declaration order matches research §H verbatim.
+#[allow(dead_code)] // consumed by plan 21-06 (template insert + CSS)
+pub struct FctxView {
+    pub consecutive_failures: i64,
+    pub summary_meta: String,
+    pub last_success_run_id: Option<i64>,
+    pub time_deltas_value: String,
+    pub last_success_run_url: Option<String>,
+    pub is_docker_job: bool,
+    pub image_digest_value: Option<String>,
+    pub config_changed_value: Option<String>,
+    pub has_duration_samples: bool,
+    pub duration_value: Option<String>,
+    pub fire_skew_value: Option<String>,
 }
 
 pub struct LogLineView {
@@ -213,11 +278,23 @@ pub async fn run_detail(
             duration_display: format_duration_ms(run.duration_ms),
             exit_code: run.exit_code,
             error_message: run.error_message,
+            // Phase 16 + 21: pass-through from DbRunDetail. Populated for the
+            // FCTX panel (build_fctx_view in plan 21-04 task 2/3); the template
+            // does not read these fields directly.
+            image_digest: run.image_digest,
+            config_hash: run.config_hash,
+            scheduled_for: run.scheduled_for,
         };
 
         let is_running = run_view.status == "running";
 
         let csrf_token = csrf::get_token_from_cookies(&cookies);
+
+        // Phase 21 FCTX wire-up lands in plan 21-04 task 2 (gating + soft-fail)
+        // and task 3 (build_fctx_view). Task 1 ships the struct shape only;
+        // the panel stays hidden on every render until task 2 wires the gate.
+        let show_fctx_panel = false;
+        let fctx: Option<FctxView> = None;
 
         RunDetailPage {
             run: run_view,
@@ -229,6 +306,8 @@ pub async fn run_detail(
             next_offset,
             csrf_token,
             last_log_id,
+            show_fctx_panel,
+            fctx,
         }
         .into_web_template()
         .into_response()
