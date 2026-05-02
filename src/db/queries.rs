@@ -1051,6 +1051,72 @@ pub async fn get_recent_successful_durations(
     }
 }
 
+/// P21 EXIT-01 (D-06): raw last-N ALL runs for the exit-code histogram.
+///
+/// Returns `Vec<(status, exit_code, end_time)>` ordered by `start_time DESC`. Mirrors
+/// `get_recent_successful_durations` shape from Phase 13 OBS-04: single SELECT with
+/// the existing `idx_job_runs_job_id_start` index hit; bucketing happens in Rust per
+/// CONTEXT D-06 via `crate::web::exit_buckets::aggregate`.
+///
+/// WHERE clause is **all statuses** (NOT `status='success'` only — EXIT-01 covers the
+/// last-100 ALL runs window for the histogram, including failed/timeout/stopped rows
+/// that the success-only Duration card excludes per OBS-04 D-20).
+///
+/// `status` is NOT NULL on both backends (CHECK constraint), so we decode `String`.
+/// `exit_code` and `end_time` are NULL-permitting on both backends.
+pub async fn get_recent_runs_for_histogram(
+    pool: &DbPool,
+    job_id: i64,
+    limit: i64,
+) -> anyhow::Result<Vec<(String, Option<i32>, Option<String>)>> {
+    match pool.reader() {
+        PoolRef::Sqlite(p) => {
+            let rows = sqlx::query(
+                "SELECT status, exit_code, end_time FROM job_runs
+                 WHERE job_id = ?1
+                 ORDER BY start_time DESC
+                 LIMIT ?2",
+            )
+            .bind(job_id)
+            .bind(limit)
+            .fetch_all(p)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.get::<String, _>("status"),
+                        r.get::<Option<i32>, _>("exit_code"),
+                        r.get::<Option<String>, _>("end_time"),
+                    )
+                })
+                .collect())
+        }
+        PoolRef::Postgres(p) => {
+            let rows = sqlx::query(
+                "SELECT status, exit_code, end_time FROM job_runs
+                 WHERE job_id = $1
+                 ORDER BY start_time DESC
+                 LIMIT $2",
+            )
+            .bind(job_id)
+            .bind(limit)
+            .fetch_all(p)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| {
+                    (
+                        r.get::<String, _>("status"),
+                        r.get::<Option<i32>, _>("exit_code"),
+                        r.get::<Option<String>, _>("end_time"),
+                    )
+                })
+                .collect())
+        }
+    }
+}
+
 /// A terminal or in-flight run for the `/timeline` gantt view (Phase 13 OBS-01, OBS-02).
 ///
 /// Rendered as one bar; `end_time` is `None` iff `status == "running"`.
