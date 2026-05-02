@@ -1,0 +1,23 @@
+-- Phase 21: job_runs.scheduled_for per-run column (FCTX-06).
+--
+-- Nullable TEXT, FOREVER (D-01, D-04, D-05): scheduler writes the
+-- fire-decision-time RFC3339 timestamp here at insert; Run Now and
+-- api-triggered runs write `scheduled_for = start_time` (skew = 0 ms);
+-- pre-v1.2 rows that landed before this migration stay NULL forever
+-- (D-04 — no backfill; the FIRE SKEW row in the failure-context panel
+-- hides on NULL per UI-SPEC).
+--
+-- Pairs with migrations/postgres/20260502_000009_scheduled_for_add.up.sql.
+-- Any structural change MUST land in both files in the same PR;
+-- tests/schema_parity.rs::normalize_type collapses TEXT-family types to
+-- TEXT, so this column passes parity with zero test edits.
+--
+-- Idempotency: sqlx _sqlx_migrations tracking. SQLite ALTER TABLE ADD
+-- COLUMN does NOT support a conditional-existence guard clause; the
+-- Postgres pair uses one. Re-runs are guarded by sqlx's migration
+-- ledger.
+--
+-- NO index is created (D-01): skew is read on the single-row select
+-- already keyed by `r.id`; no fleet-level filter consumes the column.
+
+ALTER TABLE job_runs ADD COLUMN scheduled_for TEXT;
