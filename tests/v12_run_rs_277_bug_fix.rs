@@ -82,7 +82,7 @@ async fn docker_run_writes_real_container_id_not_digest() {
 
     // Reserve the running row up-front (mirrors the production fire path).
     // After 16-04b, insert_running_run takes a config_hash &str.
-    let run_id = queries::insert_running_run(&pool, job_id, "manual", "testhash")
+    let run_id = queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
         .await
         .expect("insert running run");
 
@@ -172,7 +172,7 @@ async fn docker_run_writes_image_digest_as_sha256() {
     let pool = setup_test_db().await;
     let job_id = seed_test_job(&pool, "v12-fctx-bug-fix-digest").await;
 
-    let run_id = queries::insert_running_run(&pool, job_id, "manual", "testhash")
+    let run_id = queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
         .await
         .expect("insert running run");
 
@@ -248,7 +248,7 @@ async fn command_run_leaves_image_digest_null() {
     let pool = setup_test_db().await;
     let job_id = seed_test_job(&pool, "v12-fctx-cmd-null-digest").await;
 
-    let run_id = queries::insert_running_run(&pool, job_id, "manual", "testhash")
+    let run_id = queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
         .await
         .expect("insert running run");
 
@@ -304,7 +304,7 @@ async fn digest_persists_across_inspect_failure() {
     let pool = setup_test_db().await;
     let job_id = seed_test_job(&pool, "v12-fctx-inspect-failure").await;
 
-    let run_id = queries::insert_running_run(&pool, job_id, "manual", "testhash")
+    let run_id = queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
         .await
         .expect("insert running run");
 

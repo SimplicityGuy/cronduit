@@ -199,7 +199,7 @@ async fn test_docker_orphan_reconciliation() {
     .unwrap();
 
     // Insert a running run row with a known ID.
-    let run_id = queries::insert_running_run(&pool, job_id, "test", "testhash")
+    let run_id = queries::insert_running_run(&pool, job_id, "test", "testhash", None)
         .await
         .unwrap();
 

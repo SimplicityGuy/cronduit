@@ -179,6 +179,7 @@ async fn stop_increments_runs_total_stopped() {
             cancel,
             active_clone,
             webhook_tx_test,
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await
     });

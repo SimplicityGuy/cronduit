@@ -687,6 +687,7 @@ mod tests {
             child_cancel,
             test_active_runs(),
             webhook_tx_test,
+            None, // Phase 21 FCTX-06: test passes None
         ));
 
         // Cancel after a small delay to let the run start.
@@ -757,6 +758,7 @@ mod tests {
             child_cancel,
             test_active_runs(),
             webhook_tx_test,
+            None, // Phase 21 FCTX-06: test passes None
         ));
 
         // Cancel immediately.

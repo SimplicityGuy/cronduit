@@ -135,6 +135,7 @@ mod tests {
             error_message: None,
             image_digest,
             config_hash,
+            scheduled_for: None, // Phase 21 FCTX-06: test fixture
         }
     }
 

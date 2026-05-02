@@ -70,7 +70,7 @@ async fn listener_after_backfill() {
     let pool = setup_sqlite_with_phase11_migrations().await;
     let job_id = seed_test_job(&pool, "full-migration-job").await;
     for _ in 0..3 {
-        queries::insert_running_run(&pool, job_id, "manual", "testhash")
+        queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
             .await
             .expect("insert running run");
     }

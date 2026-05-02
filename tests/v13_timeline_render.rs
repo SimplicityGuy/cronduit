@@ -77,7 +77,7 @@ async fn seed_job(pool: &DbPool, name: &str) -> i64 {
 /// immaterial here, since every assertion checks rendered strings and
 /// status classes, not durations).
 async fn seed_terminal_run(pool: &DbPool, job_id: i64, status: &str) {
-    let run_id = queries::insert_running_run(pool, job_id, "scheduled", "testhash")
+    let run_id = queries::insert_running_run(pool, job_id, "scheduled", "testhash", None)
         .await
         .expect("insert running run");
     let start = tokio::time::Instant::now();
@@ -89,7 +89,7 @@ async fn seed_terminal_run(pool: &DbPool, job_id: i64, status: &str) {
 /// Seed a still-running run (no `finalize_run`). Returns the run_id so tests
 /// can reference it in href assertions.
 async fn seed_running_run(pool: &DbPool, job_id: i64) -> i64 {
-    queries::insert_running_run(pool, job_id, "scheduled", "testhash")
+    queries::insert_running_run(pool, job_id, "scheduled", "testhash", None)
         .await
         .expect("insert running run")
 }

@@ -58,7 +58,7 @@ async fn setup_pool_with_job() -> (DbPool, i64) {
 /// `cronduit::db::queries::insert_running_run` but is inlined here so the test
 /// keeps its single-file self-containment.
 async fn seed_running_run(pool: &DbPool, job_id: i64) -> i64 {
-    cronduit::db::queries::insert_running_run(pool, job_id, "scheduled", "testhash")
+    cronduit::db::queries::insert_running_run(pool, job_id, "scheduled", "testhash", None)
         .await
         .expect("insert running run")
 }
