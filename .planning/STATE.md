@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
-stopped_at: Completed 21-03-PLAN.md
-last_updated: "2026-05-02T20:16:54.907Z"
+stopped_at: Completed 21-04-PLAN.md
+last_updated: "2026-05-02T20:32:10.598Z"
 last_activity: 2026-05-02
 progress:
   total_phases: 10
   completed_phases: 6
   total_plans: 56
-  completed_plans: 48
-  percent: 86
+  completed_plans: 49
+  percent: 88
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 21 (failure-context-ui-panel-exit-code-histogram-card-rc-2) — EXECUTING
-Plan: 3 of 11
+Plan: 4 of 11
 Status: Ready to execute
 Last activity: 2026-05-02
 
-Progress: [█████████░] 86%
+Progress: [█████████░] 88%
 
 ## v1.2 Roadmap Summary
 
@@ -137,6 +137,7 @@ All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 - cargo-deny: v1.2 preamble (non-blocking initially; promoted to blocking before final v1.2.0).
 - [Phase 21]: Widened insert_running_run + run_job to thread scheduled_for; trigger-aware semantics live at scheduler call site (cron tick → entry.fire_time, catch-up → m.missed_time, Run Now → now_rfc3339, legacy RunNow → None)
 - [Phase ?]: [Phase 21-03]: ExitBucket module mirrors src/web/stats.rs shape — file-doc, public surface, in-module #[cfg(test)] tests, ZERO new external crates. Status-discriminator-wins classifier (D-08). 137 dual-classifier (EXIT-04). Top-3 ties broken by code ASC for HashMap-iteration determinism. queries::get_recent_runs_for_histogram mirrors get_recent_successful_durations: ALL-statuses WHERE (no SQL-side bucketing per D-06).
+- [Phase 21-04]: FCTX panel data flow wired in run_detail handler — gating to status ∈ {failed, timeout} (excludes 'error' per landmine §11); soft-fail tracing::warn! with locked field shape from api.rs:127-132; build_fctx_view assembles all 11 FctxView fields per UI-SPEC § Copywriting Contract; askama template (plan 21-06) substitutes {{ value }} with zero logic
 
 ### Open questions
 
@@ -175,8 +176,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-02T20:16:54.901Z
-Stopped at: Completed 21-03-PLAN.md
+Last session: 2026-05-02T20:32:10.593Z
+Stopped at: Completed 21-04-PLAN.md
 Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
 
 **Planned Phase:** 20 — Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1 (HTTPS-required for non-loopback/non-RFC1918, SSRF guards, retry schedule t=0/30s/300s with full-jitter, 30s drain on shutdown, Prometheus metrics)

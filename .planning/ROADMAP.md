@@ -309,7 +309,7 @@ Plans:
 | 18. Webhook Payload + State-Filter + Coalescing | 6/6 | Complete   | 2026-04-29 |
 | 19. Webhook HMAC Signing + Receiver Examples | 6/6 | Complete   | 2026-04-30 |
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
-| 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 3/11 | In Progress|  |
+| 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 4/11 | In Progress|  |
 | 22. Job Tagging Schema + Validators | 0/— | Not started | — |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 0/— | Not started | — |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |

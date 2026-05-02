@@ -76,15 +76,15 @@ Pre-locked design: `.planning/seeds/SEED-001-custom-docker-labels.md`. Three dec
 
 5 signals on a single inline panel on `run_detail.html` for failed runs. P1 set locked at requirements step (5 signals, not 3).
 
-- [ ] **FCTX-01**: A new failure-context panel renders inline on the run-detail page when `status ∈ {failed, timeout}` (not `success`, `cancelled`, `running`, or `stopped`). The panel is collapsed by default; clicking expands it. The 5 signals below render as labeled rows. `T-V12-FCTX-02`.
+- [x] **FCTX-01**: A new failure-context panel renders inline on the run-detail page when `status ∈ {failed, timeout}` (not `success`, `cancelled`, `running`, or `stopped`). The panel is collapsed by default; clicking expands it. The 5 signals below render as labeled rows. `T-V12-FCTX-02`.
 
-- [ ] **FCTX-02**: **Time-based deltas** — first-failure timestamp ("first failure since last success: 2 hours ago"), consecutive-failure streak ("4 consecutive failures"), link to last successful run ("last successful run: 3 hours ago [view]"). Sourced from a new `get_failure_context(job_id) -> FailureContext` query function in `src/db/queries.rs`. `T-V12-FCTX-03`, `T-V12-FCTX-04`.
+- [x] **FCTX-02**: **Time-based deltas** — first-failure timestamp ("first failure since last success: 2 hours ago"), consecutive-failure streak ("4 consecutive failures"), link to last successful run ("last successful run: 3 hours ago [view]"). Sourced from a new `get_failure_context(job_id) -> FailureContext` query function in `src/db/queries.rs`. `T-V12-FCTX-03`, `T-V12-FCTX-04`.
 
-- [ ] **FCTX-03**: **Image-digest delta** (docker jobs only) — "image digest changed since last success: sha256:abc...→ sha256:def..." with truncation to 12 hex chars per side. Requires `job_runs.image_digest` column populated correctly (FOUND-14). Non-docker jobs hide this row. `T-V12-FCTX-05`, `T-V12-FCTX-06`.
+- [x] **FCTX-03**: **Image-digest delta** (docker jobs only) — "image digest changed since last success: sha256:abc...→ sha256:def..." with truncation to 12 hex chars per side. Requires `job_runs.image_digest` column populated correctly (FOUND-14). Non-docker jobs hide this row. `T-V12-FCTX-05`, `T-V12-FCTX-06`.
 
 - [x] **FCTX-04**: **Config-hash delta** — "config changed since last success" boolean ("Yes" if `current_run.config_hash != last_successful_run.config_hash`, "No" otherwise). Requires new `job_runs.config_hash TEXT NULL` per-run column added in v1.2 migration wave (Research-Phase Correction 2 / Option A). Conservative backfill from current `jobs.config_hash` for old rows; written from `insert_running_run` at fire time. `T-V12-FCTX-07`, `T-V12-FCTX-08`, `T-V12-FCTX-09`.
 
-- [ ] **FCTX-05**: **Duration-vs-p50 deviation** — "duration was 12.3s; typical p50 is 4.2s (3× longer than usual)" computed as `current.duration_ms / p50_of_last_100_successful_runs`. Below 5 sample threshold (no p50 available), this row is suppressed. Reuses `src/web/stats.rs::percentile()` from Phase 13. `T-V12-FCTX-10`.
+- [x] **FCTX-05**: **Duration-vs-p50 deviation** — "duration was 12.3s; typical p50 is 4.2s (3× longer than usual)" computed as `current.duration_ms / p50_of_last_100_successful_runs`. Below 5 sample threshold (no p50 available), this row is suppressed. Reuses `src/web/stats.rs::percentile()` from Phase 13. `T-V12-FCTX-10`.
 
 - [x] **FCTX-06**: **Scheduler-fire-time vs run-start-time skew** — "scheduled fire: 14:30:00; actual start: 14:30:23 (+23s)" computed from `scheduled_for` (already in `job_runs`) and `started_at`. Highlights scheduler back-pressure or executor slow-start situations. `T-V12-FCTX-11`.
 
@@ -189,11 +189,11 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | LBL-04    | 17    | Complete |
 | LBL-05    | 17    | Complete |
 | LBL-06    | 17    | Complete |
-| FCTX-01   | 21    | Pending |
-| FCTX-02   | 21    | Pending |
-| FCTX-03   | 21    | Pending |
+| FCTX-01   | 21    | Complete |
+| FCTX-02   | 21    | Complete |
+| FCTX-03   | 21    | Complete |
 | FCTX-04   | 16    | Complete |
-| FCTX-05   | 21    | Pending |
+| FCTX-05   | 21    | Complete |
 | FCTX-06   | 21    | Complete |
 | FCTX-07   | 16    | Complete |
 | EXIT-01   | 21    | Complete |
