@@ -362,3 +362,269 @@ async fn explain_uses_index_postgres() {
 
     pool.close().await;
 }
+
+// ---------------------------------------------------------------------------
+// Test 3 — SQLite EXPLAIN QUERY PLAN AFTER scheduled_for column lands
+// (Phase 21 / FCTX-06)
+// ---------------------------------------------------------------------------
+//
+// Locks the FCTX-06 invariant from Phase 21 D-18 (CONTEXT.md line 88) and
+// research landmine §10: adding the additive `scheduled_for TEXT NULL`
+// column (migration `20260503_000009_scheduled_for_add.up.sql`) does NOT
+// shift the `idx_job_runs_job_id_start` index plan for the
+// `get_failure_context` CTE.
+//
+// Why this is a separate test rather than an edit to `explain_uses_index_sqlite`:
+//
+//   - The existing test ALREADY runs against the post-migration schema in
+//     Phase 21 (sqlx applies every migration in `migrations/sqlite/` at
+//     `pool.migrate().await`). Once Phase 21 lands, the original test IS
+//     the post-`scheduled_for` test by virtue of file-system ordering.
+//   - This second test exists as a **named, intent-bearing assertion**:
+//     when a future migration touches the `job_runs` schema, this name
+//     surfaces in the diff/test output as the explicit guard for the
+//     skew-column index posture, not just an incidental side effect of
+//     the P16 baseline test.
+//   - The seed body is a near-copy because **research landmine §10**
+//     guarantees the explicit-column INSERT (which omits `scheduled_for`)
+//     remains valid post-migration: SQLite defaults the omitted column to
+//     NULL, exactly the legacy state pre-v1.2 rows live in forever (D-04).
+//
+// Assertions: identical to test 1 (`idx_job_runs_job_id_start` referenced;
+// no bare `SCAN job_runs` without `USING INDEX`).
+
+#[tokio::test]
+async fn explain_uses_index_sqlite_post_scheduled_for() {
+    // Build an in-memory SQLite pool and migrate the schema. This applies
+    // every migration in `migrations/sqlite/` including
+    // `20260503_000009_scheduled_for_add.up.sql` — the additive
+    // `ALTER TABLE job_runs ADD COLUMN scheduled_for TEXT;` that this
+    // test exists to harness.
+    let pool = DbPool::connect("sqlite::memory:")
+        .await
+        .expect("in-memory sqlite pool");
+    assert_eq!(pool.backend(), DbBackend::Sqlite);
+    pool.migrate().await.expect("run migrations");
+
+    let job_id = queries::upsert_job(
+        &pool,
+        "explain-fctx-post-skew-job",
+        "*/5 * * * *",
+        "*/5 * * * *",
+        "command",
+        r#"{"command":"echo fctx-post"}"#,
+        "hash-fctx-post",
+        3600,
+    )
+    .await
+    .expect("upsert job");
+
+    let pool_ref = match pool.writer() {
+        PoolRef::Sqlite(p) => p,
+        _ => panic!("explain_uses_index_sqlite_post_scheduled_for requires the SQLite writer pool"),
+    };
+
+    // VERBATIM the same explicit-column INSERT shape as test 1 above —
+    // research landmine §10 confirms the omitted `scheduled_for` column
+    // defaults to NULL on both backends, so this list survives the
+    // migration unchanged.
+    let insert_sql = "INSERT INTO job_runs \
+        (job_id, job_run_number, status, trigger, start_time, image_digest, config_hash) \
+        VALUES (?, ?, ?, 'manual', ?, NULL, 'seed-hash')";
+
+    let base = chrono::DateTime::parse_from_rfc3339("2026-04-01T00:00:00Z")
+        .expect("parse base timestamp")
+        .with_timezone(&chrono::Utc);
+    let mut tx = pool_ref.begin().await.expect("begin");
+    for n in 1i64..=100 {
+        let status = match n % 5 {
+            0 => "success",
+            1 | 2 => "failed",
+            3 => "timeout",
+            _ => "success",
+        };
+        let start = (base + chrono::Duration::minutes(n)).to_rfc3339();
+        sqlx::query(insert_sql)
+            .bind(job_id)
+            .bind(n)
+            .bind(status)
+            .bind(&start)
+            .execute(&mut *tx)
+            .await
+            .expect("insert job_run");
+    }
+    tx.commit().await.expect("commit");
+
+    let explain_sql = format!("EXPLAIN QUERY PLAN {FCTX_SQL_SQLITE}");
+    let rows = sqlx::query(&explain_sql)
+        .bind(job_id)
+        .fetch_all(pool_ref)
+        .await
+        .expect("explain query plan");
+    let plan_text: String = rows
+        .iter()
+        .map(|r| r.get::<String, _>("detail"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Phase 21 D-18 invariant: scheduled_for is unindexed and not in the
+    // `get_failure_context` WHERE clause, so the plan should still hit
+    // `idx_job_runs_job_id_start` exactly as in test 1. Failure here would
+    // signal an unexpected planner regression introduced by the additive
+    // column — the exact regression FCTX-06 was guarding against.
+    assert!(
+        plan_text.contains("idx_job_runs_job_id_start"),
+        "expected EXPLAIN QUERY PLAN (post-scheduled_for migration) to use \
+         idx_job_runs_job_id_start; got:\n{plan_text}"
+    );
+
+    assert!(
+        !plan_text.contains("SCAN job_runs") || plan_text.contains("USING INDEX"),
+        "EXPLAIN (post-scheduled_for migration) must not show a bare SCAN job_runs \
+         (would mean full table scan); got:\n{plan_text}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 4 — Postgres EXPLAIN AFTER scheduled_for column lands
+// (Phase 21 / FCTX-06)
+// ---------------------------------------------------------------------------
+//
+// Postgres pair of test 3. Same rationale as the sqlite case: locks the
+// FCTX-06 invariant under Phase 21 D-18. Same `#[ignore]` gating as the
+// existing `explain_uses_index_postgres` test (testcontainers-backed,
+// Docker-required; runs in the CI Postgres lane via
+// `cargo nextest run --run-ignored=all`).
+
+#[tokio::test]
+#[ignore]
+async fn explain_uses_index_postgres_post_scheduled_for() {
+    let container = Postgres::default()
+        .start()
+        .await
+        .expect("start postgres container");
+    let host = container.get_host().await.expect("container host");
+    let port = container
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("container port");
+    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+
+    let pool = DbPool::connect(&url).await.expect("DbPool::connect");
+    assert_eq!(pool.backend(), DbBackend::Postgres);
+    // Applies the post-Phase-21 migration set, including
+    // `migrations/postgres/20260503_000009_scheduled_for_add.up.sql`.
+    pool.migrate().await.expect("run migrations");
+
+    let job_id = queries::upsert_job(
+        &pool,
+        "explain-fctx-pg-post-skew",
+        "*/5 * * * *",
+        "*/5 * * * *",
+        "command",
+        r#"{"command":"echo pg-fctx-post"}"#,
+        "hash-pg-fctx-post",
+        3600,
+    )
+    .await
+    .expect("upsert job");
+
+    let pool_ref = match pool.writer() {
+        PoolRef::Postgres(p) => p,
+        _ => panic!("explain_uses_index_postgres_post_scheduled_for requires the Postgres pool"),
+    };
+
+    let base = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
+        .expect("parse base timestamp")
+        .with_timezone(&chrono::Utc);
+    let mut tx = pool_ref.begin().await.expect("begin");
+    const SEED_ROWS: i64 = 10_000;
+    // Same explicit-column-list INSERT as test 2 — research landmine §10:
+    // the omitted `scheduled_for` column defaults to NULL on Postgres just
+    // as on SQLite, so this seed body survives the Phase 21 migration with
+    // zero edits.
+    let insert_sql = "INSERT INTO job_runs \
+        (job_id, job_run_number, status, trigger, start_time, image_digest, config_hash) \
+        VALUES ($1, $2, $3, 'manual', $4, NULL, 'seed-hash')";
+    for n in 1i64..=SEED_ROWS {
+        let status = match n % 5 {
+            0 => "success",
+            1 => "failed",
+            2 => "timeout",
+            3 => "error",
+            _ => "failed",
+        };
+        let start = (base + chrono::Duration::minutes(n)).to_rfc3339();
+        sqlx::query(insert_sql)
+            .bind(job_id)
+            .bind(n)
+            .bind(status)
+            .bind(&start)
+            .execute(&mut *tx)
+            .await
+            .expect("insert job_run");
+    }
+    tx.commit().await.expect("commit seed");
+
+    // ANALYZE both tables — same RESEARCH Pitfall 4 mitigation as test 2.
+    sqlx::query("ANALYZE job_runs")
+        .execute(pool_ref)
+        .await
+        .expect("analyze job_runs");
+    sqlx::query("ANALYZE jobs")
+        .execute(pool_ref)
+        .await
+        .expect("analyze jobs");
+
+    let explain_sql = format!("EXPLAIN (FORMAT JSON) {FCTX_SQL_POSTGRES}");
+    let row = sqlx::query(&explain_sql)
+        .bind(job_id)
+        .fetch_one(pool_ref)
+        .await
+        .expect("explain");
+
+    let plan_json: serde_json::Value = row.get(0);
+
+    // Identical walker to test 2 — keep this duplicated rather than
+    // hoisted to a private helper to preserve copy-locality with the P16
+    // precedent.
+    fn contains_index_scan(v: &serde_json::Value) -> bool {
+        if let Some(node_type) = v.get("Node Type").and_then(|s| s.as_str())
+            && (node_type == "Index Scan"
+                || node_type == "Index Only Scan"
+                || node_type == "Bitmap Index Scan"
+                || node_type == "Bitmap Heap Scan")
+        {
+            return true;
+        }
+        if let Some(plans) = v.get("Plans").and_then(|p| p.as_array())
+            && plans.iter().any(contains_index_scan)
+        {
+            return true;
+        }
+        if let Some(plan) = v.get("Plan")
+            && contains_index_scan(plan)
+        {
+            return true;
+        }
+        if let Some(arr) = v.as_array()
+            && arr.iter().any(contains_index_scan)
+        {
+            return true;
+        }
+        false
+    }
+
+    let plan_str = plan_json.to_string();
+    let has_index_scan = contains_index_scan(&plan_json);
+    let has_index_ref = plan_str.contains("idx_job_runs_job_id_start");
+
+    assert!(
+        has_index_scan || has_index_ref,
+        "expected Postgres EXPLAIN JSON (post-scheduled_for migration) to contain an \
+         Index Scan / Index Only Scan / Bitmap Index/Heap Scan on job_runs OR reference \
+         `idx_job_runs_job_id_start`; got:\n{plan_json:#}"
+    );
+
+    pool.close().await;
+}
