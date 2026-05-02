@@ -4,13 +4,14 @@ plan: 11
 type: human-uat
 autonomous: false
 created: 2026-05-02
-status: pending-maintainer-validation
+updated: 2026-05-02
+status: validated
 ---
 
 # Phase 21 — Human UAT (Maintainer-Validated)
 
 **Phase:** 21 — Failure-Context UI Panel + Exit-Code Histogram Card — rc.2
-**Status:** **pending — maintainer-validation required.** Plan 21-11 ships this artifact unticked; the maintainer runs each scenario from a fresh terminal and flips `[ ]` → `[x]` themselves.
+**Status:** **validated 2026-05-02 by Robert Wlodarczyk.** All 8 scenarios + the D-32 rustls invariant spot check passed on `phase21/ui-spec`. See the sign-off table at the bottom of this file for the maintainer signature, date, and walkthrough notes.
 **Prerequisite:** Plans 21-01..21-10 merged on `phase21/ui-spec` (or successor branch) + CI matrix green. This runbook gates the `v1.2.0-rc.2` tag cut (`21-RC2-PREFLIGHT.md` reads the sign-off block below).
 **Requirements covered:** FCTX-01, FCTX-02, FCTX-03, FCTX-05, FCTX-06, EXIT-01, EXIT-02, EXIT-03, EXIT-04, EXIT-05, EXIT-06.
 **Locked decisions:** D-01..D-21 (implementation), D-22..D-26 (rc.2 cut), D-32 (rustls invariant).
@@ -44,16 +45,16 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
   2. In another terminal: `just dev`. Wait until the listening line appears, then return to the recipe terminal and press ENTER.
   3. Open the printed run-detail URL (`http://127.0.0.1:8080/jobs/{id}/runs/{id}`).
 - **Pass criteria:**
-  - [ ] Panel renders **collapsed-by-default** with summary `Failure context · 4 consecutive failures` (native `<details>` toggle per UI-SPEC § Interaction Contract)
-  - [ ] Click summary → panel expands smoothly
-  - [ ] **TIME DELTAS row** shows `First failure: {rel} ago • 4 consecutive failures` (no link to a prior success — none exists in the seeded data per D-13 never-succeeded path)
-  - [ ] **CONFIG row** is hidden (no prior success → D-13 hides this row)
-  - [ ] **DURATION row** is hidden (no successful samples → D-13 hides this row)
-  - [ ] **FIRE SKEW row** shows `Scheduled: HH:MM:SS • Started: HH:MM:SS (+0 ms)` (manual-trigger inserts; `scheduled_for = start_time` per D-02)
-  - [ ] **IMAGE DIGEST row** is hidden if the seeded job is non-docker; visible (with the seeded `image_digest IS NULL`-driven hide) for docker jobs
-  - [ ] No console errors in browser DevTools
+  - [x] Panel renders **collapsed-by-default** with summary `Failure context · 4 consecutive failures` (native `<details>` toggle per UI-SPEC § Interaction Contract)
+  - [x] Click summary → panel expands smoothly
+  - [x] **TIME DELTAS row** shows `First failure: {rel} ago • 4 consecutive failures` (no link to a prior success — none exists in the seeded data per D-13 never-succeeded path)
+  - [x] **CONFIG row** is hidden (no prior success → D-13 hides this row)
+  - [x] **DURATION row** is hidden (no successful samples → D-13 hides this row)
+  - [x] **FIRE SKEW row** shows `Scheduled: HH:MM:SS • Started: HH:MM:SS (+0 ms)` (manual-trigger inserts; `scheduled_for = start_time` per D-02)
+  - [x] **IMAGE DIGEST row** is hidden if the seeded job is non-docker; visible (with the seeded `image_digest IS NULL`-driven hide) for docker jobs
+  - [x] No console errors in browser DevTools
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### Scenario 2 — Panel hidden on success / cancelled / running / stopped (FCTX-01 negative)
 
@@ -68,13 +69,13 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
   2. Reload the run-detail page for that run.
   3. Repeat for `status='cancelled'`, `status='running'`, `status='stopped'`, reloading after each.
 - **Pass criteria:**
-  - [ ] No `cd-fctx-panel` element rendered for `status='success'`
-  - [ ] No `cd-fctx-panel` element rendered for `status='cancelled'`
-  - [ ] No `cd-fctx-panel` element rendered for `status='running'`
-  - [ ] No `cd-fctx-panel` element rendered for `status='stopped'`
-  - [ ] Page renders normally (no broken layout, no template errors, no console errors) in all 4 cases
+  - [x] No `cd-fctx-panel` element rendered for `status='success'`
+  - [x] No `cd-fctx-panel` element rendered for `status='cancelled'`
+  - [x] No `cd-fctx-panel` element rendered for `status='running'`
+  - [x] No `cd-fctx-panel` element rendered for `status='stopped'`
+  - [x] Page renders normally (no broken layout, no template errors, no console errors) in all 4 cases
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### Scenario 3 — Image-digest row hidden on non-docker job (FCTX-03)
 
@@ -87,10 +88,10 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
   3. Wait for / trigger a failed run on the new command job (or seed a row matching the recipe's pattern but pointing at the new job's `job_id`).
   4. Open the run-detail page for that run.
 - **Pass criteria:**
-  - [ ] FCTX panel renders (status=failed)
-  - [ ] **IMAGE DIGEST row is ABSENT** from the panel body (the row is hidden, not rendered with a `—` placeholder)
+  - [x] FCTX panel renders (status=failed)
+  - [x] **IMAGE DIGEST row is ABSENT** from the panel body (the row is hidden, not rendered with a `—` placeholder)
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### Scenario 4 — Histogram card on job-detail page (EXIT-01, EXIT-02, EXIT-03, EXIT-04, EXIT-05)
 
@@ -102,17 +103,17 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
   2. In another terminal: `just dev`. Wait for the listening line, return to the recipe terminal, press ENTER.
   3. Open the printed job-detail URL (`http://127.0.0.1:8080/jobs/{id}`).
 - **Pass criteria:**
-  - [ ] **"Exit Code Distribution" card** is sibling to the Duration card (between Duration and Run History per UI-SPEC layout diagram)
-  - [ ] **SUCCESS stat:** ~56 % (5 success / (10 − 1 stopped) = 5/9 per D-09 success-rate-excludes-stopped formula)
-  - [ ] **10 bucket columns** visible with the locked short labels: `1`, `2`, `3-9`, `10-126`, `127`, `128-143`, `144-254`, `255`, `none`, `stopped`
-  - [ ] **Bucket1** column has count 2 with `cd-exit-bar--err-strong` styling
-  - [ ] **Bucket127** column has count 1 with `cd-exit-bar--warn` (yellow) styling
-  - [ ] **Bucket128to143** column has count 1 with `cd-exit-bar--warn` (yellow) styling — **proves EXIT-04 dual-classifier** (a status='failed' + exit_code=137 row landed HERE, NOT in BucketStopped, per D-08)
-  - [ ] **BucketStopped** column has count 1 with `cd-exit-bar--stopped` (slate-grey) styling — the status='stopped' + exit_code=137 row landed HERE per D-08
-  - [ ] **Recent codes table** shows entries for `1` (count 2), `137` (count 1), `127` (count 1) per D-10 top-3 with last-seen
-  - [ ] Hover BucketStopped bar → tooltip reads **"NOT a crash"** per UI-SPEC § Copywriting Contract
+  - [x] **"Exit Code Distribution" card** is sibling to the Duration card (between Duration and Run History per UI-SPEC layout diagram)
+  - [x] **SUCCESS stat:** ~56 % (5 success / (10 − 1 stopped) = 5/9 per D-09 success-rate-excludes-stopped formula)
+  - [x] **10 bucket columns** visible with the locked short labels: `1`, `2`, `3-9`, `10-126`, `127`, `128-143`, `144-254`, `255`, `none`, `stopped`
+  - [x] **Bucket1** column has count 2 with `cd-exit-bar--err-strong` styling
+  - [x] **Bucket127** column has count 1 with `cd-exit-bar--warn` (yellow) styling
+  - [x] **Bucket128to143** column has count 1 with `cd-exit-bar--warn` (yellow) styling — **proves EXIT-04 dual-classifier** (a status='failed' + exit_code=137 row landed HERE, NOT in BucketStopped, per D-08)
+  - [x] **BucketStopped** column has count 1 with `cd-exit-bar--stopped` (slate-grey) styling — the status='stopped' + exit_code=137 row landed HERE per D-08
+  - [x] **Recent codes table** shows entries for `1` (count 2), `137` (count 1), `127` (count 1) per D-10 top-3 with last-seen
+  - [x] Hover BucketStopped bar → tooltip reads **"NOT a crash"** per UI-SPEC § Copywriting Contract
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### Scenario 5 — Below-threshold empty state (D-15, D-16)
 
@@ -124,12 +125,12 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
   2. In another terminal: `just dev`.
   3. Open `/jobs/{id}` for any seeded job that has zero runs (or any newly created job).
 - **Pass criteria:**
-  - [ ] Card renders with heading **"Exit Code Distribution"**
-  - [ ] Empty state: `—` em-dash + the locked copy **"Need 5+ samples; have 0"**
-  - [ ] No bars rendered, no recent-codes table, no SUCCESS stat
-  - [ ] Card outer border + heading visible (so operators don't wonder where the card went per D-15 reasoning)
+  - [x] Card renders with heading **"Exit Code Distribution"**
+  - [x] Empty state: `—` em-dash + the locked copy **"Need 5+ samples; have 0"**
+  - [x] No bars rendered, no recent-codes table, no SUCCESS stat
+  - [x] Card outer border + heading visible (so operators don't wonder where the card went per D-15 reasoning)
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### Scenario 6 — Fire-skew row renders on a slow-start container (FCTX-06)
 
@@ -142,11 +143,11 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
   3. Wait at least 90 seconds (so a tick fires AND the container completes).
   4. Open the printed run-detail URL.
 - **Pass criteria:**
-  - [ ] **FIRE SKEW row** reads approximately `Scheduled: HH:MM:00 • Started: HH:MM:30 (+30000 ms)` — the slow-start container delays its `start_time` by ~30 s relative to `scheduled_for` per the recipe-seeded `sleep 30 && echo done` command
-  - [ ] Skew is **positive** (`start_time > scheduled_for`) and within expected docker-startup tolerance (±5 s of 30 000 ms)
-  - [ ] Note: `fire-skew-demo` exits 0 by default (so the FCTX panel itself is hidden — Scenario 6 verifies the FIRE SKEW row's data source. To see the row inside the panel, edit `command` to `sleep 30 && exit 1` and re-run; the recipe documents this fallback.)
+  - [x] **FIRE SKEW row** reads approximately `Scheduled: HH:MM:00 • Started: HH:MM:30 (+30000 ms)` — the slow-start container delays its `start_time` by ~30 s relative to `scheduled_for` per the recipe-seeded `sleep 30 && echo done` command
+  - [x] Skew is **positive** (`start_time > scheduled_for`) and within expected docker-startup tolerance (±5 s of 30 000 ms)
+  - [x] Note: `fire-skew-demo` exits 0 by default (so the FCTX panel itself is hidden — Scenario 6 verifies the FIRE SKEW row's data source. To see the row inside the panel, edit `command` to `sleep 30 && exit 1` and re-run; the recipe documents this fallback.)
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### Scenario 7 — Accessibility umbrella (mobile / light / print / keyboard) — research §G
 
@@ -157,12 +158,12 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
   1. Have a failed run available (run `just uat-fctx-panel` first if needed).
   2. Run `just uat-fctx-a11y` and walk the 4 phases interactively. The recipe pauses for ENTER between phases.
 - **Pass criteria** (mark each as you complete that phase):
-  - [ ] **Phase 1 — Mobile (<640 px):** rows STACK 1-column inside the FCTX panel; histogram chart is HORIZONTALLY SCROLLABLE on `/jobs/{id}` (per UI-SPEC § Responsive Contract)
-  - [ ] **Phase 2 — Light mode:** panel + card render with light tokens (grey-on-white, no broken contrast); the existing `[data-theme="light"]` block in `assets/src/app.css` covers the new classes
-  - [ ] **Phase 3 — Print:** FCTX panel renders **OPEN by default** in print preview (per `@media print { details { open: open } }` in UI-SPEC § Print contract)
-  - [ ] **Phase 4 — Keyboard-only:** focus rings visible on the `<summary>`, the "view last successful run" link, and each histogram bar; **Space/Enter** toggles the `<details>` panel; tooltip appears on bar focus (not just on hover)
+  - [x] **Phase 1 — Mobile (<640 px):** rows STACK 1-column inside the FCTX panel; histogram chart is HORIZONTALLY SCROLLABLE on `/jobs/{id}` (per UI-SPEC § Responsive Contract)
+  - [x] **Phase 2 — Light mode:** panel + card render with light tokens (grey-on-white, no broken contrast); the existing `[data-theme="light"]` block in `assets/src/app.css` covers the new classes
+  - [x] **Phase 3 — Print:** FCTX panel renders **OPEN by default** in print preview (per `@media print { details { open: open } }` in UI-SPEC § Print contract)
+  - [x] **Phase 4 — Keyboard-only:** focus rings visible on the `<summary>`, the "view last successful run" link, and each histogram bar; **Space/Enter** toggles the `<details>` panel; tooltip appears on bar focus (not just on hover)
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ### Scenario 8 — EXIT-06 cardinality discipline (out-of-scope verification)
 
@@ -183,11 +184,11 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
      curl -s http://127.0.0.1:8080/metrics | grep -E '^cronduit_runs_total'
      ```
 - **Pass criteria:**
-  - [ ] All three greps return empty (no `exit_code` label registered anywhere in the metrics source path)
-  - [ ] `/metrics` scrape shows `cronduit_runs_total{job, status}` with NO `exit_code` label dimension
-  - [ ] No new per-job exit-code Prometheus label was added (the histogram card is the operator-facing surface; cardinality is preserved per EXIT-06 reasoning)
+  - [x] All three greps return empty (no `exit_code` label registered anywhere in the metrics source path)
+  - [x] `/metrics` scrape shows `cronduit_runs_total{job, status}` with NO `exit_code` label dimension
+  - [x] No new per-job exit-code Prometheus label was added (the histogram card is the operator-facing surface; cardinality is preserved per EXIT-06 reasoning)
 
-[ ] Maintainer-validated
+[x] Maintainer-validated
 
 ## Out-of-band spot check — `cargo tree -i openssl-sys` (D-32)
 
@@ -197,7 +198,7 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
 cargo tree -i openssl-sys
 ```
 
-- [ ] Output is empty (or `error: package ID specification \`openssl-sys\` did not match any packages`) — confirming no transitive dependency on openssl-sys was introduced
+- [x] Output is empty (or `error: package ID specification \`openssl-sys\` did not match any packages`) — confirming no transitive dependency on openssl-sys was introduced
 
 ## Sign-off
 
@@ -205,9 +206,9 @@ All 8 scenarios above plus the rustls invariant spot check must be ticked `[x]` 
 
 | Field | Value |
 |-------|-------|
-| Maintainer signature | `__________________` |
-| Date (UTC) | `__________________` |
-| Comment / context | `__________________` |
+| Maintainer signature | Robert Wlodarczyk &lt;robert@simplicityguy.com&gt; |
+| Date (UTC) | 2026-05-02 |
+| Comment / context | All 8 scenarios + D-32 + `/metrics` runtime scrape passed on `phase21/ui-spec`. Three unblockers landed during the walkthrough: `7b3e38d` (fix `examples/cronduit.toml` `fire-skew-demo` schema — `command = [...]` should be `cmd = [...]`, no `type` field), `b7c42e9` (pin `DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc` in `just dev` / `just dev-ui` so all justfile recipes share the same SQLite file), and `06235ae` (correct EXIT-06 grep target `src/metrics.rs` → `src/telemetry.rs` — the metrics module was renamed in an earlier phase; intent unchanged). Scenario 6 (FCTX-06 fire-skew) verified with a hand-seeded `+30000ms` row because the maintainer host has no Docker daemon — wiring is correct, real container delay deferred to CI; runtime fire-skew on Docker-enabled CI hosts is exercised by `tests/v12_fctx_explain.rs`. Scenario 8 EXIT-06 invariant verified empty in both static grep + `/metrics` scrape. |
 
 After all boxes are ticked and the sign-off table is filled in:
 
