@@ -37,6 +37,11 @@ pub enum WebhookError {
     HttpStatus {
         code: u16,
         retry_after: Option<std::time::Duration>,
+        /// Phase 20 / WH-05 / BL-03: truncated (≤200 chars) response body preview captured
+        /// at dispatch time. Propagated into webhook_deliveries.last_error for dlq_reason='http_5xx'
+        /// so the audit table carries diagnostic value (CONTEXT D-10 audit-table framing).
+        /// `None` when the response body could not be read or was empty.
+        body_preview: Option<String>,
     },
     #[error("webhook network error: {0}")]
     Network(String),
@@ -306,7 +311,20 @@ impl WebhookDispatcher for HttpDispatcher {
                     retry_after = ?retry_after,
                     "webhook non-2xx"
                 );
-                Err(WebhookError::HttpStatus { code, retry_after })
+                // Phase 20 / WH-05 / BL-03: propagate the truncated preview into the
+                // error so RetryingDispatcher can persist it as last_error on the DLQ
+                // row. Empty string => None so the DB column is NULL when the receiver
+                // sent no body, preserving "NULL means absent".
+                let body_preview_opt = if truncated.is_empty() {
+                    None
+                } else {
+                    Some(truncated)
+                };
+                Err(WebhookError::HttpStatus {
+                    code,
+                    retry_after,
+                    body_preview: body_preview_opt,
+                })
             }
             Err(e) => {
                 let kind = if e.is_timeout() {

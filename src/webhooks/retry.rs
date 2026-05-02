@@ -155,14 +155,23 @@ pub fn parse_retry_after_from_response(
 }
 
 /// Compute sleep delay before the attempt at index `next_attempt`, given the
-/// last error's `retry_after` hint. Per D-07 / D-08:
+/// last error's `retry_after` hint. Per CONTEXT.md D-08 (verbatim locked
+/// contract: `cap = locked_schedule[next_attempt+1] * 1.2`):
 ///   - If `retry_after` is `None` → `jitter(schedule[next_attempt])`.
 ///   - If `retry_after` is `Some(ra)` →
-///     `min(cap_for_slot(next_attempt - 1, schedule), max(jitter(schedule[next_attempt]), ra))`.
+///     `min(cap_for_slot(next_attempt, schedule), max(jitter(schedule[next_attempt]), ra))`.
 ///
-/// Note: the cap uses `next_attempt - 1` because `cap_for_slot(i)` computes the
-/// cap for the sleep AFTER attempt `i` (i.e., before attempt `i + 1`). For the
-/// sleep before `next_attempt`, the relevant slot index is `next_attempt - 1`.
+/// The cap uses `next_attempt` because `cap_for_slot(slot)` is defined as
+/// `schedule[slot+1] * 1.2` (with a last-slot fallback of `schedule[slot] * 1.2`).
+/// For the sleep before attempt index `next_attempt`, D-08's contract is
+/// "the next attempt's worst-case window times 1.2," which is exactly
+/// `schedule[next_attempt+1] * 1.2 == cap_for_slot(next_attempt)`.
+///
+/// Phase 20 BL-02 history: a prior version passed `next_attempt - 1` here,
+/// producing a 36s cap for the first inter-attempt sleep instead of the
+/// documented 360s. The bug surfaced when a receiver returned
+/// `Retry-After: 350` and the chain capped to 36s. Fixed per the locked D-08
+/// contract; do not regress.
 fn compute_sleep_delay(
     next_attempt: usize,
     schedule: &[Duration],
@@ -172,8 +181,10 @@ fn compute_sleep_delay(
     match retry_after {
         None => base,
         Some(ra) => {
-            let prev_slot = next_attempt.saturating_sub(1);
-            let cap = cap_for_slot(prev_slot, schedule);
+            // BL-02 fix: pass `next_attempt` (not `next_attempt - 1`). D-08
+            // locked formula: cap = schedule[next_attempt + 1] * 1.2,
+            // which is exactly cap_for_slot(next_attempt) by definition.
+            let cap = cap_for_slot(next_attempt, schedule);
             std::cmp::min(cap, std::cmp::max(base, ra))
         }
     }
@@ -357,9 +368,18 @@ impl<D: WebhookDispatcher> WebhookDispatcher for RetryingDispatcher<D> {
                     let cls = classify(&e);
                     // Capture per-variant fields BEFORE matching takes ownership.
                     match &e {
-                        WebhookError::HttpStatus { code, retry_after } => {
+                        WebhookError::HttpStatus {
+                            code,
+                            retry_after,
+                            body_preview,
+                        } => {
                             last_status = Some(*code as i64);
-                            last_error = None;
+                            // Phase 20 / WH-05 / BL-03: persist the truncated body
+                            // preview into webhook_deliveries.last_error so http_5xx
+                            // DLQ rows carry diagnostic value (CONTEXT D-10).
+                            // truncate_error caps at 500 chars; HttpDispatcher already
+                            // capped at 200 — the second pass is defense-in-depth.
+                            last_error = body_preview.as_ref().map(|s| truncate_error(s));
                             last_retry_after = *retry_after;
                         }
                         WebhookError::Timeout => {
@@ -467,6 +487,7 @@ mod tests {
         let st = |c: u16| WebhookError::HttpStatus {
             code: c,
             retry_after: None,
+            body_preview: None,
         };
         // 4xx-other → permanent http_4xx
         assert_eq!(
@@ -533,26 +554,51 @@ mod tests {
 
     #[test]
     fn compute_sleep_delay_caps_retry_after_at_slot_cap() {
+        // BL-02 regression lock: per CONTEXT D-08, cap = schedule[next_attempt+1]*1.2.
+        // For next_attempt=1 the cap is schedule[2]*1.2 = 360s (NOT schedule[1]*1.2 = 36s
+        // as the previous buggy implementation produced). This test asserts the
+        // POST-FIX semantics; if it fails with `left: 36s, right: 360s` the BL-02
+        // off-by-one has regressed.
         let schedule = [
             Duration::ZERO,
             Duration::from_secs(30),
             Duration::from_secs(300),
         ];
-        // For sleep before attempt 1 (next_attempt=1), prev_slot=0,
-        // cap = schedule[1]*1.2 = 36s. Retry-After: 9999 must be capped at 36s.
+        // For sleep before attempt 1 (next_attempt=1):
+        //   cap = cap_for_slot(1) = schedule[2]*1.2 = 360s. Retry-After:9999 → 360s.
         let d = compute_sleep_delay(1, &schedule, Some(Duration::from_secs(9999)));
         assert_eq!(
             d,
-            Duration::from_secs_f64(36.0),
-            "Retry-After: 9999 must be capped at cap_for_slot(0) = 36s"
+            Duration::from_secs_f64(360.0),
+            "Retry-After: 9999 must be capped at cap_for_slot(next_attempt=1) = 360s per D-08"
         );
-        // For sleep before attempt 2 (next_attempt=2), prev_slot=1,
-        // cap = schedule[2]*1.2 = 360s.
+        // For sleep before attempt 2 (next_attempt=2):
+        //   cap = cap_for_slot(2) = last-slot fallback schedule[2]*1.2 = 360s.
         let d = compute_sleep_delay(2, &schedule, Some(Duration::from_secs(9999)));
         assert_eq!(
             d,
             Duration::from_secs_f64(360.0),
-            "Retry-After: 9999 must be capped at cap_for_slot(1) = 360s"
+            "Retry-After: 9999 must be capped at cap_for_slot(next_attempt=2) last-slot fallback = 360s"
+        );
+    }
+
+    #[test]
+    fn compute_sleep_delay_first_sleep_uses_attempt_2_cap_per_d08() {
+        // BL-02 D-08 lock: a receiver returning Retry-After: 350 between attempts 1
+        // and 2 must have the 350s honored end-to-end (350 < cap_for_slot(1) = 360).
+        // Pre-fix code capped at cap_for_slot(0) = 36s, silently truncating 350 → 36.
+        let schedule = [
+            Duration::ZERO,
+            Duration::from_secs(30),
+            Duration::from_secs(300),
+        ];
+        let d = compute_sleep_delay(1, &schedule, Some(Duration::from_secs(350)));
+        assert_eq!(
+            d,
+            Duration::from_secs(350),
+            "Retry-After:350 between attempts 1 and 2 must be honored exactly \
+             (within cap_for_slot(1)=360, above jitter floor schedule[1]*0.8=24s). \
+             If this asserts 36s, BL-02 has regressed."
         );
     }
 
