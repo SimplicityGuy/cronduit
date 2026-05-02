@@ -21,6 +21,20 @@ use cronduit::db::DbPool;
 use cronduit::db::queries::PoolRef;
 use cronduit::webhooks::{HttpDispatcher, RetryingDispatcher, RunFinalized, WebhookDispatcher};
 
+/// Drives `tokio::time::pause()`d clocks forward while the dispatcher under test
+/// makes real HTTP roundtrips to a wiremock server. Yields many times per
+/// virtual-time advance so reqwest's virtual 10s request timeout doesn't expire
+/// before wiremock can service the request — the bug observed on slow CI
+/// runners with a 1:1 yield/advance ratio.
+async fn drive_paused_clock() {
+    loop {
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_millis(500)).await;
+    }
+}
+
 async fn setup_test_db() -> DbPool {
     let pool = DbPool::connect("sqlite::memory:")
         .await
@@ -187,12 +201,7 @@ async fn dlq_reasons_table_coverage() {
         tokio::time::pause();
         let _ = tokio::select! {
             r = dispatcher.deliver(&event) => r,
-            _ = async {
-                loop {
-                    tokio::task::yield_now().await;
-                    tokio::time::advance(Duration::from_millis(500)).await;
-                }
-            } => unreachable!(),
+            _ = drive_paused_clock() => unreachable!(),
         };
         tokio::time::resume();
 
@@ -222,12 +231,7 @@ async fn dlq_reasons_table_coverage() {
         tokio::time::pause();
         let _ = tokio::select! {
             r = dispatcher.deliver(&event) => r,
-            _ = async {
-                loop {
-                    tokio::task::yield_now().await;
-                    tokio::time::advance(Duration::from_millis(500)).await;
-                }
-            } => unreachable!(),
+            _ = drive_paused_clock() => unreachable!(),
         };
         tokio::time::resume();
 
@@ -267,12 +271,7 @@ async fn dlq_url_matches_configured_url() {
     tokio::time::pause();
     let _ = tokio::select! {
         r = dispatcher.deliver(&event) => r,
-        _ = async {
-            loop {
-                tokio::task::yield_now().await;
-                tokio::time::advance(Duration::from_millis(500)).await;
-            }
-        } => unreachable!(),
+        _ = drive_paused_clock() => unreachable!(),
     };
     tokio::time::resume();
 
@@ -324,12 +323,7 @@ async fn dlq_5xx_row_has_body_preview_in_last_error() {
     tokio::time::pause();
     let result = tokio::select! {
         r = dispatcher.deliver(&event) => r,
-        _ = async {
-            loop {
-                tokio::task::yield_now().await;
-                tokio::time::advance(Duration::from_millis(500)).await;
-            }
-        } => unreachable!(),
+        _ = drive_paused_clock() => unreachable!(),
     };
     tokio::time::resume();
     assert!(result.is_err(), "503 must exhaust the chain and return Err");

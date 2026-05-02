@@ -25,6 +25,20 @@ use cronduit::db::DbPool;
 use cronduit::db::queries::PoolRef;
 use cronduit::webhooks::{HttpDispatcher, RetryingDispatcher, RunFinalized, WebhookDispatcher};
 
+/// Drives `tokio::time::pause()`d clocks forward while the dispatcher under test
+/// makes real HTTP roundtrips to a wiremock server. Yields many times per
+/// virtual-time advance so reqwest's virtual 10s request timeout doesn't expire
+/// before wiremock can service the request — the bug observed on slow CI
+/// runners with a 1:1 yield/advance ratio.
+async fn drive_paused_clock() {
+    loop {
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_millis(500)).await;
+    }
+}
+
 async fn setup_test_db() -> DbPool {
     let pool = DbPool::connect("sqlite::memory:")
         .await
@@ -164,12 +178,7 @@ async fn four_oh_eight_retries_per_schedule() {
 
     let result = tokio::select! {
         r = dispatcher.deliver(&event) => r,
-        _ = async {
-            loop {
-                tokio::task::yield_now().await;
-                tokio::time::advance(Duration::from_millis(500)).await;
-            }
-        } => unreachable!(),
+        _ = drive_paused_clock() => unreachable!(),
     };
     assert!(result.is_err(), "408-exhausted must return Err");
 

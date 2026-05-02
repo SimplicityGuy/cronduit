@@ -29,6 +29,20 @@ use cronduit::db::queries::PoolRef;
 use cronduit::webhooks::retry::{cap_for_slot, parse_retry_after_from_response};
 use cronduit::webhooks::{HttpDispatcher, RetryingDispatcher, RunFinalized, WebhookDispatcher};
 
+/// Drives `tokio::time::pause()`d clocks forward while the dispatcher under test
+/// makes real HTTP roundtrips to a wiremock server. Yields many times per
+/// virtual-time advance so reqwest's virtual 10s request timeout doesn't expire
+/// before wiremock can service the request — the bug observed on slow CI
+/// runners with a 1:1 yield/advance ratio.
+async fn drive_paused_clock() {
+    loop {
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_millis(500)).await;
+    }
+}
+
 async fn setup_test_db() -> DbPool {
     let pool = DbPool::connect("sqlite::memory:")
         .await
@@ -129,12 +143,7 @@ async fn receiver_429_with_retry_after_header_extends_sleep_to_hint_within_cap()
 
     let result = tokio::select! {
         r = dispatcher.deliver(&event) => r,
-        _ = async {
-            loop {
-                tokio::task::yield_now().await;
-                tokio::time::advance(Duration::from_millis(500)).await;
-            }
-        } => unreachable!(),
+        _ = drive_paused_clock() => unreachable!(),
     };
 
     let elapsed_virtual = start_virtual.elapsed();
@@ -200,12 +209,7 @@ async fn receiver_429_with_retry_after_9999_is_capped() {
 
     let result = tokio::select! {
         r = dispatcher.deliver(&event) => r,
-        _ = async {
-            loop {
-                tokio::task::yield_now().await;
-                tokio::time::advance(Duration::from_millis(500)).await;
-            }
-        } => unreachable!(),
+        _ = drive_paused_clock() => unreachable!(),
     };
 
     let elapsed_virtual = start_virtual.elapsed();
@@ -213,15 +217,18 @@ async fn receiver_429_with_retry_after_9999_is_capped() {
 
     // Per CONTEXT D-08 (post-BL-02 fix): cap_for_slot(next_attempt=1) = 360s,
     // cap_for_slot(next_attempt=2) = 360s (last-slot fallback). Total chain
-    // sleep = 360 + 360 = 720s. Slack 60s for driver loop overhead. Pre-fix
-    // would have been 36 + 360 = 396s, so the new assertion bound (>=700s, <=780s)
-    // distinguishes the FIXED behavior from the BUGGY one.
+    // sleep ≈ 360 + 360 = 720s. The lower bound 700s distinguishes the post-fix
+    // behavior (BL-02 closed) from the pre-fix one (36 + 360 = 396s). The upper
+    // bound 1500s catches the no-cap regression (would be 9999 + 9999 = 19998s)
+    // while tolerating CI-runner driver-loop slop (paused-clock advance can drift
+    // by 100s+ on shared GitHub runners).
     assert!(
-        elapsed_virtual >= Duration::from_secs(700) && elapsed_virtual <= Duration::from_secs(780),
+        elapsed_virtual >= Duration::from_secs(700) && elapsed_virtual <= Duration::from_secs(1500),
         "Retry-After: 9999 must be capped at cap_for_slot() per D-08; chain virtual \
-         time must be ≈ 720s (360 + 360), got {:?}. \
+         time must be in [700s, 1500s] (≈ 720s + driver slop), got {:?}. \
          If < 700s, BL-02 has regressed (cap_for_slot(0)=36 incorrectly used). \
-         If > 780s, the cap is not being applied at all (T-20-03 regression).",
+         If > 1500s, the cap is not being applied at all (T-20-03 regression — \
+         would be ~19998s without cap).",
         elapsed_virtual
     );
 }
@@ -245,27 +252,19 @@ async fn receiver_200_no_sleep() {
     let event = make_run_finalized(run_id, job_id, "happy-path-job");
 
     tokio::time::pause();
-    let start_virtual = tokio::time::Instant::now();
 
     let result = tokio::select! {
         r = dispatcher.deliver(&event) => r,
-        _ = async {
-            loop {
-                tokio::task::yield_now().await;
-                tokio::time::advance(Duration::from_millis(500)).await;
-            }
-        } => unreachable!(),
+        _ = drive_paused_clock() => unreachable!(),
     };
-    let elapsed = start_virtual.elapsed();
 
     assert!(result.is_ok(), "200 → Ok; got {result:?}");
-    // schedule[1] = 30s — assert virtual elapsed is well under that to prove
-    // the chain did NOT enter the retry sleep path. Driver loop overhead
-    // accounts for ~10-15s of virtual-time slop on a 200 response.
-    assert!(
-        elapsed < Duration::from_secs(25),
-        "200 on attempt 1 → must NOT enter schedule sleep (≪ 30s); got {elapsed:?}"
-    );
+    // The semantics of "no retry on 200" are captured by the request count
+    // and the Ok result — NOT by virtual elapsed time. The driver loop's
+    // paused-clock advances can accumulate large virtual-time slop on slow
+    // CI runners (observed 94-200s on shared GitHub runners), but the chain
+    // still completes after exactly one HTTP request. Asserting the request
+    // count is the truth: the chain did not enter the retry sleep path.
     let requests = server.received_requests().await.expect("wiremock requests");
     assert_eq!(requests.len(), 1, "200 must NOT retry");
 }
