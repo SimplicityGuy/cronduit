@@ -369,11 +369,29 @@ impl From<PgDbJobRow> for DbJob {
 /// Phase 16 FCTX-04: `config_hash` is captured at fire time (BEFORE the executor
 /// spawns) and bound into the new `job_runs.config_hash` column so a
 /// reload-mid-fire still reflects the run's actual config rather than the latest.
+///
+/// Phase 21 FCTX-06 (D-02): `scheduled_for` is the fire-decision-time RFC3339
+/// timestamp. Cron tick + `@random` paths pass `Some(entry.fire_time.to_rfc3339())`;
+/// Run Now / api-triggered paths pass `Some(start_time_rfc3339)` so skew == 0ms
+/// by definition (UI-SPEC § Copywriting Contract). Legacy fallback paths (e.g.,
+/// the unused `SchedulerCmd::RunNow` arm) pass `None`. NULL is the intended
+/// legacy state for pre-v1.2 rows; the FIRE SKEW row hides on NULL per UI-SPEC.
+///
+/// `#[allow(clippy::too_many_arguments)]`: P21 D-02 widens
+/// `insert_running_run` to record the fire-decision-time
+/// `scheduled_for` (FCTX-06). The 5-arg shape mirrors the
+/// `job_runs` row's INSERT-time write surface (status, trigger,
+/// start_time, job_run_number, config_hash, scheduled_for). The
+/// param list IS the schema for the write surface; bundling
+/// would re-marshal data that is already in scope at every
+/// caller. Mirrors P16's `finalize_run` widening discipline.
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_running_run(
     pool: &DbPool,
     job_id: i64,
     trigger: &str,
     config_hash: &str, // Phase 16 FCTX-04
+    scheduled_for: Option<&str>, // Phase 21 FCTX-06 (RFC3339; None for legacy fallback paths)
 ) -> anyhow::Result<i64> {
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -389,14 +407,15 @@ pub async fn insert_running_run(
             .await?;
 
             let run_id: i64 = sqlx::query_scalar(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number, config_hash) \
-                 VALUES (?1, 'running', ?2, ?3, ?4, ?5) RETURNING id",
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number, config_hash, scheduled_for) \
+                 VALUES (?1, 'running', ?2, ?3, ?4, ?5, ?6) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
             .bind(reserved)
             .bind(config_hash) // Phase 16 FCTX-04: NEW bind, position ?5
+            .bind(scheduled_for) // Phase 21 FCTX-06: NEW bind, position ?6 (Option<&str> binds NULL on None)
             .fetch_one(&mut *tx)
             .await?;
 
@@ -414,14 +433,15 @@ pub async fn insert_running_run(
             .await?;
 
             let run_id: i64 = sqlx::query_scalar(
-                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number, config_hash) \
-                 VALUES ($1, 'running', $2, $3, $4, $5) RETURNING id",
+                "INSERT INTO job_runs (job_id, status, trigger, start_time, job_run_number, config_hash, scheduled_for) \
+                 VALUES ($1, 'running', $2, $3, $4, $5, $6) RETURNING id",
             )
             .bind(job_id)
             .bind(trigger)
             .bind(&now)
             .bind(reserved)
             .bind(config_hash) // Phase 16 FCTX-04: NEW bind, position $5
+            .bind(scheduled_for) // Phase 21 FCTX-06: NEW bind, position $6 (Option<&str> binds NULL on None)
             .fetch_one(&mut *tx)
             .await?;
 
@@ -620,6 +640,11 @@ pub struct DbRunDetail {
     /// `jobs.config_hash`. See migration `*_000007_config_hash_backfill.up.sql` for
     /// the BACKFILL_CUTOFF_RFC3339 marker (D-03).
     pub config_hash: Option<String>,
+    /// Phase 21 FCTX-06: fire-decision-time RFC3339 timestamp captured by
+    /// `insert_running_run` (D-02). NULL on pre-v1.2 rows that landed before
+    /// migration `*_000009_scheduled_for_add.up.sql` (D-04 — no backfill).
+    /// The FIRE SKEW row in the failure-context panel hides on NULL per UI-SPEC.
+    pub scheduled_for: Option<String>,
 }
 
 /// Phase 16 FCTX-07: failure-context query result. Returned by
@@ -1300,7 +1325,7 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
     let sql_sqlite = r#"
         SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
                r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message,
-               r.image_digest, r.config_hash
+               r.image_digest, r.config_hash, r.scheduled_for
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = ?1
@@ -1308,7 +1333,7 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
     let sql_postgres = r#"
         SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
                r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message,
-               r.image_digest, r.config_hash
+               r.image_digest, r.config_hash, r.scheduled_for
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = $1
@@ -1334,6 +1359,7 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
                 error_message: r.get("error_message"),
                 image_digest: r.get("image_digest"), // Phase 16 FOUND-14
                 config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
+                scheduled_for: r.get("scheduled_for"), // Phase 21 FCTX-06
             }))
         }
         PoolRef::Postgres(p) => {
@@ -1355,6 +1381,7 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
                 error_message: r.get("error_message"),
                 image_digest: r.get("image_digest"), // Phase 16 FOUND-14
                 config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
+                scheduled_for: r.get("scheduled_for"), // Phase 21 FCTX-06
             }))
         }
     }
@@ -2136,7 +2163,7 @@ mod tests {
         .await
         .unwrap();
 
-        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash", None)
             .await
             .unwrap();
         assert!(run_id > 0);
@@ -2177,7 +2204,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash", None)
             .await
             .unwrap();
 
@@ -2226,7 +2253,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash")
+        let run_id = insert_running_run(&pool, job_id, "scheduled", "testhash", None)
             .await
             .unwrap();
 
@@ -2286,7 +2313,7 @@ mod tests {
     }
 
     async fn insert_run(pool: &DbPool, job_id: i64, status: &str, trigger: &str) -> i64 {
-        let run_id = insert_running_run(pool, job_id, trigger, "testhash")
+        let run_id = insert_running_run(pool, job_id, trigger, "testhash", None)
             .await
             .unwrap();
         if status != "running" {
