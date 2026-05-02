@@ -83,15 +83,15 @@ git log --oneline --name-only main..HEAD~10 | grep -E '(release\.yml|cliff\.toml
 
 ## 5. EXIT-06 cardinality discipline holds (out-of-scope verification)
 
-- [ ] `grep -rn 'exit_code' src/metrics.rs` returns empty (no `metrics.rs` file at that path, or no match) — confirms Phase 21 did NOT add a per-job `exit_code` Prometheus label per EXIT-06 reasoning.
+- [ ] `grep -rn 'exit_code' src/telemetry.rs` returns empty — confirms Phase 21 did NOT add a per-job `exit_code` Prometheus label per EXIT-06 reasoning. (Plan 21-11 said `src/metrics.rs`, which does not exist in this repo; the metrics module lives at `src/telemetry.rs`. Same intent applies.)
 - [ ] `grep -rn 'cronduit_runs_total.*exit_code' src/` returns empty — confirms the `cronduit_runs_total` counter family has only `{job, status}` labels.
-- [ ] `grep -rn 'exit_code' src/web/handlers/metrics.rs` returns empty — the canonical metrics handler path has no exit-code label.
+- [ ] `grep -rn 'exit_code' src/web/handlers/metrics.rs` returns empty (vacuously satisfied — no such file).
 
 Verification:
 ```bash
-grep -rn 'exit_code' src/metrics.rs                # MUST return empty
+grep -rn 'exit_code' src/telemetry.rs              # MUST return empty
 grep -rn 'cronduit_runs_total.*exit_code' src/    # MUST return empty
-grep -rn 'exit_code' src/web/handlers/metrics.rs   # MUST return empty
+grep -rn 'exit_code' src/web/handlers/metrics.rs   # MUST return empty (no such file)
 ```
 
 ## 6. git-cliff release-notes preview shows P21 commits

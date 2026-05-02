@@ -170,11 +170,13 @@ Each scenario lists: the goal, the recipe(s) to run, the expected output, and a 
 
 - **Recipe:** None (this is a static-analysis grep + a runtime `/metrics` scrape spot check).
 - **Steps:**
-  1. Run the canonical greps:
+  1. Run the canonical greps. The metrics module in this repo is `src/telemetry.rs`
+     (the must_have in 21-11-PLAN.md said `src/metrics.rs` — a stale path that does
+     not exist; same intent applies to `src/telemetry.rs`):
      ```bash
-     grep -rn 'exit_code' src/metrics.rs                # MUST return empty (no metrics.rs file or no match)
-     grep -rn 'cronduit_runs_total.*exit_code' src/    # MUST return empty
-     grep -rn 'exit_code' src/web/handlers/metrics.rs   # MUST return empty (canonical handler path)
+     grep -rn 'exit_code' src/telemetry.rs              # MUST return empty
+     grep -rn 'cronduit_runs_total.*exit_code' src/     # MUST return empty
+     grep -rn 'exit_code' src/web/handlers/metrics.rs   # MUST return empty (no such file in this repo, vacuously satisfied)
      ```
   2. With `just dev` running, scrape `/metrics`:
      ```bash
