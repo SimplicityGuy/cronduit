@@ -61,6 +61,14 @@ struct JobExecConfig {
 /// instead — that path has the API handler insert the row on the handler
 /// thread first to eliminate the run-detail 404 race (UI-19).
 ///
+/// `scheduled_for` (Phase 21 FCTX-06; D-02): the fire-decision-time RFC3339
+/// timestamp computed by the caller. Cron tick + `@random` paths in
+/// `scheduler/mod.rs` pass `Some(entry.fire_time.to_rfc3339())`. Catch-up
+/// and the unused legacy `SchedulerCmd::RunNow` arm pass `None` as a
+/// defensive fallback (no fire_time is materialized for those code paths).
+/// Owned `String` because the value crosses the `tokio::spawn` boundary;
+/// converted to `&str` via `.as_deref()` at the `insert_running_run` call.
+///
 /// 1. Insert running row (via `insert_running_run` — the row creator)
 /// 2. `continue_run` handles the rest of the lifecycle:
 ///    - Create log channel
@@ -68,6 +76,7 @@ struct JobExecConfig {
 ///    - Dispatch to command/script/docker executor
 ///    - Close sender + wait for log writer
 ///    - Finalize run, record metrics, remove broadcast_tx
+#[allow(clippy::too_many_arguments)]
 pub async fn run_job(
     pool: DbPool,
     docker: Option<Docker>,
@@ -76,6 +85,7 @@ pub async fn run_job(
     cancel: CancellationToken,
     active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
     webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
+    scheduled_for: Option<String>, // Phase 21 FCTX-06 (D-02): RFC3339 fire-decision timestamp
 ) -> RunResult {
     let start = tokio::time::Instant::now();
 
@@ -83,7 +93,17 @@ pub async fn run_job(
     // Phase 16 FCTX-04: capture per-run config_hash at fire time from the
     // resolved DbJob so a reload-mid-fire still reflects the run's actual
     // config rather than the latest reloaded value.
-    let run_id = match insert_running_run(&pool, job.id, &trigger, &job.config_hash).await {
+    // Phase 21 FCTX-06 (D-02): also persist the fire-decision-time
+    // `scheduled_for` so the FCTX panel can compute fire skew.
+    let run_id = match insert_running_run(
+        &pool,
+        job.id,
+        &trigger,
+        &job.config_hash,
+        scheduled_for.as_deref(),
+    )
+    .await
+    {
         Ok(id) => id,
         Err(e) => {
             tracing::error!(
@@ -758,6 +778,7 @@ mod tests {
             cancel,
             test_active_runs(),
             webhook_tx_test,
+            None, // Phase 21 FCTX-06: test passes None (no fire_time materialized in test fixture)
         )
         .await;
 
@@ -827,6 +848,7 @@ mod tests {
             cancel,
             test_active_runs(),
             webhook_tx_test,
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await;
 
@@ -882,6 +904,7 @@ mod tests {
             cancel,
             test_active_runs(),
             webhook_tx_test,
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await;
 
@@ -935,7 +958,7 @@ mod tests {
 
         // Pre-insert a row on behalf of the "API handler".
         let pre_run_id =
-            crate::db::queries::insert_running_run(&pool, job.id, "manual", "testhash")
+            crate::db::queries::insert_running_run(&pool, job.id, "manual", "testhash", None)
                 .await
                 .unwrap();
 
@@ -1019,7 +1042,8 @@ mod tests {
                 "scheduled".to_string(),
                 cancel1,
                 active1,
-                webhook_tx_test1
+                webhook_tx_test1,
+                None, // Phase 21 FCTX-06: test passes None
             ),
             run_job(
                 pool2,
@@ -1028,7 +1052,8 @@ mod tests {
                 "scheduled".to_string(),
                 cancel2,
                 active2,
-                webhook_tx_test2
+                webhook_tx_test2,
+                None, // Phase 21 FCTX-06: test passes None
             ),
         );
 

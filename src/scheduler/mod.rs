@@ -124,6 +124,12 @@ impl SchedulerLoop {
                     for m in &missed {
                         if let Some(job) = self.jobs.get(&m.job_id) {
                             let child_cancel = self.cancel.child_token();
+                            // Phase 21 FCTX-06 (D-02): catch-up uses the missed
+                            // fire-decision time (`m.missed_time`) so the FCTX panel
+                            // surfaces the operator-meaningful skew (gap between when
+                            // the slot SAID this should fire and when it actually
+                            // fired post-clock-jump).
+                            let scheduled_for = Some(m.missed_time.to_rfc3339());
                             join_set.spawn(run::run_job(
                                 self.pool.clone(),
                                 self.docker.clone(),
@@ -132,6 +138,7 @@ impl SchedulerLoop {
                                 child_cancel,
                                 self.active_runs.clone(),
                                 self.webhook_tx.clone(),
+                                scheduled_for,
                             ));
                             tracing::warn!(
                                 target: "cronduit.scheduler",
@@ -149,6 +156,13 @@ impl SchedulerLoop {
                     for entry in &due {
                         if let Some(job) = self.jobs.get(&entry.job_id) {
                             let child_cancel = self.cancel.child_token();
+                            // Phase 21 FCTX-06 (D-02): cron + @random tick paths
+                            // both use `entry.fire_time` (landmine §8 — @random
+                            // resolution writes its slot time into the same field
+                            // before pushing to the heap). RFC3339-encoded so the
+                            // run-detail FCTX panel can compute fire skew against
+                            // `start_time`.
+                            let scheduled_for = Some(entry.fire_time.to_rfc3339());
                             join_set.spawn(run::run_job(
                                 self.pool.clone(),
                                 self.docker.clone(),
@@ -157,6 +171,7 @@ impl SchedulerLoop {
                                 child_cancel,
                                 self.active_runs.clone(),
                                 self.webhook_tx.clone(),
+                                scheduled_for,
                             ));
                             tracing::info!(
                                 target: "cronduit.scheduler",
@@ -194,6 +209,11 @@ impl SchedulerLoop {
                         Some(cmd::SchedulerCmd::RunNow { job_id }) => {
                             if let Some(job) = self.jobs.get(&job_id) {
                                 let child_cancel = self.cancel.child_token();
+                                // Phase 21 FCTX-06 (D-02): legacy cmd-channel
+                                // RunNow arm doesn't fire today (the UI Run Now
+                                // path uses `RunNowWithRunId` instead — landmine
+                                // §9). Defensive `None` keeps the arm compiling
+                                // and FIRE SKEW row hidden if it ever does fire.
                                 join_set.spawn(run::run_job(
                                     self.pool.clone(),
                                     self.docker.clone(),
@@ -202,6 +222,7 @@ impl SchedulerLoop {
                                     child_cancel,
                                     self.active_runs.clone(),
                                     self.webhook_tx.clone(),
+                                    None,
                                 ));
                                 tracing::info!(
                                     target: "cronduit.scheduler",
@@ -293,6 +314,11 @@ impl SchedulerLoop {
                                         // Re-enqueue RunNow so it isn't dropped.
                                         if let Some(job) = self.jobs.get(&rid) {
                                             let child_cancel = self.cancel.child_token();
+                                            // Phase 21 FCTX-06 (D-02): legacy
+                                            // RunNow drain-arm matches the
+                                            // primary RunNow handler — defensive
+                                            // None (this arm doesn't fire today
+                                            // either; landmine §9).
                                             join_set.spawn(run::run_job(
                                                 self.pool.clone(),
                                                 self.docker.clone(),
@@ -301,6 +327,7 @@ impl SchedulerLoop {
                                                 child_cancel,
                                                 self.active_runs.clone(),
                                                 self.webhook_tx.clone(),
+                                                None,
                                             ));
                                         }
                                     }
