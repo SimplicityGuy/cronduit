@@ -52,15 +52,13 @@ struct RunDetailPage {
     /// Phase 21 FCTX-01: panel visibility gate. True iff
     /// `run.status ∈ {failed, timeout}` AND `get_failure_context()` succeeded.
     /// Soft-fails to false on DB error (D-12) so the rest of the page renders.
-    /// Fields tolerated as `dead_code` until plan 21-06 lands the askama
-    /// template insert that consumes them.
-    #[allow(dead_code)]
+    /// Consumed by the FCTX panel insert in `templates/pages/run_detail.html`
+    /// (plan 21-06).
     show_fctx_panel: bool,
     /// Phase 21 FCTX-01..06: pre-formatted view-model for the failure-context
     /// panel. `None` when `show_fctx_panel` is false. The askama template
     /// substitutes `{{ value }}` with zero logic — every conditional copy
     /// rendering happens in `build_fctx_view` per UI-SPEC § Copywriting Contract.
-    #[allow(dead_code)]
     fctx: Option<FctxView>,
 }
 
@@ -158,7 +156,12 @@ pub struct RunDetailView {
 /// - `fire_skew_value` — `None` when `scheduled_for IS NULL` per D-04.
 ///
 /// Field declaration order matches research §H verbatim.
-#[allow(dead_code)] // consumed by plan 21-06 (template insert + CSS)
+///
+/// `consecutive_failures` and `last_success_run_id` are populated for
+/// future consumers (e.g., metrics, JSON API) but the FCTX panel template
+/// only references their derived strings (`summary_meta` and
+/// `last_success_run_url`); hence the struct-level `#[allow(dead_code)]`.
+#[allow(dead_code)]
 pub struct FctxView {
     pub consecutive_failures: i64,
     pub summary_meta: String,

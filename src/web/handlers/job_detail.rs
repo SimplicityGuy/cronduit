@@ -56,9 +56,7 @@ struct JobDetailPage {
     /// Contract. Soft-fail produces an empty-state ExitHistogramView with
     /// `has_min_samples=false; sample_count=0` (NOT `None`) so the template
     /// branches on `has_min_samples` instead of `{% match %}` per the
-    /// logic-free contract. Tolerated as `dead_code` until plan 21-06 lands
-    /// the askama template insert that consumes it.
-    #[allow(dead_code)]
+    /// logic-free contract. Consumed by `templates/pages/job_detail.html`.
     exit_histogram: ExitHistogramView,
 }
 
