@@ -7,7 +7,11 @@
 -- (D-04 — no backfill; the FIRE SKEW row in the failure-context panel
 -- hides on NULL per UI-SPEC).
 --
--- Pairs with migrations/sqlite/20260502_000009_scheduled_for_add.up.sql.
+-- Pairs with migrations/sqlite/20260503_000009_scheduled_for_add.up.sql.
+-- (Date prefix bumped to 20260503 because sqlx parses the leading digits
+-- before the first `_` as the migration version: `20260502_000008` and
+-- `20260502_000009` would both resolve to version `20260502` and trigger
+-- a UNIQUE constraint failure on `_sqlx_migrations.version`.)
 -- Any structural change MUST land in both files in the same PR;
 -- tests/schema_parity.rs::normalize_type collapses TEXT/VARCHAR/CHARACTER
 -- VARYING/CHAR/CHARACTER to TEXT, so this column passes parity with zero
