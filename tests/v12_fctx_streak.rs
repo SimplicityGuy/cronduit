@@ -187,7 +187,7 @@ async fn streak_resets_on_intervening_success() {
 async fn write_site_captures_config_hash() {
     let pool = setup_pool().await;
     let job_id = seed_job(&pool, "config-write", "test-config-A").await;
-    let run_id = queries::insert_running_run(&pool, job_id, "manual", "test-config-A")
+    let run_id = queries::insert_running_run(&pool, job_id, "manual", "test-config-A", None)
         .await
         .unwrap();
 
@@ -215,10 +215,10 @@ async fn write_site_captures_config_hash() {
 async fn reload_changes_config_hash() {
     let pool = setup_pool().await;
     let job_id = seed_job(&pool, "config-reload", "v1").await;
-    let r1 = queries::insert_running_run(&pool, job_id, "manual", "v1")
+    let r1 = queries::insert_running_run(&pool, job_id, "manual", "v1", None)
         .await
         .unwrap();
-    let r2 = queries::insert_running_run(&pool, job_id, "manual", "v2")
+    let r2 = queries::insert_running_run(&pool, job_id, "manual", "v2", None)
         .await
         .unwrap();
 

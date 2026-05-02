@@ -285,3 +285,30 @@ webhook = { url = "http://127.0.0.1:9999/unsigned", states = ["failed", "stopped
 # use_defaults = false
 # timeout = "5m"
 # webhook = { url = "http://127.0.0.1:9993/", secret = "${WEBHOOK_SECRET}" }
+
+# =====================================================================
+# Phase 21 -- fire-skew demo job (uat-fire-skew recipe)
+# =====================================================================
+#
+# Demonstrates FCTX-06 fire-skew on a docker job whose container takes 30s to
+# complete its work after fire (here: a `sleep 30 && echo done`). Used by
+# `just uat-fire-skew`. The operator-facing diagnostic is "scheduled fire was
+# 14:30:00, actual start was 14:30:30 -> +30000ms skew" -- visible on the
+# /jobs/{id}/runs/{id} failure-context panel FIRE SKEW row.
+#
+# Note: the run will MOSTLY succeed (sleep + echo) -- to see the FCTX panel
+# itself the operator can artificially fail it (e.g., change command to
+# `["sh", "-c", "sleep 30 && exit 1"]`) for the panel-render half. The
+# `uat-fire-skew` recipe focuses ONLY on the skew arithmetic (visible from
+# sqlite even when the run succeeds).
+#
+# Schedule is `* * * * *` so the maintainer doesn't wait long; the job
+# inherits `[defaults].image = "alpine:latest"` and the watchtower-exclusion
+# label, both of which are fine for this demo.
+
+# Phase 21 / FCTX-06 -- slow-start docker job seeded for `just uat-fire-skew`.
+[[jobs]]
+name = "fire-skew-demo"
+image = "alpine:latest"
+cmd = ["sh", "-c", "sleep 30 && echo done"]
+schedule = "* * * * *"

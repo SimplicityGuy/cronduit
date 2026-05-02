@@ -186,6 +186,7 @@ async fn stop_command_executor_yields_stopped_status() {
             cancel,
             active_clone,
             test_webhook_tx(),
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await
     });
@@ -271,6 +272,7 @@ async fn stop_script_executor_yields_stopped_status() {
             cancel,
             active_clone,
             test_webhook_tx(),
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await
     });
@@ -374,6 +376,7 @@ async fn stop_docker_executor_yields_stopped_status() {
             cancel,
             active_clone,
             test_webhook_tx(),
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await
     });

@@ -93,6 +93,78 @@
   </div>
 </div>
 
+<!-- Phase 21 Exit-Code Histogram (EXIT-01..05) — UI-SPEC § Component Inventory § 2 -->
+<div class="cd-exit-card mb-6" style="background:var(--cd-bg-surface);border:1px solid var(--cd-border);border-radius:8px;padding:var(--cd-space-6)">
+  <h2 class="cd-exit-card-title">Exit Code Distribution</h2>
+
+  {% if exit_histogram.has_min_samples %}
+    <!-- Stat row: success rate (separate from histogram per EXIT-03) -->
+    <div class="cd-exit-stats">
+      <div class="cd-exit-stat">
+        <span class="cd-exit-stat-label">SUCCESS</span>
+        <span class="cd-exit-stat-value">{{ exit_histogram.success_rate_display }}</span>
+        <span class="cd-exit-stat-meta">{{ exit_histogram.success_count }} of {{ exit_histogram.sample_count }}</span>
+      </div>
+    </div>
+
+    <!-- Histogram chart -->
+    <div class="cd-exit-chart" role="img" aria-label="{{ exit_histogram.chart_aria_summary }}">
+      {% for bucket in exit_histogram.buckets %}
+      <div class="cd-exit-bucket">
+        <div class="cd-exit-bar-wrap">
+          <div class="cd-exit-bar cd-exit-bar--{{ bucket.color_class }}"
+               style="height:{{ bucket.height_pct }}%"
+               aria-label="{{ bucket.aria_label }}"
+               tabindex="0">
+            <span class="cd-exit-bar-count">{{ bucket.count }}</span>
+            <div class="cd-tooltip" role="tooltip">
+              <span class="cd-tooltip-row">
+                <span class="cd-tooltip-dot" style="background:var(--cd-{{ bucket.dot_token }})"></span>
+                {{ bucket.tooltip_title }}
+              </span>
+              <span class="cd-tooltip-row">{{ bucket.tooltip_detail }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="cd-exit-bucket-label">{{ bucket.short_label }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Caption -->
+    <div class="cd-exit-caption">Last {{ exit_histogram.sample_count }} runs (window: 100). Hover bars for detail.</div>
+
+    <!-- Recent codes sub-table (EXIT-05) -->
+    {% if !exit_histogram.top_codes.is_empty() %}
+    <h3 class="cd-exit-subhead">Most frequent codes</h3>
+    <table class="cd-exit-recent">
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>Count</th>
+          <th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for code in exit_histogram.top_codes %}
+        <tr>
+          <td>{{ code.label }}</td>
+          <td>{{ code.count }}</td>
+          <td>{{ code.last_seen_relative }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  {% else %}
+    <!-- Below-N=5 / brand-new-job empty state per UI-SPEC § Component Inventory + D-15/D-16 -->
+    <div class="cd-exit-empty">
+      —
+      <span class="cd-exit-empty-meta">Need 5+ samples; have {{ exit_histogram.sample_count }}</span>
+    </div>
+  {% endif %}
+</div>
+
 <!-- Run History -->
 <div class="mb-6">
   <h2 style="font-size:var(--cd-text-lg);font-weight:700;margin-bottom:var(--cd-space-4)">Run History</h2>

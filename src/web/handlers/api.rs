@@ -79,8 +79,18 @@ pub async fn run_now(
     // otherwise hit a 404 (and the log-viewer would flash "Unable to
     // stream logs") because the scheduler task hadn't yet inserted the
     // row. Row is reserved here; scheduler reuses this id.
-    let run_id = match queries::insert_running_run(&state.pool, job_id, "manual", &job.config_hash)
-        .await
+    //
+    // Phase 21 FCTX-06 (D-02): Run Now writes scheduled_for == start_time
+    // so fire skew = 0ms by definition (UI-SPEC § Copywriting Contract).
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+    let run_id = match queries::insert_running_run(
+        &state.pool,
+        job_id,
+        "manual",
+        &job.config_hash,
+        Some(now_rfc3339.as_str()),
+    )
+    .await
     {
         Ok(id) => id,
         Err(err) => {

@@ -848,9 +848,13 @@ uat-webhook-rustls-check:
 
 # -------------------- dev loop --------------------
 
-# Single-process dev loop (readable text logs, trace level for cronduit)
+# Single-process dev loop (readable text logs, trace level for cronduit).
+# DATABASE_URL pinned to cronduit.dev.db so every other recipe in this justfile
+# (db-reset, sqlx-prepare, last-run-fields, webhook DLQ inspection, the Phase 21
+# uat-* recipes) operates on the same SQLite file the daemon migrates.
 [group('dev')]
 dev:
+    DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc \
     RUST_LOG=debug,cronduit=trace cargo run -- run \
         --config examples/cronduit.toml \
         --log-format text
@@ -865,7 +869,8 @@ dev-ui:
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --watch &
     TAILWIND_PID=$!
     trap "kill $TAILWIND_PID 2>/dev/null" EXIT
-    RUST_LOG=debug,cronduit=trace cargo watch -x 'run -- run --config examples/cronduit.toml --log-format text'
+    DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc \
+        RUST_LOG=debug,cronduit=trace cargo watch -x 'run -- run --config examples/cronduit.toml --log-format text'
 
 # Validate a config file without starting the scheduler
 [group('dev')]
@@ -961,3 +966,194 @@ health:
 metrics-check:
     curl -sf http://127.0.0.1:8080/metrics \
         | grep -E '^cronduit_scheduler_up\b|^cronduit_runs_total\b'
+
+# === Phase 21 — failure-context UI panel + exit-code histogram UAT recipes ===
+# Plan 21-10. Maintainer-facing runbooks for the rc.2 HUMAN-UAT scenarios in
+# `21-HUMAN-UAT.md`. Recipes follow the project memory rule
+# `feedback_uat_use_just_commands.md` — every step is either a `just` recipe
+# call or a raw `sqlite3 cronduit.dev.db ...` inspection (the
+# `uat-fctx-bugfix-spot-check` precedent). NO new primitives are introduced;
+# the four recipes below compose the existing `dev`, `db-reset`, `api-job-id`,
+# and `api-run-now` recipes only (per Phase 21 D-19 / D-29 + research §F/§G).
+
+# Seed N consecutive failed runs against the docker example job, then walk
+# the maintainer to the run-detail page to verify the FCTX panel renders
+# with all 5 rows and is collapsed by default.
+#
+# Recipe-calls-recipe per D-19: `db-reset` -> operator runs `just dev` ->
+# `api-job-id` -> raw sqlite3 inserts (fixture seed) -> URL handed to operator.
+[group('uat')]
+[doc('Phase 21 — FCTX panel walk-through (seed N failed runs, then visit /jobs/{id}/runs/{id})')]
+uat-fctx-panel:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 21 UAT: failure-context panel walk-through"
+    echo ""
+    echo "Step 1: Reset DB."
+    just db-reset
+    echo ""
+    echo "Step 2: Start cronduit in another terminal:    just dev"
+    echo "        Wait until you see 'Listening on 127.0.0.1:8080'."
+    echo "        Then PRESS ENTER here to continue."
+    read
+    echo ""
+    echo "Step 3: Resolve job id for the docker example job (or any seeded job)."
+    JOB_ID=$(just api-job-id "fire-skew-demo")
+    echo "        JOB_ID=$JOB_ID"
+    echo ""
+    echo "Step 4: Seed 4 consecutive failed runs via raw sqlite3 (mirrors fixture shape)."
+    for i in 1 2 3 4; do
+      sqlite3 cronduit.dev.db "INSERT INTO job_runs (job_id, status, trigger, start_time, end_time, duration_ms, exit_code, job_run_number, image_digest, config_hash, scheduled_for) VALUES ($JOB_ID, 'failed', 'manual', datetime('now', '-' || $i || ' minutes'), datetime('now', '-' || $i || ' minutes', '+30 seconds'), 30000, 1, $i, NULL, 'seed-hash', datetime('now', '-' || $i || ' minutes'));"
+    done
+    echo ""
+    LATEST_RUN_ID=$(sqlite3 cronduit.dev.db "SELECT id FROM job_runs WHERE job_id=$JOB_ID ORDER BY id DESC LIMIT 1;")
+    echo "Step 5: Visit the run-detail page in your browser:"
+    echo "        http://127.0.0.1:8080/jobs/$JOB_ID/runs/$LATEST_RUN_ID"
+    echo ""
+    echo "Expected: collapsed-by-default 'Failure context' panel with 4 consecutive failures meta."
+    echo "          Click to expand → 5 rows visible (or 4 if the job is non-docker)."
+
+# Seed mixed exit-code runs against the docker example job, then walk the
+# maintainer to the job-detail page to verify the Exit-Code Distribution
+# card renders with bucket distribution + success-rate stat + recent codes.
+#
+# EXIT-04 dual-classifier coverage: one row with status='stopped' + exit=137
+# (cronduit SIGKILL → BucketStopped) and one with status='failed' + exit=137
+# (external signal → Bucket128to143). Verifies the locked classifier (D-08).
+#
+# Recipe-calls-recipe per D-19: `db-reset` -> operator runs `just dev` ->
+# `api-job-id` -> raw sqlite3 inserts (fixture seed) -> URL handed to operator.
+[group('uat')]
+[doc('Phase 21 — Exit-code histogram walk-through (seed mixed exit codes, visit /jobs/{id})')]
+uat-exit-histogram:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 21 UAT: exit-code histogram walk-through"
+    echo ""
+    echo "Step 1: Reset DB."
+    just db-reset
+    echo ""
+    echo "Step 2: Start cronduit:    just dev   (then PRESS ENTER)"
+    read
+    echo ""
+    echo "Step 3: Resolve job id."
+    JOB_ID=$(just api-job-id "fire-skew-demo")
+    echo "        JOB_ID=$JOB_ID"
+    echo ""
+    echo "Step 4: Seed mixed exit-code runs via raw sqlite3 (covers EXIT-04 dual-classifier — stopped vs failed @ 137):"
+    # 5 success, 3 failed exit=1, 1 failed exit=127, 1 stopped exit=137 (cronduit SIGKILL), 1 failed exit=137 (external signal)
+    sqlite3 cronduit.dev.db "
+      INSERT INTO job_runs (job_id, status, trigger, start_time, end_time, duration_ms, exit_code, job_run_number, image_digest, config_hash, scheduled_for) VALUES
+        ($JOB_ID, 'success', 'manual', datetime('now', '-10 minutes'), datetime('now', '-10 minutes', '+30 seconds'), 30000, 0, 1, NULL, 'h', datetime('now', '-10 minutes')),
+        ($JOB_ID, 'success', 'manual', datetime('now', '-9 minutes'), datetime('now', '-9 minutes', '+30 seconds'), 30000, 0, 2, NULL, 'h', datetime('now', '-9 minutes')),
+        ($JOB_ID, 'success', 'manual', datetime('now', '-8 minutes'), datetime('now', '-8 minutes', '+30 seconds'), 30000, 0, 3, NULL, 'h', datetime('now', '-8 minutes')),
+        ($JOB_ID, 'success', 'manual', datetime('now', '-7 minutes'), datetime('now', '-7 minutes', '+30 seconds'), 30000, 0, 4, NULL, 'h', datetime('now', '-7 minutes')),
+        ($JOB_ID, 'success', 'manual', datetime('now', '-6 minutes'), datetime('now', '-6 minutes', '+30 seconds'), 30000, 0, 5, NULL, 'h', datetime('now', '-6 minutes')),
+        ($JOB_ID, 'failed', 'manual', datetime('now', '-5 minutes'), datetime('now', '-5 minutes', '+30 seconds'), 30000, 1, 6, NULL, 'h', datetime('now', '-5 minutes')),
+        ($JOB_ID, 'failed', 'manual', datetime('now', '-4 minutes'), datetime('now', '-4 minutes', '+30 seconds'), 30000, 1, 7, NULL, 'h', datetime('now', '-4 minutes')),
+        ($JOB_ID, 'failed', 'manual', datetime('now', '-3 minutes'), datetime('now', '-3 minutes', '+30 seconds'), 30000, 127, 8, NULL, 'h', datetime('now', '-3 minutes')),
+        ($JOB_ID, 'stopped', 'manual', datetime('now', '-2 minutes'), datetime('now', '-2 minutes', '+30 seconds'), 30000, 137, 9, NULL, 'h', datetime('now', '-2 minutes')),
+        ($JOB_ID, 'failed', 'manual', datetime('now', '-1 minutes'), datetime('now', '-1 minutes', '+30 seconds'), 30000, 137, 10, NULL, 'h', datetime('now', '-1 minutes'));"
+    echo ""
+    echo "Step 5: Visit the job-detail page:"
+    echo "        http://127.0.0.1:8080/jobs/$JOB_ID"
+    echo ""
+    echo "Expected: 'Exit Code Distribution' card visible (sibling to Duration card)."
+    echo "          - SUCCESS stat: 50% (5 of 10 — denominator excludes 1 stopped: 5/(10-1)=5/9 ≈ 56% — verify per D-09)."
+    echo "          - Bars: bucket 1 (count 2, err-strong), 127 (1, warn yellow), 128-143 (1, warn yellow — external 137), stopped (1, slate grey)."
+    echo "          - Recent codes: 1, 137, 127."
+    echo "          - Stopped tooltip on hover: 'NOT a crash'."
+
+# Slow-start docker container demonstrating FCTX-06 fire-skew (research §F:
+# closest to operator reality, no new test infra required). The fire-skew-demo
+# job (added to examples/cronduit.toml in plan 21-10 task 1) sleeps 30s before
+# completing, so its `start_time` lands ~30s after `scheduled_for` -> +30000ms
+# skew visible on the run-detail FCTX panel FIRE SKEW row.
+#
+# Recipe-calls-recipe per D-19: `db-reset` -> example-config check ->
+# operator runs `just dev` -> raw sqlite3 inspect -> `api-job-id` -> URL.
+[group('uat')]
+[doc('Phase 21 — Fire-skew walk-through (slow-start docker container; expects ~+30000ms skew)')]
+uat-fire-skew:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 21 UAT: fire-skew walk-through"
+    echo ""
+    echo "Step 1: Reset DB."
+    just db-reset
+    echo ""
+    echo "Step 2: Ensure examples/cronduit.toml contains the 'fire-skew-demo' job (Phase 21 added this)."
+    if grep -q 'name = "fire-skew-demo"' examples/cronduit.toml; then
+        echo "        ✓ fire-skew-demo present"
+    else
+        echo "        ✗ fire-skew-demo missing — see Phase 21 plan 21-10 task 1"
+        exit 1
+    fi
+    echo ""
+    echo "Step 3: Start cronduit pointing at the example config:"
+    echo "        just dev   (then PRESS ENTER)"
+    read
+    echo ""
+    echo "Step 4: Wait for the next * * * * * cron tick — fire-skew-demo will fire."
+    echo "        The container will sleep 30s before completing → start_time will be ~30s after scheduled_for."
+    echo "        Wait at least 90 seconds, then continue."
+    echo ""
+    echo "Step 5: Inspect the latest run:"
+    sqlite3 cronduit.dev.db "SELECT id, job_id, scheduled_for, start_time, end_time FROM job_runs WHERE job_id IN (SELECT id FROM jobs WHERE name='fire-skew-demo') ORDER BY id DESC LIMIT 1;"
+    echo ""
+    JOB_ID=$(just api-job-id "fire-skew-demo" 2>/dev/null || echo "MISSING")
+    if [ "$JOB_ID" != "MISSING" ]; then
+      LATEST_RUN_ID=$(sqlite3 cronduit.dev.db "SELECT id FROM job_runs WHERE job_id=$JOB_ID ORDER BY id DESC LIMIT 1;")
+      echo "Step 6: Visit:"
+      echo "        http://127.0.0.1:8080/jobs/$JOB_ID/runs/$LATEST_RUN_ID"
+      echo ""
+      echo "Expected: FIRE SKEW row reads approximately 'Scheduled: HH:MM:00 • Started: HH:MM:30 (+30000 ms)'."
+      echo "          (Run probably succeeds since command is 'sleep 30 && echo done'."
+      echo "           To see the FCTX panel itself, edit the job to exit 1 and re-run.)"
+    fi
+
+# Umbrella accessibility runbook (research §G — single recipe walking the
+# maintainer through 4 a11y phases in one browser session). Covers the
+# UI-SPEC § Accessibility contract: mobile viewport (<640px stack/scroll),
+# light-mode rendering, print-mode panel-open, keyboard-only navigation.
+#
+# This is a guided echo-only recipe (no fixture seeding) — the operator
+# brings their own failed run from `just uat-fctx-panel` first.
+[group('uat')]
+[doc('Phase 21 — Accessibility umbrella (Mobile / Light-mode / Print / Keyboard scenarios)')]
+uat-fctx-a11y:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 21 UAT: accessibility umbrella (4 phases — single browser session)"
+    echo ""
+    echo "Prerequisite: a failed run exists. If not, run \`just uat-fctx-panel\` first."
+    echo ""
+    echo "Phase 1 (Mobile viewport, <640px):"
+    echo "  - Open http://127.0.0.1:8080/jobs/{ID}/runs/{ID} in browser."
+    echo "  - Open DevTools → device toolbar → set viewport to 375×667 (iPhone)."
+    echo "  - Expand the FCTX panel. Confirm rows STACK (1-column layout)."
+    echo "  - Visit /jobs/{ID}. Confirm the histogram chart is HORIZONTALLY SCROLLABLE."
+    echo "  PRESS ENTER to continue."
+    read
+    echo ""
+    echo "Phase 2 (Light mode):"
+    echo "  - Browser DevTools → Rendering → 'Emulate CSS prefers-color-scheme' → light."
+    echo "  - Reload. Confirm panel + histogram render with light tokens (grey-on-white)."
+    echo "  - No new tokens should appear; the existing [data-theme=\"light\"] block in app.css handles it."
+    echo "  PRESS ENTER to continue."
+    read
+    echo ""
+    echo "Phase 3 (Print mode):"
+    echo "  - File → Print (Cmd+P / Ctrl+P)."
+    echo "  - Confirm the FCTX panel is OPEN (not collapsed) per @media print { details { open: open } }."
+    echo "  PRESS ENTER to continue."
+    read
+    echo ""
+    echo "Phase 4 (Keyboard-only):"
+    echo "  - Reload the run-detail page (panel collapses by default)."
+    echo "  - Tab to the panel summary. Confirm focus ring visible (--cd-green-dim)."
+    echo "  - Press Space or Enter to expand. Confirm panel toggles."
+    echo "  - Tab into the body. Confirm 'view last successful run' link receives focus."
+    echo "  - Visit /jobs/{ID}. Tab onto a histogram bar. Confirm focus ring + tooltip appear."
+    echo ""
+    echo "All 4 phases complete. If any failed, capture the screenshot/issue details for 21-HUMAN-UAT.md."

@@ -1,6 +1,7 @@
 pub mod ansi;
 pub mod assets;
 pub mod csrf;
+pub mod exit_buckets;
 pub mod format;
 pub mod handlers;
 pub mod stats;

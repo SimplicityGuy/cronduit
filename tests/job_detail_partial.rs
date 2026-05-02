@@ -86,7 +86,7 @@ async fn seed_job(pool: &DbPool, name: &str) -> i64 {
 
 /// Seed a completed run (SUCCESS) attached to the given job.
 async fn seed_success_run(pool: &DbPool, job_id: i64) -> i64 {
-    let run_id = insert_running_run(pool, job_id, "scheduled", "testhash")
+    let run_id = insert_running_run(pool, job_id, "scheduled", "testhash", None)
         .await
         .expect("insert running run");
     let start = tokio::time::Instant::now();
@@ -98,7 +98,7 @@ async fn seed_success_run(pool: &DbPool, job_id: i64) -> i64 {
 
 /// Seed a RUNNING run and leave it un-finalized.
 async fn seed_running_run(pool: &DbPool, job_id: i64) -> i64 {
-    insert_running_run(pool, job_id, "manual", "testhash")
+    insert_running_run(pool, job_id, "manual", "testhash", None)
         .await
         .expect("insert running run")
 }

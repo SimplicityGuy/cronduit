@@ -22,10 +22,10 @@ use cronduit::db::queries::{self, PoolRef};
 async fn runnum_starts_at_1() {
     let pool = setup_sqlite_with_phase11_migrations().await;
     let job_id = seed_test_job(&pool, "counter-job").await;
-    let r1 = queries::insert_running_run(&pool, job_id, "manual", "testhash")
+    let r1 = queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
         .await
         .unwrap();
-    let r2 = queries::insert_running_run(&pool, job_id, "manual", "testhash")
+    let r2 = queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
         .await
         .unwrap();
 
@@ -51,7 +51,7 @@ async fn runnum_starts_at_1() {
 async fn insert_running_run_uses_counter_transaction() {
     let pool = setup_sqlite_with_phase11_migrations().await;
     let job_id = seed_test_job(&pool, "tx-job").await;
-    queries::insert_running_run(&pool, job_id, "manual", "testhash")
+    queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
         .await
         .unwrap();
     let p = match pool.reader() {
@@ -75,7 +75,7 @@ async fn concurrent_inserts_distinct_numbers() {
     for _ in 0..16 {
         let pool = pool.clone();
         join_set.spawn(async move {
-            queries::insert_running_run(&pool, job_id, "manual", "testhash")
+            queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
                 .await
                 .unwrap()
         });
@@ -115,7 +115,7 @@ async fn next_run_number_invariant() {
     for _ in 0..16 {
         let pool = pool.clone();
         join_set.spawn(async move {
-            queries::insert_running_run(&pool, job_id, "manual", "testhash")
+            queries::insert_running_run(&pool, job_id, "manual", "testhash", None)
                 .await
                 .unwrap()
         });

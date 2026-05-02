@@ -125,6 +125,7 @@ async fn test_command_job_fires_and_captures_logs() {
             cancel,
             test_active_runs(),
             test_webhook_tx(),
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await;
 
@@ -199,6 +200,7 @@ async fn test_script_job_fires_and_captures_logs() {
             cancel,
             test_active_runs(),
             test_webhook_tx(),
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await;
 
@@ -259,6 +261,7 @@ async fn test_failed_command_records_exit_code() {
             cancel,
             test_active_runs(),
             test_webhook_tx(),
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await;
 
@@ -307,6 +310,7 @@ async fn test_timeout_preserves_partial_logs() {
             cancel,
             test_active_runs(),
             test_webhook_tx(),
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await;
 
@@ -371,6 +375,7 @@ async fn test_sync_disables_removed_jobs() {
             cancel,
             test_active_runs(),
             test_webhook_tx(),
+            None, // Phase 21 FCTX-06: test passes None
         )
         .await;
         assert_eq!(run_result.status, "success");
@@ -456,7 +461,8 @@ async fn test_concurrent_runs_same_job() {
                 "scheduled".to_string(),
                 cancel1,
                 test_active_runs(),
-                test_webhook_tx()
+                test_webhook_tx(),
+                None, // Phase 21 FCTX-06: test passes None
             ),
             run_job(
                 pool2,
@@ -465,7 +471,8 @@ async fn test_concurrent_runs_same_job() {
                 "scheduled".to_string(),
                 cancel2,
                 test_active_runs(),
-                test_webhook_tx()
+                test_webhook_tx(),
+                None, // Phase 21 FCTX-06: test passes None
             ),
         );
 
