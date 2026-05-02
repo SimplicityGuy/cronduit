@@ -1550,10 +1550,7 @@ pub struct WebhookDlqRow {
 /// to reach 2xx. Returns `Ok(())` on success; on DB error, the caller
 /// (RetryingDispatcher) logs at WARN and continues (RESEARCH §4.8 — DLQ-insert
 /// failure is a second-order failure; promoting it to a worker crash is worse).
-pub async fn insert_webhook_dlq_row(
-    pool: &DbPool,
-    row: WebhookDlqRow,
-) -> Result<(), sqlx::Error> {
+pub async fn insert_webhook_dlq_row(pool: &DbPool, row: WebhookDlqRow) -> Result<(), sqlx::Error> {
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             sqlx::query(
