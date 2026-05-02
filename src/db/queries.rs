@@ -390,7 +390,7 @@ pub async fn insert_running_run(
     pool: &DbPool,
     job_id: i64,
     trigger: &str,
-    config_hash: &str, // Phase 16 FCTX-04
+    config_hash: &str,           // Phase 16 FCTX-04
     scheduled_for: Option<&str>, // Phase 21 FCTX-06 (RFC3339; None for legacy fallback paths)
 ) -> anyhow::Result<i64> {
     let now = chrono::Utc::now().to_rfc3339();

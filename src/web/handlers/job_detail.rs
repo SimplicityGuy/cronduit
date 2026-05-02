@@ -447,7 +447,7 @@ fn format_relative_time_or_never(rfc3339: Option<&str>) -> String {
 ///   `"—"` (em dash, U+2014, matching the Duration card empty-state copy).
 /// - `top_codes`: `card.top_codes` mapped 1:1 through `format_top_code_label`
 ///   + `format_relative_time_or_never`. Length 0..=3 per `aggregate`'s
-///   `truncate(3)`.
+///     `truncate(3)`.
 /// - `chart_aria_summary`: composes a one-sentence summary of the top 3-4
 ///   non-zero buckets in count-descending order (UI-SPEC § Accessibility).
 fn build_exit_histogram_view(card: &exit_buckets::HistogramCard) -> ExitHistogramView {
@@ -474,8 +474,7 @@ fn build_exit_histogram_view(card: &exit_buckets::HistogramCard) -> ExitHistogra
 
             let (color_class, dot_token) = bucket_classes(*bucket);
             let short_label = bucket_short_label(*bucket).to_string();
-            let aria_label = bucket_aria_template(*bucket)
-                .replace("{N}", &count.to_string());
+            let aria_label = bucket_aria_template(*bucket).replace("{N}", &count.to_string());
             let tooltip_title = format!("Exit code(s): {short_label}");
 
             // Tooltip detail: BucketStopped uses the locked override copy;
@@ -720,21 +719,18 @@ pub async fn job_detail(
         // `src/web/handlers/api.rs:127-132` verbatim for log-aggregator parity.
         const HISTOGRAM_SAMPLE_LIMIT: i64 = 100;
 
-        let raw_runs = queries::get_recent_runs_for_histogram(
-            &state.pool,
-            job_id,
-            HISTOGRAM_SAMPLE_LIMIT,
-        )
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!(
-                target: "cronduit.web",
-                job_id,
-                error = %e,
-                "exit histogram: query failed — degraded card"
-            );
-            Vec::new()
-        });
+        let raw_runs =
+            queries::get_recent_runs_for_histogram(&state.pool, job_id, HISTOGRAM_SAMPLE_LIMIT)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        target: "cronduit.web",
+                        job_id,
+                        error = %e,
+                        "exit histogram: query failed — degraded card"
+                    );
+                    Vec::new()
+                });
 
         let card = exit_buckets::aggregate(&raw_runs);
         let exit_histogram = build_exit_histogram_view(&card);

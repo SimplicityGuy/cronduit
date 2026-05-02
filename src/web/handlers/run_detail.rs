@@ -217,7 +217,7 @@ fn truncate_hex(s: &str, n: usize) -> String {
 /// ago", "5 minutes ago"). Used by the TIME DELTAS row per UI-SPEC §
 /// Copywriting Contract. No external crate added — uses `chrono::Utc::now()`
 /// + `chrono::DateTime::parse_from_rfc3339` which the project already
-/// depends on (`Cargo.toml` line ~).
+///   depends on (`Cargo.toml` line ~).
 ///
 /// Returns "just now" for negative or sub-minute durations (defensive
 /// against clock skew between web request and DB row write). Anything older
@@ -235,14 +235,26 @@ fn format_relative_time(rfc3339: &str) -> String {
     }
     let mins = delta.num_minutes();
     if mins < 60 {
-        return if mins == 1 { "1 minute".to_string() } else { format!("{mins} minutes") };
+        return if mins == 1 {
+            "1 minute".to_string()
+        } else {
+            format!("{mins} minutes")
+        };
     }
     let hours = delta.num_hours();
     if hours < 24 {
-        return if hours == 1 { "1 hour".to_string() } else { format!("{hours} hours") };
+        return if hours == 1 {
+            "1 hour".to_string()
+        } else {
+            format!("{hours} hours")
+        };
     }
     let days = delta.num_days();
-    if days == 1 { "1 day".to_string() } else { format!("{days} days") }
+    if days == 1 {
+        "1 day".to_string()
+    } else {
+        format!("{days} days")
+    }
 }
 
 /// Phase 21 FCTX panel pre-formatted view-model assembly (UI-SPEC §
@@ -570,27 +582,26 @@ pub async fn run_detail(
         // Per research landmine §12 we do NOT short-circuit the handler:
         // log fetch + page render proceed unaffected so a transient FCTX
         // query failure still shows the operator the run + its logs.
-        let (show_fctx_panel, fctx) =
-            if matches!(run_view.status.as_str(), "failed" | "timeout") {
-                match queries::get_failure_context(&state.pool, run_view.job_id).await {
-                    Ok(ctx) => {
-                        let view = build_fctx_view(&run_view, ctx, &state.pool).await;
-                        (true, Some(view))
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "cronduit.web",
-                            job_id = run_view.job_id,
-                            run_id = run_view.id,
-                            error = %e,
-                            "fctx panel: get_failure_context failed — hiding panel"
-                        );
-                        (false, None)
-                    }
+        let (show_fctx_panel, fctx) = if matches!(run_view.status.as_str(), "failed" | "timeout") {
+            match queries::get_failure_context(&state.pool, run_view.job_id).await {
+                Ok(ctx) => {
+                    let view = build_fctx_view(&run_view, ctx, &state.pool).await;
+                    (true, Some(view))
                 }
-            } else {
-                (false, None)
-            };
+                Err(e) => {
+                    tracing::warn!(
+                        target: "cronduit.web",
+                        job_id = run_view.job_id,
+                        run_id = run_view.id,
+                        error = %e,
+                        "fctx panel: get_failure_context failed — hiding panel"
+                    );
+                    (false, None)
+                }
+            }
+        } else {
+            (false, None)
+        };
 
         RunDetailPage {
             run: run_view,
