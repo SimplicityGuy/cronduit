@@ -848,9 +848,13 @@ uat-webhook-rustls-check:
 
 # -------------------- dev loop --------------------
 
-# Single-process dev loop (readable text logs, trace level for cronduit)
+# Single-process dev loop (readable text logs, trace level for cronduit).
+# DATABASE_URL pinned to cronduit.dev.db so every other recipe in this justfile
+# (db-reset, sqlx-prepare, last-run-fields, webhook DLQ inspection, the Phase 21
+# uat-* recipes) operates on the same SQLite file the daemon migrates.
 [group('dev')]
 dev:
+    DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc \
     RUST_LOG=debug,cronduit=trace cargo run -- run \
         --config examples/cronduit.toml \
         --log-format text
@@ -865,7 +869,8 @@ dev-ui:
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --watch &
     TAILWIND_PID=$!
     trap "kill $TAILWIND_PID 2>/dev/null" EXIT
-    RUST_LOG=debug,cronduit=trace cargo watch -x 'run -- run --config examples/cronduit.toml --log-format text'
+    DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc \
+        RUST_LOG=debug,cronduit=trace cargo watch -x 'run -- run --config examples/cronduit.toml --log-format text'
 
 # Validate a config file without starting the scheduler
 [group('dev')]
