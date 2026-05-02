@@ -94,15 +94,15 @@ Pre-locked design: `.planning/seeds/SEED-001-custom-docker-labels.md`. Three dec
 
 Job-detail page card; parallels v1.1 OBS-04 (p50/p95) pattern. Bucketing strategy locked.
 
-- [ ] **EXIT-01**: A new exit-code-distribution card renders on the job-detail page, sibling to the v1.1 p50/p95 duration card. Sample window: last 100 ALL runs (not just successful — exit codes are most useful for diagnosing failures, divergent from OBS-04's last-100-successful window). Below `N=5` sample threshold, the card renders "—" instead of an empty histogram. `T-V12-EXIT-01`, `T-V12-EXIT-02`.
+- [x] **EXIT-01**: A new exit-code-distribution card renders on the job-detail page, sibling to the v1.1 p50/p95 duration card. Sample window: last 100 ALL runs (not just successful — exit codes are most useful for diagnosing failures, divergent from OBS-04's last-100-successful window). Below `N=5` sample threshold, the card renders "—" instead of an empty histogram. `T-V12-EXIT-01`, `T-V12-EXIT-02`.
 
-- [ ] **EXIT-02**: Exit-code bucketing — 10 fixed buckets to prevent cardinality explosion: `0` (success), `1` (general error), `2` (shell builtin misuse), `3-9` (custom range), `10-126` (custom range), `127` (command not found), `128-143` (signal-killed: SIGINT=130, SIGKILL=137, SIGSEGV=139, SIGTERM=143), `144-254` (custom range), `255` (exit out of range), `null` (no exit code recorded — for `timeout` and `stopped` runs). Named exit codes (127, 137, 139, 143, etc.) render with a small label tooltip. `T-V12-EXIT-03`.
+- [x] **EXIT-02**: Exit-code bucketing — 10 fixed buckets to prevent cardinality explosion: `0` (success), `1` (general error), `2` (shell builtin misuse), `3-9` (custom range), `10-126` (custom range), `127` (command not found), `128-143` (signal-killed: SIGINT=130, SIGKILL=137, SIGSEGV=139, SIGTERM=143), `144-254` (custom range), `255` (exit out of range), `null` (no exit code recorded — for `timeout` and `stopped` runs). Named exit codes (127, 137, 139, 143, etc.) render with a small label tooltip. `T-V12-EXIT-03`.
 
-- [ ] **EXIT-03**: The exit-code `0` (success) bar is rendered as a SEPARATE STAT (success rate badge sibling to the histogram), NOT as a bar within the histogram chart itself. This prevents the giant `0` bar from dominating the chart and obscuring the failure distribution. Matches the v1.1 sparkline + success-rate badge pattern. `T-V12-EXIT-04`.
+- [x] **EXIT-03**: The exit-code `0` (success) bar is rendered as a SEPARATE STAT (success rate badge sibling to the histogram), NOT as a bar within the histogram chart itself. This prevents the giant `0` bar from dominating the chart and obscuring the failure distribution. Matches the v1.1 sparkline + success-rate badge pattern. `T-V12-EXIT-04`.
 
-- [ ] **EXIT-04**: `stopped` runs (which exit 137 from cronduit's SIGKILL) are rendered as a DISTINCT visual bucket separate from the `128-143` signal-killed bucket. Otherwise the histogram would lie about crash rate (operator-stops would inflate "signal-killed" counts). The `stopped` bucket uses the `--cd-status-stopped` color from v1.1's design tokens. `T-V12-EXIT-05`, `T-V12-EXIT-06`.
+- [x] **EXIT-04**: `stopped` runs (which exit 137 from cronduit's SIGKILL) are rendered as a DISTINCT visual bucket separate from the `128-143` signal-killed bucket. Otherwise the histogram would lie about crash rate (operator-stops would inflate "signal-killed" counts). The `stopped` bucket uses the `--cd-status-stopped` color from v1.1's design tokens. `T-V12-EXIT-05`, `T-V12-EXIT-06`.
 
-- [ ] **EXIT-05**: The card displays "last seen for each code" alongside the count (e.g., "1: 12 occurrences (last: 2h ago)") for the top-3 most-frequent codes. Cronitor-style touch worth adding cheaply; small additional column in the underlying query. `T-V12-EXIT-07`.
+- [x] **EXIT-05**: The card displays "last seen for each code" alongside the count (e.g., "1: 12 occurrences (last: 2h ago)") for the top-3 most-frequent codes. Cronitor-style touch worth adding cheaply; small additional column in the underlying query. `T-V12-EXIT-07`.
 
 - [ ] **EXIT-06**: Exit codes are NOT exposed as a Prometheus label on existing `cronduit_runs_total` family or any new family — preserves v1.0 cardinality discipline (i32 exit codes would be unbounded label cardinality). Operators who want exit-code metrics can scrape the histogram via the dashboard or build their own pipeline. `T-V12-EXIT-08`.
 
@@ -196,11 +196,11 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | FCTX-05   | 21    | Pending |
 | FCTX-06   | 21    | Complete |
 | FCTX-07   | 16    | Complete |
-| EXIT-01   | 21    | Pending |
-| EXIT-02   | 21    | Pending |
-| EXIT-03   | 21    | Pending |
-| EXIT-04   | 21    | Pending |
-| EXIT-05   | 21    | Pending |
+| EXIT-01   | 21    | Complete |
+| EXIT-02   | 21    | Complete |
+| EXIT-03   | 21    | Complete |
+| EXIT-04   | 21    | Complete |
+| EXIT-05   | 21    | Complete |
 | EXIT-06   | 21    | Pending |
 | TAG-01    | 22    | Pending |
 | TAG-02    | 22    | Pending |
