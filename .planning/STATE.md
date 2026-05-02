@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: "Phase 20 gap closure shipped — PR #54 awaiting merge"
-stopped_at: Phase 21 UI-SPEC approved
-last_updated: "2026-05-02T01:51:17.201Z"
+stopped_at: Phase 21 context gathered
+last_updated: "2026-05-02T02:35:49.558Z"
 last_activity: "2026-05-01 -- Phase 20 gap closure PR #54 opened"
 progress:
   total_phases: 10
@@ -173,8 +173,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-02T01:51:17.196Z
-Stopped at: Phase 21 UI-SPEC approved
+Last session: 2026-05-02T02:35:49.552Z
+Stopped at: Phase 21 context gathered
 Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
 
 **Planned Phase:** 20 — Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1 (HTTPS-required for non-loopback/non-RFC1918, SSRF guards, retry schedule t=0/30s/300s with full-jitter, 30s drain on shutdown, Prometheus metrics)
