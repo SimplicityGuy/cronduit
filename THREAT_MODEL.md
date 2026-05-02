@@ -186,6 +186,50 @@ A malicious image has full container capabilities within its namespace. If the o
 
 ---
 
+## Threat Model 5: Webhook Outbound (SSRF Accepted Risk)
+
+> **Status:** Words-only stub for v1.2.0 (Phase 20). The canonical close-out — full STRIDE table, attack-vector enumeration, residual-risk wording for the v1.3 allowlist deferral — lands in [Phase 24 (Milestone Close-Out)](.planning/ROADMAP.md). This stub satisfies WH-08 by enumerating the threat, the v1.2 mitigations, and the accepted residual risk; it is intentionally lighter than TM1–TM4.
+
+### Threat
+
+An operator with access to the Cronduit configuration (config-file edit OR — in v1 — anyone reaching the unauthenticated web UI) can set a job's `webhook.url` to any HTTP/HTTPS endpoint. Cronduit will then issue an authenticated HMAC-signed POST to that endpoint when the job's matching state-filter fires.
+
+If the endpoint resolves to an internal-only service (cloud-metadata IMDS, an internal admin panel, an unauthenticated database HTTP API, etc.), the outbound POST is a Server-Side Request Forgery (SSRF) primitive: the operator-controllable URL becomes an authenticated request to a service the operator may not legitimately reach from outside the host's network.
+
+### Attack Vector
+
+1. Attacker reaches the Cronduit UI on a non-loopback bind (or compromises the operator's session on a reverse-proxy-fronted instance).
+2. Attacker either creates a new webhook-configured job OR edits an existing job's webhook URL via the UI / config edit path.
+3. Cronduit, on the next state-filter match, issues a POST to the attacker-chosen URL with a valid `webhook-signature` header (HMAC-SHA256 over the payload using the operator's secret).
+4. Internal services receiving the request may treat it as authenticated (the HMAC is valid for the URL's payload regardless of the receiver's identity) or may simply expose data via the response body that flows back into Cronduit's `webhook_deliveries.last_error` for failure cases.
+
+### Mitigations (v1.2.0)
+
+The Phase 20 design ships **three layered mitigations** without a destination allow/block-list filter:
+
+1. **Loopback-bound default.** `[server].bind` defaults to `127.0.0.1:8080`. Non-loopback binds emit a loud `WARN` log at startup with `bind_warning: true` in the structured event. This makes the SSRF surface unreachable from the network by default. *(See [Threat Model 2: Untrusted Client](#threat-model-2-untrusted-client) for the canonical loopback-default rationale.)*
+2. **HTTPS-required validator.** `src/config/validate.rs::check_webhook_url` (called from `run_all_checks`) rejects `http://` URLs whose host is NOT loopback (`127.0.0.0/8`, `::1`, `localhost`) AND NOT RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fd00::/8`). Plaintext HTTP can no longer reach a public destination — every public-destination webhook is HTTPS-encrypted to the receiver, narrowing the data-exfiltration vector. (WH-07 enforcement; see also `docs/WEBHOOKS.md` § HTTPS / SSRF posture.)
+3. **Reverse-proxy fronting + operator-side auth.** Operators exposing Cronduit beyond loopback are expected to front it with an existing reverse proxy (Caddy/Traefik/nginx) plus an authentication layer (basic auth / OIDC / mTLS). This is the documented v1 deployment pattern and is the *intended* authentication boundary for v1.x — Cronduit itself ships unauthenticated by design.
+
+### Accepted Residual Risk
+
+**No allow/block-list filter** for webhook destination URLs ships in v1.2. The deliberate position is: a half-built filter is worse than no filter (operators rely on a false sense of security; new bypasses ship faster than they are patched). The v1.2 stance is: **operators with UI access are trusted**; if that trust assumption breaks, the loopback-default + reverse-proxy mitigations bound the blast radius.
+
+A destination filter (allow-list, block-list, DNS-pinning, IMDS-blocking) is a **v1.3 candidate** (`PROJECT.md` § Future Requirements). When that lands, this section is replaced by the canonical TM5 entry in Phase 24's close-out wave.
+
+### Phase 24 Close-Out
+
+Phase 24 (`Milestone Close-Out — final v1.2.0 ship`, see `.planning/ROADMAP.md`) replaces this stub with:
+
+- Full STRIDE row coverage in `## STRIDE Summary` for `T-WH-OUT` (Tampering / Information Disclosure / Spoofing of internal services).
+- Concrete recommendation for v1.3's destination filter scope.
+- Cross-link to Threat Model 6 (Operator-supplied Docker labels) which Phase 24 also closes.
+- Revision bump on the document header.
+
+Until that lands, this stub is the holding signal: **the threat is known, the mitigations are documented, the canonical close-out is in flight.**
+
+---
+
 ## STRIDE Summary
 
 The existing STRIDE analysis from Phase 1 remains valid. This section summarizes the current status of all identified threats.
@@ -253,3 +297,4 @@ The existing STRIDE analysis from Phase 1 remains valid. This section summarizes
 |----------|------|--------|
 | Phase 1 skeleton | 2026-04-10 | Initial STRIDE outline with Phase 1 mitigations. Phases 4-6 threats marked TBD. |
 | Phase 6 complete | 2026-04-12 | Expanded with four threat models (Docker socket, untrusted client, config tamper, malicious image). Updated all STRIDE entries with Phase 2-6 mitigations. Resolved all TBD items. |
+| Phase 20 stub | 2026-05-01 | Added Threat Model 5 (Webhook Outbound) as a words-only stub satisfying WH-08. Canonical close-out (full STRIDE rows + residual-risk language for v1.3 deferred allowlist) is Phase 24's milestone close-out per ROADMAP. |

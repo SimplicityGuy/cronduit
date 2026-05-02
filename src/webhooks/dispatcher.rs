@@ -30,20 +30,23 @@ pub enum WebhookError {
     #[error("webhook dispatch failed: {0}")]
     DispatchFailed(String),
     // Phase 18 — explicit variants for richer Phase 20 retry decisioning.
-    // For Phase 18 they are largely funneled through the existing
-    // `DispatchFailed` log path so the worker_loop's pattern-match at
-    // src/webhooks/worker.rs stays simple. Phase 20 RetryingDispatcher
-    // surfaces these distinctly.
-    #[allow(dead_code)] // Phase 20 RetryingDispatcher consumes.
-    #[error("webhook HTTP non-2xx: status={0}")]
-    HttpStatus(u16),
-    #[allow(dead_code)] // Phase 20 RetryingDispatcher consumes.
+    // Phase 20 RetryingDispatcher (src/webhooks/retry.rs) consumes these to
+    // make retry/classify/Retry-After decisions; the worker_loop pattern-match
+    // still routes everything through the existing `DispatchFailed` log path.
+    #[error("webhook HTTP non-2xx: status={code}")]
+    HttpStatus {
+        code: u16,
+        retry_after: Option<std::time::Duration>,
+        /// Phase 20 / WH-05 / BL-03: truncated (≤200 chars) response body preview captured
+        /// at dispatch time. Propagated into webhook_deliveries.last_error for dlq_reason='http_5xx'
+        /// so the audit table carries diagnostic value (CONTEXT D-10 audit-table framing).
+        /// `None` when the response body could not be read or was empty.
+        body_preview: Option<String>,
+    },
     #[error("webhook network error: {0}")]
     Network(String),
-    #[allow(dead_code)] // Phase 20 RetryingDispatcher consumes.
     #[error("webhook request timed out")]
     Timeout,
-    #[allow(dead_code)] // Phase 20 RetryingDispatcher consumes.
     #[error("invalid webhook URL: {0}")]
     InvalidUrl(String),
     #[error("webhook payload serialization failed: {0}")]
@@ -254,12 +257,32 @@ impl WebhookDispatcher for HttpDispatcher {
         }
 
         // 10. Send the EXACT body_bytes (Pitfall B — same Vec<u8> we signed).
+        // Phase 20 / WH-11 / D-24: time the per-attempt HTTP call. The histogram
+        // is recorded regardless of attempt outcome (success, non-2xx, transport
+        // error) — the truth this metric measures is "how long did the wire
+        // round-trip take," and that's meaningful for failures too.
+        let attempt_start = tokio::time::Instant::now();
         let response = req.body(body_bytes).send().await;
+        let attempt_dur = attempt_start.elapsed().as_secs_f64();
+        metrics::histogram!(
+            "cronduit_webhook_delivery_duration_seconds",
+            "job" => event.job_name.clone(),
+        )
+        .record(attempt_dur);
 
-        // 11. Classify + record metrics.
+        // 11. Classify return value.
+        //
+        // Phase 20 / WH-11 / D-22 BREAKING CHANGE: the two unlabeled P18 flat
+        // counters (the success and failure flat counters that lived here in
+        // P18) are REMOVED. The labeled per-DELIVERY counter
+        // `cronduit_webhook_deliveries_total{job, status}` (closed enum status
+        // ∈ {success, failed, dropped}) increments at the OUTER
+        // RetryingDispatcher::deliver boundary because the operator-visible
+        // truth is per-DELIVERY (the outcome of the full retry chain), not
+        // per-ATTEMPT. The P15 channel-saturation drop counter (in
+        // src/scheduler/run.rs) is preserved verbatim per D-26 split.
         match response {
             Ok(resp) if resp.status().is_success() => {
-                metrics::counter!("cronduit_webhook_delivery_sent_total").increment(1);
                 tracing::debug!(
                     target: "cronduit.webhooks",
                     run_id = event.run_id, job_name = %event.job_name,
@@ -269,20 +292,41 @@ impl WebhookDispatcher for HttpDispatcher {
                 Ok(())
             }
             Ok(resp) => {
-                metrics::counter!("cronduit_webhook_delivery_failed_total").increment(1);
-                let status = resp.status().as_u16();
+                let code = resp.status().as_u16();
+                // D-07: parse Retry-After BEFORE consuming the body. The helper
+                // lives in src/webhooks/retry.rs (Phase 20 / WH-05) and is `pub`
+                // so the dispatcher can populate the WebhookError::HttpStatus
+                // retry_after field for the RetryingDispatcher to honor.
+                let retry_after = crate::webhooks::retry::parse_retry_after_from_response(
+                    resp.headers(),
+                    &cfg.url,
+                    code,
+                );
                 let body_preview = resp.text().await.unwrap_or_default();
                 let truncated: String = body_preview.chars().take(200).collect();
                 tracing::warn!(
                     target: "cronduit.webhooks",
                     run_id = event.run_id, job_name = %event.job_name,
-                    url = %cfg.url, status, body_preview = %truncated,
+                    url = %cfg.url, status = code, body_preview = %truncated,
+                    retry_after = ?retry_after,
                     "webhook non-2xx"
                 );
-                Ok(()) // Phase 18 posture per D-21; never propagate to worker
+                // Phase 20 / WH-05 / BL-03: propagate the truncated preview into the
+                // error so RetryingDispatcher can persist it as last_error on the DLQ
+                // row. Empty string => None so the DB column is NULL when the receiver
+                // sent no body, preserving "NULL means absent".
+                let body_preview_opt = if truncated.is_empty() {
+                    None
+                } else {
+                    Some(truncated)
+                };
+                Err(WebhookError::HttpStatus {
+                    code,
+                    retry_after,
+                    body_preview: body_preview_opt,
+                })
             }
             Err(e) => {
-                metrics::counter!("cronduit_webhook_delivery_failed_total").increment(1);
                 let kind = if e.is_timeout() {
                     "timeout"
                 } else if e.is_connect() {
@@ -296,7 +340,11 @@ impl WebhookDispatcher for HttpDispatcher {
                     url = %cfg.url, kind, error = %e,
                     "webhook network error"
                 );
-                Ok(()) // Phase 18 posture per D-21
+                if e.is_timeout() {
+                    Err(WebhookError::Timeout)
+                } else {
+                    Err(WebhookError::Network(format!("{e}")))
+                }
             }
         }
     }

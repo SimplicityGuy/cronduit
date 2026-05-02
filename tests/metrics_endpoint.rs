@@ -78,22 +78,44 @@ fn metrics_families_described_from_boot() {
         "missing TYPE for cronduit_webhook_delivery_dropped_total; body: {body}"
     );
 
-    // Phase 18 — sent + failed counters describe-from-boot regression.
+    // Phase 20 / WH-11 / D-22: P18 flat counters (`_sent_total`, `_failed_total`)
+    // REMOVED. The labeled per-DELIVERY family `cronduit_webhook_deliveries_total`
+    // is the boot-described replacement (`status` is the closed enum
+    // {success, failed, dropped}). The full Phase 20 metric family contract is
+    // exercised in tests/v12_webhook_metrics_family.rs — this test asserts only
+    // the boot-described HELP/TYPE lines that other tests depend on.
     assert!(
-        body.contains("# HELP cronduit_webhook_delivery_sent_total"),
-        "expected sent_total HELP line; rendered:\n{body}"
+        body.contains("# HELP cronduit_webhook_deliveries_total"),
+        "expected deliveries_total HELP line (P20 D-22 replacement); rendered:\n{body}"
     );
     assert!(
-        body.contains("# TYPE cronduit_webhook_delivery_sent_total counter"),
-        "expected sent_total TYPE counter; rendered:\n{body}"
+        body.contains("# TYPE cronduit_webhook_deliveries_total counter"),
+        "expected deliveries_total TYPE counter; rendered:\n{body}"
     );
     assert!(
-        body.contains("# HELP cronduit_webhook_delivery_failed_total"),
-        "expected failed_total HELP line; rendered:\n{body}"
+        body.contains("# HELP cronduit_webhook_delivery_duration_seconds"),
+        "expected delivery_duration_seconds HELP line (P20 D-24); rendered:\n{body}"
     );
     assert!(
-        body.contains("# TYPE cronduit_webhook_delivery_failed_total counter"),
-        "expected failed_total TYPE counter; rendered:\n{body}"
+        body.contains("# TYPE cronduit_webhook_delivery_duration_seconds histogram"),
+        "expected delivery_duration_seconds TYPE histogram; rendered:\n{body}"
+    );
+    assert!(
+        body.contains("# HELP cronduit_webhook_queue_depth"),
+        "expected queue_depth HELP line (P20 D-25); rendered:\n{body}"
+    );
+    assert!(
+        body.contains("# TYPE cronduit_webhook_queue_depth gauge"),
+        "expected queue_depth TYPE gauge; rendered:\n{body}"
+    );
+    // P18 flat counters MUST be GONE per D-22 BREAKING CHANGE.
+    assert!(
+        !body.contains("cronduit_webhook_delivery_sent_total"),
+        "P18 _sent_total counter must be removed (P20 D-22 BREAKING); rendered:\n{body}"
+    );
+    assert!(
+        !body.contains("cronduit_webhook_delivery_failed_total"),
+        "P18 _failed_total counter must be removed (P20 D-22 BREAKING); rendered:\n{body}"
     );
 }
 

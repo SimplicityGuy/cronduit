@@ -43,6 +43,14 @@ pub struct ServerConfig {
     pub timezone: String,
     #[serde(default = "default_shutdown_grace", with = "humantime_serde")]
     pub shutdown_grace: Duration,
+    /// Phase 20 / WH-10 (D-16): Maximum time the webhook worker waits to drain
+    /// queued events on SIGTERM before dropping the remainder. In-flight HTTP
+    /// requests are NOT cancelled — worst-case shutdown ceiling is
+    /// `webhook_drain_grace + 10s` (reqwest's per-attempt timeout, P18 D-18).
+    /// Operators with strict shutdown budgets should set this in concert with
+    /// `shutdown_grace` (D-18 + Pitfall 8). Default: 30s.
+    #[serde(default = "default_webhook_drain_grace", with = "humantime_serde")]
+    pub webhook_drain_grace: Duration,
     #[serde(default = "default_log_retention", with = "humantime_serde")]
     pub log_retention: Duration,
     /// Enable file watcher for automatic config reload (D-10, RELOAD-03).
@@ -63,6 +71,9 @@ fn default_db_url() -> SecretString {
     SecretString::from(url)
 }
 fn default_shutdown_grace() -> Duration {
+    Duration::from_secs(30)
+}
+fn default_webhook_drain_grace() -> Duration {
     Duration::from_secs(30)
 }
 fn default_log_retention() -> Duration {
@@ -359,5 +370,50 @@ command = "true"
     #[test]
     fn webhook_config_fire_every_default_when_omitted() {
         assert_eq!(super::default_fire_every(), 1);
+    }
+
+    // Phase 20 / WH-10 (Plan 06 Task 1): webhook_drain_grace tests
+    //
+    // These tests lock the new [server].webhook_drain_grace field's
+    // humantime parsing + 30s default. The field is required for the
+    // worker drain budget on SIGTERM; default 30s matches the spec
+    // value used by Plan 04's bin-layer hardcode (D-15..D-18).
+    #[test]
+    fn webhook_drain_grace_default_is_30s() {
+        let toml_text = r#"
+[server]
+bind = "127.0.0.1:8080"
+timezone = "UTC"
+database_url = "sqlite::memory:"
+"#;
+        let cfg: super::Config = toml::from_str(toml_text).expect("parse");
+        assert_eq!(
+            cfg.server.webhook_drain_grace,
+            std::time::Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn webhook_drain_grace_humantime_parses_45s() {
+        let toml_text = r#"
+[server]
+bind = "127.0.0.1:8080"
+timezone = "UTC"
+database_url = "sqlite::memory:"
+webhook_drain_grace = "45s"
+"#;
+        let cfg: super::Config = toml::from_str(toml_text).expect("parse");
+        assert_eq!(
+            cfg.server.webhook_drain_grace,
+            std::time::Duration::from_secs(45)
+        );
+    }
+
+    #[test]
+    fn default_webhook_drain_grace_returns_30s() {
+        assert_eq!(
+            super::default_webhook_drain_grace(),
+            std::time::Duration::from_secs(30)
+        );
     }
 }

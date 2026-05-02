@@ -46,6 +46,7 @@ fn make_server_config() -> ServerConfig {
         database_url: SecretString::from("sqlite::memory:"),
         timezone: "UTC".to_string(),
         shutdown_grace: Duration::from_secs(5),
+        webhook_drain_grace: Duration::from_secs(30),
         log_retention: Duration::from_secs(86400),
         watch_config: true,
     }
