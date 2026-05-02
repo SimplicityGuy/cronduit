@@ -16,6 +16,8 @@ revised: 2026-05-01
 
 > **Revision 2026-05-01 (post-checker):** Typography collapsed from 5 active sizes → 4 (`--cd-text-lg` dropped from active Phase 21 use; both card and panel headings now use `--cd-text-xl`). `.cd-exit-stat` gap fixed from `2px` raw → `0` (aligns with stat-stack intent and 4px grid). Accent reserved-for #2 clarified to name `--cd-status-active` (semantically "success"; same hex as `--cd-text-accent`).
 
+> **Revision 2026-05-01 (post-checker, final spacing pass):** Three CSS contract spacing fixes to fully eliminate off-grid + bare-literal values: (1) `.cd-exit-bar { min-height: 2px }` → `min-height: var(--cd-space-1)` (= 4px, on-grid); (2) `.cd-exit-bar-count { top: -18px }` → `top: calc(-1 * var(--cd-space-4))` (= -16px, on-grid; count badge sits 16px above bar top); (3) `.cd-exit-bar-wrap { height: 128px }` → `height: calc(var(--cd-space-8) * 4)` (token-derived; same 128px chart canvas, intent now traceable to the design system). No new tokens introduced.
+
 ---
 
 ## Design System
@@ -38,12 +40,12 @@ Reuses the project's locked 4px-base scale from `assets/src/app.css` lines 73-80
 
 | Token | Value | Usage in Phase 21 |
 |-------|-------|-------------------|
-| `--cd-space-1` | 4px | Histogram bucket label gap; inline tooltip-row gap |
+| `--cd-space-1` | 4px | Histogram bucket label gap; inline tooltip-row gap; histogram bar `min-height` (so zero/near-zero buckets remain visible without collapsing) |
 | `--cd-space-2` | 8px | Panel row vertical rhythm; bar internal padding |
 | `--cd-space-3` | 12px | Panel summary row inner padding (between caret + label) |
-| `--cd-space-4` | 16px | Card inner padding (sibling-card consistency); panel row label-to-value gap |
+| `--cd-space-4` | 16px | Card inner padding (sibling-card consistency); panel row label-to-value gap; magnitude of the histogram bar count-badge negative offset (`top: calc(-1 * var(--cd-space-4))`) |
 | `--cd-space-6` | 24px | Card outer padding (matches existing `.mb-6` cards on `run_detail.html`/`job_detail.html`) |
-| `--cd-space-8` | 32px | Histogram chart minimum vertical height (32 × 4 = 128px chart canvas inside the card) |
+| `--cd-space-8` | 32px | Histogram chart minimum vertical height base (chart canvas height = `calc(var(--cd-space-8) * 4)` = 128px — token-derived, no bare pixel literal) |
 
 Exceptions: none. The `.cd-exit-stat` stat-stack uses `gap: 0` (no gap — labels/values/meta visually butt against each other in classic stat-card pattern; `0` is on the 4px grid trivially and is the correct intent for a tight vertical stack).
 
@@ -321,12 +323,12 @@ margin-bottom: var(--cd-space-6);  /* via .mb-6 utility */
 | `.cd-exit-stat-meta` | `font-size: var(--cd-text-sm)`, `color: var(--cd-text-secondary)` |
 | `.cd-exit-chart` | `display: grid`, `grid-template-columns: repeat({N_BUCKETS}, 1fr)`, `gap: var(--cd-space-2)`, `min-width: 640px`, `padding: var(--cd-space-4)`, `background: var(--cd-bg-surface-sunken)`, `border-radius: var(--cd-radius-md)`, `overflow-x: auto` |
 | `.cd-exit-bucket` | `display: flex`, `flex-direction: column`, `align-items: center`, `gap: var(--cd-space-2)` |
-| `.cd-exit-bar-wrap` | `width: 100%`, `height: 128px` (= `var(--cd-space-8) * 4`), `display: flex`, `align-items: flex-end`, `position: relative` |
-| `.cd-exit-bar` | `width: 100%`, `min-height: 2px`, `border-radius: var(--cd-radius-sm) var(--cd-radius-sm) 0 0`, `position: relative`, `transition: filter 0.1s ease`, `cursor: pointer` |
+| `.cd-exit-bar-wrap` | `width: 100%`, `height: calc(var(--cd-space-8) * 4)` (= 128px chart canvas; token-derived so the intent is traceable to the design system, no bare pixel literal), `display: flex`, `align-items: flex-end`, `position: relative` |
+| `.cd-exit-bar` | `width: 100%`, `min-height: var(--cd-space-1)` (= 4px; ensures zero/near-zero buckets remain visible without collapsing — on the 4px grid), `border-radius: var(--cd-radius-sm) var(--cd-radius-sm) 0 0`, `position: relative`, `transition: filter 0.1s ease`, `cursor: pointer` |
 | `.cd-exit-bar:hover` | `filter: brightness(1.15)` |
 | `.cd-exit-bar:focus-visible` | `outline: none`, `box-shadow: 0 0 0 2px var(--cd-green-dim)`, `z-index: 3` |
 | `.cd-exit-bar:hover .cd-tooltip, .cd-exit-bar:focus-visible .cd-tooltip` | `visibility: visible; opacity: 1` (REUSES Phase 13 `.cd-tooltip` rule) |
-| `.cd-exit-bar-count` | `position: absolute`, `top: -18px`, `left: 50%`, `transform: translateX(-50%)`, `font-size: var(--cd-text-xs)`, `font-weight: 700`, `color: var(--cd-text-primary)`, `white-space: nowrap` |
+| `.cd-exit-bar-count` | `position: absolute`, `top: calc(-1 * var(--cd-space-4))` (= -16px; count badge sits 16px above bar top — clearly above the 4px-min-height bar; on-grid, token-derived), `left: 50%`, `transform: translateX(-50%)`, `font-size: var(--cd-text-xs)`, `font-weight: 700`, `color: var(--cd-text-primary)`, `white-space: nowrap` |
 | `.cd-exit-bar--err-strong` | `background: var(--cd-status-error)` |
 | `.cd-exit-bar--err-muted` | `background: var(--cd-status-error-bg)`, `border: 1px solid var(--cd-status-error)` |
 | `.cd-exit-bar--warn` | `background: var(--cd-status-disabled)` |
@@ -538,6 +540,9 @@ Reused (NOT redeclared):
 | Panel summary copy | "Failure context" + meta "{N} consecutive failures" | Terminal-tool tone. Matches sibling card titles ("Configuration", "Duration", "Run History"). The streak count in the meta lets operators decide whether to expand without expanding. |
 | Single heading size for new surfaces | Both panel `<summary>` and exit-code card title use `--cd-text-xl` | Per checker fix: keeps Phase 21 active type scale at exactly 4 sizes (`xs`/`sm`/`base`/`xl`). Side-effect: panel heading is heavier than "Run History" — defensible because the panel is an attention-getting diagnostic that only renders on failure, not a passive section header. |
 | Stat-stack gap | `.cd-exit-stat` uses `gap: 0` | Per checker fix: tight vertical label/value/meta stack is the standard stat-card pattern. `0` is on the 4px grid trivially. Original `2px` was off-grid and undefended. |
+| Histogram bar `min-height` | `var(--cd-space-1)` (= 4px) | Per checker fix (final spacing pass): original `2px` was off the 4px grid. 4px is the smallest on-grid value and is visually equivalent for the purpose (preventing zero-count bars from collapsing while keeping the chart baseline readable). |
+| Histogram bar count-badge offset | `top: calc(-1 * var(--cd-space-4))` (= -16px) | Per checker fix (final spacing pass): original `-18px` was off the 4px grid. -16px puts the count badge clearly above the 4px-min-height bar with no visual regression and is now token-derived. |
+| Histogram chart canvas height | `calc(var(--cd-space-8) * 4)` (= 128px) | Per checker fix (final spacing pass): the bare `128px` literal was on-grid (multiple of 4) but undefended. Token-derived `calc()` keeps the same pixel value while making intent traceable to the design system, and avoids introducing a one-off `--cd-exit-chart-height` token that would bloat the design surface for a single use site. |
 
 ---
 
@@ -547,7 +552,7 @@ Reused (NOT redeclared):
 - [ ] Dimension 2 Visuals: PASS (component inventory complete; both surfaces have markup contract + CSS class table; mermaid placement diagrams for both pages)
 - [ ] Dimension 3 Color: PASS (60/30/10 split declared with explicit accent reserved-for list; 10-bucket → token mapping locked; zero new tokens; accent #2 token name aligned to `--cd-status-active` semantically)
 - [ ] Dimension 4 Typography: PASS (EXACTLY 4 active size roles for Phase 21 — `xs`, `sm`, `base`, `xl` — 2 weights only, JetBrains Mono everywhere, line-heights from existing scale, no new sizes)
-- [ ] Dimension 5 Spacing: PASS (4px-base scale reused verbatim; `gap: 0` on `.cd-exit-stat` is on-grid; touch target ≥44px on `<summary>`; no raw pixel values anywhere)
+- [ ] Dimension 5 Spacing: PASS (4px-base scale reused verbatim; `gap: 0` on `.cd-exit-stat` is on-grid; histogram bar `min-height` = `var(--cd-space-1)`; bar count-badge `top` = `calc(-1 * var(--cd-space-4))`; chart canvas `height` = `calc(var(--cd-space-8) * 4)`; touch target ≥44px on `<summary>`; every padding/margin/gap/top/min-height/height value resolves to a token, calc-of-tokens, or `0`) |
 - [ ] Dimension 6 Registry Safety: N/A (no JS component registry; project is server-rendered Rust + askama; gate explicitly skipped per researcher rules)
 
 **Approval:** pending
