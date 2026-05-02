@@ -72,6 +72,73 @@
   {% endmatch %}
 </div>
 
+<!-- Phase 21 Failure-Context Panel (FCTX-01..06) — UI-SPEC § Component Inventory § 1 -->
+{% if show_fctx_panel %}{% if let Some(fctx) = fctx %}
+<details class="cd-fctx-panel mb-6">
+  <summary class="cd-fctx-summary">
+    <span class="cd-fctx-summary-caret" aria-hidden="true">▸</span>
+    <span class="cd-fctx-summary-label">Failure context</span>
+    <span class="cd-fctx-summary-meta">{{ fctx.summary_meta }}</span>
+  </summary>
+  <div class="cd-fctx-body">
+
+    <!-- Row 1: TIME DELTAS — always renders for failed/timeout -->
+    <div class="cd-fctx-row">
+      <div class="cd-fctx-row-label">TIME DELTAS</div>
+      <div class="cd-fctx-row-value">
+        {{ fctx.time_deltas_value }}
+        {% match fctx.last_success_run_url %}
+          {% when Some with (url) %}
+            • <a href="{{ url }}" class="cd-fctx-row-link">[view last successful run]</a>
+          {% when None %}
+        {% endmatch %}
+      </div>
+    </div>
+
+    <!-- Row 2: IMAGE DIGEST — hidden on non-docker AND when never-succeeded -->
+    {% if fctx.is_docker_job %}{% match fctx.image_digest_value %}
+      {% when Some with (val) %}
+        <div class="cd-fctx-row">
+          <div class="cd-fctx-row-label">IMAGE DIGEST</div>
+          <div class="cd-fctx-row-value cd-fctx-mono-digest">{{ val }}</div>
+        </div>
+      {% when None %}
+    {% endmatch %}{% endif %}
+
+    <!-- Row 3: CONFIG — hidden when never-succeeded -->
+    {% match fctx.config_changed_value %}
+      {% when Some with (val) %}
+        <div class="cd-fctx-row">
+          <div class="cd-fctx-row-label">CONFIG</div>
+          <div class="cd-fctx-row-value">{{ val }}</div>
+        </div>
+      {% when None %}
+    {% endmatch %}
+
+    <!-- Row 4: DURATION — gated by N >= 5 successful samples -->
+    {% if fctx.has_duration_samples %}{% match fctx.duration_value %}
+      {% when Some with (val) %}
+        <div class="cd-fctx-row">
+          <div class="cd-fctx-row-label">DURATION</div>
+          <div class="cd-fctx-row-value">{{ val }}</div>
+        </div>
+      {% when None %}
+    {% endmatch %}{% endif %}
+
+    <!-- Row 5: FIRE SKEW — hidden when scheduled_for IS NULL (legacy rows; D-04) -->
+    {% match fctx.fire_skew_value %}
+      {% when Some with (val) %}
+        <div class="cd-fctx-row">
+          <div class="cd-fctx-row-label">FIRE SKEW</div>
+          <div class="cd-fctx-row-value">{{ val }}</div>
+        </div>
+      {% when None %}
+    {% endmatch %}
+
+  </div>
+</details>
+{% endif %}{% endif %}
+
 <!-- Log Viewer -->
 {% if is_running %}
 <div id="log-container">
