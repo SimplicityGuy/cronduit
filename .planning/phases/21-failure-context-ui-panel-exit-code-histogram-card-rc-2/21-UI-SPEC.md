@@ -1,11 +1,12 @@
 ---
 phase: 21
 slug: failure-context-ui-panel-exit-code-histogram-card-rc-2
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-05-01
 revised: 2026-05-01
+reviewed_at: 2026-05-01
 ---
 
 # Phase 21 — UI Design Contract
