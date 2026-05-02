@@ -109,8 +109,7 @@ async fn retention_webhook_fk_no_violation_when_dlq_row_references_old_run() {
     let cutoff = (chrono::Utc::now() - chrono::Duration::days(90)).to_rfc3339();
     let old_time = (chrono::Utc::now() - chrono::Duration::days(100)).to_rfc3339();
 
-    let (_, run_id) =
-        seed_job_run_with_dlq(&pool, "bl01-old-run-job", &old_time, &old_time).await;
+    let (_, run_id) = seed_job_run_with_dlq(&pool, "bl01-old-run-job", &old_time, &old_time).await;
 
     // Run the prune in the POST-FIX order. If BL-01 regresses (i.e., someone
     // reorders the phases back to runs-before-webhook_deliveries), the
