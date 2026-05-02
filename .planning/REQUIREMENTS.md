@@ -86,7 +86,7 @@ Pre-locked design: `.planning/seeds/SEED-001-custom-docker-labels.md`. Three dec
 
 - [ ] **FCTX-05**: **Duration-vs-p50 deviation** — "duration was 12.3s; typical p50 is 4.2s (3× longer than usual)" computed as `current.duration_ms / p50_of_last_100_successful_runs`. Below 5 sample threshold (no p50 available), this row is suppressed. Reuses `src/web/stats.rs::percentile()` from Phase 13. `T-V12-FCTX-10`.
 
-- [ ] **FCTX-06**: **Scheduler-fire-time vs run-start-time skew** — "scheduled fire: 14:30:00; actual start: 14:30:23 (+23s)" computed from `scheduled_for` (already in `job_runs`) and `started_at`. Highlights scheduler back-pressure or executor slow-start situations. `T-V12-FCTX-11`.
+- [x] **FCTX-06**: **Scheduler-fire-time vs run-start-time skew** — "scheduled fire: 14:30:00; actual start: 14:30:23 (+23s)" computed from `scheduled_for` (already in `job_runs`) and `started_at`. Highlights scheduler back-pressure or executor slow-start situations. `T-V12-FCTX-11`.
 
 - [x] **FCTX-07**: The `get_failure_context(job_id)` query returns a single struct populated from a single SQL query (NOT 5 separate queries). The query is verified via `EXPLAIN QUERY PLAN` on both SQLite and Postgres to use indexed access on `job_runs.job_id` + `start_time`. `T-V12-FCTX-12`.
 
@@ -194,7 +194,7 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | FCTX-03   | 21    | Pending |
 | FCTX-04   | 16    | Complete |
 | FCTX-05   | 21    | Pending |
-| FCTX-06   | 21    | Pending |
+| FCTX-06   | 21    | Complete |
 | FCTX-07   | 16    | Complete |
 | EXIT-01   | 21    | Pending |
 | EXIT-02   | 21    | Pending |

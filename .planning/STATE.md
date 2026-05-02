@@ -4,14 +4,14 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 21 context gathered
-last_updated: "2026-05-02T19:24:26.527Z"
-last_activity: 2026-05-02 -- Phase 21 execution started
+last_updated: "2026-05-02T20:04:23.856Z"
+last_activity: 2026-05-02
 progress:
   total_phases: 10
   completed_phases: 6
   total_plans: 56
-  completed_plans: 45
-  percent: 80
+  completed_plans: 47
+  percent: 84
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 21 (failure-context-ui-panel-exit-code-histogram-card-rc-2) — EXECUTING
-Plan: 1 of 11
-Status: Executing Phase 21
-Last activity: 2026-05-02 -- Phase 21 execution started
+Plan: 2 of 11
+Status: Ready to execute
+Last activity: 2026-05-02
 
-Progress: [█████░░░░░] 50% (v1.2: 5/10 phases complete; 33/— plans complete)
+Progress: [████████░░] 84%
 
 ## v1.2 Roadmap Summary
 
@@ -135,6 +135,7 @@ All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 - Exit-code: 10-bucket strategy; success as separate stat; stopped distinct from 128-143; last-100-ALL window; NOT exposed as Prometheus label.
 - Tagging: `jobs.tags` TEXT JSON column; per-job only (not in `[defaults]`); lowercase+trim normalization; charset regex; substring-collision check; AND filter semantics; untagged-hidden when filter active; URL state via repeated `?tag=`.
 - cargo-deny: v1.2 preamble (non-blocking initially; promoted to blocking before final v1.2.0).
+- [Phase 21]: Widened insert_running_run + run_job to thread scheduled_for; trigger-aware semantics live at scheduler call site (cron tick → entry.fire_time, catch-up → m.missed_time, Run Now → now_rfc3339, legacy RunNow → None)
 
 ### Open questions
 
@@ -173,7 +174,7 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-02T02:35:49.552Z
+Last session: 2026-05-02T20:03:00.532Z
 Stopped at: Phase 21 context gathered
 Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
 
