@@ -9,6 +9,7 @@ use axum_htmx::HxRequest;
 use serde::Deserialize;
 
 use crate::db::queries;
+use crate::db::queries::FailureContext;
 use crate::web::AppState;
 use crate::web::ansi;
 use crate::web::csrf;
@@ -182,6 +183,42 @@ pub struct LogLineView {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Phase 21 FCTX panel pre-formatted view-model assembly (D-13/D-14/D-04).
+///
+/// Task-2 STUB shape: returns a minimally-populated FctxView so the gating
+/// + soft-fail wire-up compiles. Plan 21-04 task 3 replaces the body with
+/// the locked UI-SPEC § Copywriting Contract assembly (TIME DELTAS row,
+/// IMAGE DIGEST row, CONFIG row, DURATION row gated to N>=5, FIRE SKEW
+/// row hidden on NULL scheduled_for).
+///
+/// Field gating contract (consumed by template in plan 21-06):
+/// - `image_digest_value: None` → IMAGE DIGEST row hides
+/// - `config_changed_value: None` → CONFIG row hides (D-13 never-succeeded)
+/// - `has_duration_samples: false` → DURATION row hides (UI-SPEC FCTX-05)
+/// - `fire_skew_value: None` → FIRE SKEW row hides (D-04 NULL scheduled_for)
+/// - `last_success_run_url: None` → TIME DELTAS row drops the link suffix
+///   and renders the "No prior successful run" copy variant (D-13)
+async fn build_fctx_view(
+    _run: &RunDetailView,
+    ctx: FailureContext,
+    _pool: &crate::db::DbPool,
+) -> FctxView {
+    // Plan 21-04 task 3 fills these in per UI-SPEC § Copywriting Contract.
+    FctxView {
+        consecutive_failures: ctx.consecutive_failures,
+        summary_meta: String::new(),
+        last_success_run_id: ctx.last_success_run_id,
+        time_deltas_value: String::new(),
+        last_success_run_url: None,
+        is_docker_job: false,
+        image_digest_value: None,
+        config_changed_value: None,
+        has_duration_samples: false,
+        duration_value: None,
+        fire_skew_value: None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -290,11 +327,40 @@ pub async fn run_detail(
 
         let csrf_token = csrf::get_token_from_cookies(&cookies);
 
-        // Phase 21 FCTX wire-up lands in plan 21-04 task 2 (gating + soft-fail)
-        // and task 3 (build_fctx_view). Task 1 ships the struct shape only;
-        // the panel stays hidden on every render until task 2 wires the gate.
-        let show_fctx_panel = false;
-        let fctx: Option<FctxView> = None;
+        // Phase 21 FCTX panel gating + fetch + soft-fail (FCTX-01 / D-12).
+        //
+        // Gating: panel renders ONLY for status ∈ {failed, timeout}. The
+        // `error` status is intentionally excluded (research landmine §11) —
+        // `error` is the executor-error orphan path; the FCTX panel is the
+        // diagnostic-rich operator surface for actual job failures.
+        //
+        // Soft-fail: get_failure_context Err → hide panel + emit warn.
+        // Field shape mirrors `src/web/handlers/api.rs:127-132` verbatim
+        // (target: "cronduit.web", structured fields, error = %e Display).
+        // Per research landmine §12 we do NOT short-circuit the handler:
+        // log fetch + page render proceed unaffected so a transient FCTX
+        // query failure still shows the operator the run + its logs.
+        let (show_fctx_panel, fctx) =
+            if matches!(run_view.status.as_str(), "failed" | "timeout") {
+                match queries::get_failure_context(&state.pool, run_view.job_id).await {
+                    Ok(ctx) => {
+                        let view = build_fctx_view(&run_view, ctx, &state.pool).await;
+                        (true, Some(view))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "cronduit.web",
+                            job_id = run_view.job_id,
+                            run_id = run_view.id,
+                            error = %e,
+                            "fctx panel: get_failure_context failed — hiding panel"
+                        );
+                        (false, None)
+                    }
+                }
+            } else {
+                (false, None)
+            };
 
         RunDetailPage {
             run: run_view,
