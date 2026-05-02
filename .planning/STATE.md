@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: executing
+status: "Phase 21 shipped — PR #55 (awaiting CI matrix + merge → rc.2 tag cut)"
 stopped_at: Completed 21-06-PLAN.md
-last_updated: "2026-05-02T21:03:43.374Z"
-last_activity: 2026-05-02
+last_updated: "2026-05-02T23:14:46.603Z"
+last_activity: "2026-05-02 -- Phase 21 PR #55 opened"
 progress:
   total_phases: 10
   completed_phases: 6
   total_plans: 56
-  completed_plans: 51
-  percent: 91
+  completed_plans: 55
+  percent: 98
 ---
 
 # Project State
@@ -29,8 +29,8 @@ Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 21 (failure-context-ui-panel-exit-code-histogram-card-rc-2) — EXECUTING
 Plan: 6 of 11
-Status: Ready to execute
-Last activity: 2026-05-02
+Status: Phase 21 shipped — PR #55 (awaiting CI matrix + merge → rc.2 tag cut)
+Last activity: 2026-05-02 -- Phase 21 PR #55 opened
 
 Progress: [█████████░] 91%
 
