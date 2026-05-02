@@ -297,3 +297,79 @@ async fn dlq_url_matches_configured_url() {
          got `{stored_url}` expected `{configured_url}`"
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn dlq_5xx_row_has_body_preview_in_last_error() {
+    // BL-03 regression lock: a receiver returning 503 with a non-empty body
+    // results in a webhook_deliveries row with last_error = the truncated
+    // 200-char body preview (NOT NULL). Per CONTEXT D-10 (audit-table framing),
+    // http_5xx DLQ rows MUST carry diagnostic body content for operator
+    // post-mortems.
+    let pool = setup_test_db().await;
+    let (job_id, run_id) = seed_job_with_failed_run(&pool, "dlq-5xx-body-preview-job").await;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(503).set_body_string(
+            "Service Unavailable: upstream pool exhausted, queue=42, retry-in=300s",
+        ))
+        .mount(&server)
+        .await;
+    let server_uri = server.uri();
+
+    let cancel = CancellationToken::new();
+    let dispatcher = build_dispatcher(pool.clone(), &server_uri, job_id, cancel.clone()).await;
+    let event = make_run_finalized(run_id, job_id, "dlq-5xx-body-preview-job");
+
+    tokio::time::pause();
+    let result = tokio::select! {
+        r = dispatcher.deliver(&event) => r,
+        _ = async {
+            loop {
+                tokio::task::yield_now().await;
+                tokio::time::advance(Duration::from_millis(500)).await;
+            }
+        } => unreachable!(),
+    };
+    tokio::time::resume();
+    assert!(result.is_err(), "503 must exhaust the chain and return Err");
+
+    // Inspect the DLQ row directly. last_error MUST be Some and contain a
+    // substring of the response body. dlq_reason MUST be 'http_5xx'.
+    let read_pool = match pool.reader() {
+        PoolRef::Sqlite(p) => p,
+        _ => panic!("sqlite-only test"),
+    };
+    let row = sqlx::query(
+        "SELECT dlq_reason, last_error, last_status FROM webhook_deliveries WHERE run_id = ?1",
+    )
+    .bind(run_id)
+    .fetch_one(read_pool)
+    .await
+    .expect("DLQ row must exist for run_id");
+    let dlq_reason: String = row.get("dlq_reason");
+    let last_error: Option<String> = row.get("last_error");
+    let last_status: Option<i64> = row.get("last_status");
+
+    assert_eq!(dlq_reason, "http_5xx", "503 must classify as http_5xx");
+    assert_eq!(last_status, Some(503), "last_status must be 503");
+    assert!(
+        last_error.is_some(),
+        "BL-03 regression: last_error MUST be non-NULL for http_5xx DLQ rows. \
+         If this is None, WebhookError::HttpStatus body_preview is being \
+         dropped between the dispatcher and retry layers."
+    );
+    let err_text = last_error.unwrap();
+    assert!(
+        err_text.contains("Service Unavailable") || err_text.contains("upstream pool"),
+        "last_error must contain a recognizable substring of the receiver's body; \
+         got: {err_text}"
+    );
+    // The dispatcher truncates at 200 chars; truncate_error in retry.rs caps at 500.
+    // Either bound is acceptable; the body in this test is well under 200 anyway.
+    assert!(
+        err_text.chars().count() <= 500,
+        "last_error must be truncated; got {} chars",
+        err_text.chars().count()
+    );
+}

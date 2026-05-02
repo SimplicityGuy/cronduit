@@ -147,22 +147,27 @@ async fn receiver_429_with_retry_after_header_extends_sleep_to_hint_within_cap()
         "429 + Retry-After should still retry the schedule's 3 attempts"
     );
 
-    // With Retry-After: 350 honored end-to-end:
-    //   sleep before attempt 2 = min(cap_for_slot(0)=36s, max(jitter(30s), 350s))
-    //                          = min(36, 350) = 36s
-    //   sleep before attempt 3 = min(cap_for_slot(1)=360s, max(jitter(300s), 350s))
+    // Per CONTEXT D-08 (post-BL-02 fix): with Retry-After: 350 honored end-to-end:
+    //   sleep before attempt 2 = min(cap_for_slot(1)=360s, max(jitter(30s), 350s))
+    //                          = min(360, 350) = 350s   (post-fix: 350 is honored)
+    //   sleep before attempt 3 = min(cap_for_slot(2)=360s, max(jitter(300s), 350s))
     //                          = min(360, 350) = 350s
-    // Total chain virtual time ≈ 36 + 350 = ~386s, plus driver yield slop.
+    // Total chain virtual time ≈ 350 + 350 = 700s, plus driver yield slop.
     //
-    // Without Retry-After honoring (B1 regression), the chain would sleep
-    // ~jitter(30) + jitter(300) = ~24..36 + ~240..360 = at most ~396s,
-    // typically ~330s. The 350s on the second sleep is the distinguishing
-    // signal — it MUST be present, not the jittered ~300s. We assert
-    // elapsed >= 380s (350 + 30 = 380 minimum).
+    // BL-02 history: before the fix, the first sleep used cap_for_slot(0)=36s,
+    // truncating 350 → 36 silently. Total was 36 + 350 = 386s. Asserting
+    // elapsed >= 680s distinguishes POST-fix from PRE-fix behavior.
+    //
+    // Without Retry-After honoring at all (B1 regression), the chain would
+    // sleep ~jitter(30) + jitter(300) ≈ 24..36 + 240..360 ≤ 396s — well
+    // under 680s. The 700s lower bound thus regression-locks both BL-02
+    // (cap fix) and the original B1 (Retry-After honored at all).
     assert!(
-        elapsed_virtual >= Duration::from_secs(380),
-        "with Retry-After: 350 honored, total chain virtual time must be ≥ 380s; \
-         got {:?}. If this is ≪ 380s, Retry-After is being ignored (B1 bug regressed).",
+        elapsed_virtual >= Duration::from_secs(680),
+        "with Retry-After: 350 honored on BOTH inter-attempt sleeps per D-08, \
+         total chain virtual time must be ≥ 680s; got {:?}. \
+         If 380..420s, BL-02 has regressed (first sleep capped to 36 instead of 360). \
+         If < 380s, B1 has regressed (Retry-After ignored entirely).",
         elapsed_virtual
     );
 }
@@ -170,11 +175,12 @@ async fn receiver_429_with_retry_after_header_extends_sleep_to_hint_within_cap()
 #[tokio::test(flavor = "current_thread")]
 async fn receiver_429_with_retry_after_9999_is_capped() {
     // T-20-03 (DoS) regression lock: receiver-controlled Retry-After: 9999 must
-    // be capped at cap_for_slot(prev_slot). The chain must NOT sleep 9999s.
+    // be capped at cap_for_slot(next_attempt). The chain must NOT sleep 9999s.
     //
-    // Sleep before attempt 2 = min(cap_for_slot(0)=36s, max(jitter, 9999)) = 36s
-    // Sleep before attempt 3 = min(cap_for_slot(1)=360s, max(jitter, 9999)) = 360s
-    // Total ≈ 36 + 360 = 396s. Without the cap it would be ~9999 + 9999 = 19998s.
+    // Per CONTEXT D-08 (post-BL-02 fix):
+    // Sleep before attempt 2 (next_attempt=1) = min(cap_for_slot(1)=360s, max(jitter, 9999)) = 360s
+    // Sleep before attempt 3 (next_attempt=2) = min(cap_for_slot(2)=360s, max(jitter, 9999)) = 360s
+    // Total ≈ 360 + 360 = 720s. Without the cap it would be ~9999 + 9999 = 19998s.
     let pool = setup_test_db().await;
     let (job_id, run_id) = seed_job_with_failed_run(&pool, "retry-after-cap-job").await;
 
@@ -205,12 +211,17 @@ async fn receiver_429_with_retry_after_9999_is_capped() {
     let elapsed_virtual = start_virtual.elapsed();
     assert!(result.is_err(), "exhausted capped 429s must return Err");
 
-    // Cap upper bound: 36 + 360 = 396s. Slack 50s for driver loop.
+    // Per CONTEXT D-08 (post-BL-02 fix): cap_for_slot(next_attempt=1) = 360s,
+    // cap_for_slot(next_attempt=2) = 360s (last-slot fallback). Total chain
+    // sleep = 360 + 360 = 720s. Slack 60s for driver loop overhead. Pre-fix
+    // would have been 36 + 360 = 396s, so the new assertion bound (>=700s, <=780s)
+    // distinguishes the FIXED behavior from the BUGGY one.
     assert!(
-        elapsed_virtual <= Duration::from_secs(450),
-        "Retry-After: 9999 must be capped at cap_for_slot(); chain virtual time \
-         must be ≤ ~450s, got {:?}. If this is in the thousands, the cap was \
-         not honored (T-20-03 regression).",
+        elapsed_virtual >= Duration::from_secs(700) && elapsed_virtual <= Duration::from_secs(780),
+        "Retry-After: 9999 must be capped at cap_for_slot() per D-08; chain virtual \
+         time must be ≈ 720s (360 + 360), got {:?}. \
+         If < 700s, BL-02 has regressed (cap_for_slot(0)=36 incorrectly used). \
+         If > 780s, the cap is not being applied at all (T-20-03 regression).",
         elapsed_virtual
     );
 }
