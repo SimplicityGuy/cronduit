@@ -590,17 +590,8 @@ async fn fire_skew_row_hidden_on_null_scheduled_for() {
     let job_id = seed_test_job(&pool, "fire-skew-null-job", "command", "cfg-A").await;
 
     // Legacy row simulation: scheduled_for = NULL.
-    let failed = seed_run_with_scheduled_for(
-        &pool,
-        job_id,
-        "failed",
-        1,
-        None,
-        Some(1),
-        None,
-        "cfg-A",
-    )
-    .await;
+    let failed =
+        seed_run_with_scheduled_for(&pool, job_id, "failed", 1, None, Some(1), None, "cfg-A").await;
 
     let (status, body) = fetch_run_detail(app, job_id, failed).await;
     assert_eq!(status, StatusCode::OK);
@@ -629,10 +620,10 @@ async fn fire_skew_row_renders_skew_ms() {
         job_id,
         "failed",
         1,
-        "2026-04-27T00:01:23Z",        // start_time
-        Some("2026-04-27T00:01:53Z"),  // end_time
-        Some(30_000),                  // duration_ms
-        Some("2026-04-27T00:01:00Z"),  // scheduled_for (23s earlier)
+        "2026-04-27T00:01:23Z",       // start_time
+        Some("2026-04-27T00:01:53Z"), // end_time
+        Some(30_000),                 // duration_ms
+        Some("2026-04-27T00:01:00Z"), // scheduled_for (23s earlier)
         Some(1),
         None,
         "cfg-A",
@@ -672,10 +663,10 @@ async fn run_now_skew_zero() {
         job_id,
         "failed",
         1,
-        "2026-04-27T00:01:00Z",        // start_time
-        Some("2026-04-27T00:01:30Z"),  // end_time
+        "2026-04-27T00:01:00Z",       // start_time
+        Some("2026-04-27T00:01:30Z"), // end_time
         Some(30_000),
-        Some("2026-04-27T00:01:00Z"),  // scheduled_for == start_time
+        Some("2026-04-27T00:01:00Z"), // scheduled_for == start_time
         Some(1),
         None,
         "cfg-A",

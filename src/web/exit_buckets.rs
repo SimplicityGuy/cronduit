@@ -41,7 +41,7 @@ pub enum ExitBucket {
 /// Single top-N entry for the EXIT-05 "Most frequent codes" sub-table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopCode {
-    pub code: i32,                 // raw exit_code (e.g., 137, 127, 143); BucketNull excluded
+    pub code: i32, // raw exit_code (e.g., 137, 127, 143); BucketNull excluded
     pub count: usize,
     pub last_seen: Option<String>, // RFC3339 end_time of most recent occurrence
 }
@@ -50,12 +50,12 @@ pub struct TopCode {
 #[derive(Debug, Clone)]
 pub struct HistogramCard {
     pub buckets: HashMap<ExitBucket, usize>, // 10 keys when present; 0-count buckets may be omitted
-    pub success_count: usize,                // status='success' count (NOT a bucket; EXIT-03 stat badge)
-    pub stopped_count: usize,                // status='stopped' count (excluded from success-rate denom; D-09)
-    pub sample_count: usize,                 // total rows fed in
-    pub has_min_samples: bool,               // sample_count >= 5 (D-11)
-    pub success_rate: Option<f64>,           // success_count / (sample_count - stopped_count); None when denom == 0
-    pub top_codes: Vec<TopCode>,             // top-3 by count, length <= 3 (EXIT-05)
+    pub success_count: usize, // status='success' count (NOT a bucket; EXIT-03 stat badge)
+    pub stopped_count: usize, // status='stopped' count (excluded from success-rate denom; D-09)
+    pub sample_count: usize,  // total rows fed in
+    pub has_min_samples: bool, // sample_count >= 5 (D-11)
+    pub success_rate: Option<f64>, // success_count / (sample_count - stopped_count); None when denom == 0
+    pub top_codes: Vec<TopCode>,   // top-3 by count, length <= 3 (EXIT-05)
 }
 
 /// Returns the bucket for a (status, exit_code) pair, or None for the success path.
@@ -234,10 +234,7 @@ mod tests {
             categorize("stopped", Some(0)),
             Some(ExitBucket::BucketStopped)
         );
-        assert_eq!(
-            categorize("stopped", None),
-            Some(ExitBucket::BucketStopped)
-        );
+        assert_eq!(categorize("stopped", None), Some(ExitBucket::BucketStopped));
         assert_eq!(
             categorize("stopped", Some(255)),
             Some(ExitBucket::BucketStopped)
