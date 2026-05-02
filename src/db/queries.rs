@@ -1479,10 +1479,21 @@ pub async fn delete_old_runs_batch(
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             let result = sqlx::query(
+                // Phase 20 / WH-10 / BL-01 (Option A): NOT EXISTS clause extended
+                // to cover webhook_deliveries. The retention pruner reorders
+                // phases so webhook_deliveries deletes run BEFORE this query
+                // (src/scheduler/retention.rs Phase 2); the second NOT EXISTS
+                // is defense-in-depth for the race window where a new
+                // webhook_deliveries row gets inserted between Phase 2 finishing
+                // and this query executing. The migration's FK to job_runs(id)
+                // (without ON DELETE CASCADE per CONTEXT D-12 audit-table
+                // framing) would otherwise abort this DELETE with a constraint
+                // violation and break retention permanently.
                 "DELETE FROM job_runs WHERE rowid IN (
                     SELECT jr.rowid FROM job_runs jr
                     WHERE jr.end_time IS NOT NULL AND jr.end_time < ?1
                     AND NOT EXISTS (SELECT 1 FROM job_logs jl WHERE jl.run_id = jr.id)
+                    AND NOT EXISTS (SELECT 1 FROM webhook_deliveries wd WHERE wd.run_id = jr.id)
                     LIMIT ?2
                 )",
             )
@@ -1494,10 +1505,14 @@ pub async fn delete_old_runs_batch(
         }
         PoolRef::Postgres(p) => {
             let result = sqlx::query(
+                // Phase 20 / WH-10 / BL-01 (Option A): NOT EXISTS clause extended
+                // to cover webhook_deliveries. See SQLite branch above for full
+                // rationale.
                 "DELETE FROM job_runs WHERE id IN (
                     SELECT jr.id FROM job_runs jr
                     WHERE jr.end_time IS NOT NULL AND jr.end_time < $1
                     AND NOT EXISTS (SELECT 1 FROM job_logs jl WHERE jl.run_id = jr.id)
+                    AND NOT EXISTS (SELECT 1 FROM webhook_deliveries wd WHERE wd.run_id = jr.id)
                     LIMIT $2
                 )",
             )
