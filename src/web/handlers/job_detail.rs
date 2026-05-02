@@ -47,6 +47,17 @@ struct JobDetailPage {
     total_pages: i64,
     any_running: bool,
     csrf_token: String,
+    /// Phase 21 EXIT-01..05: pre-formatted view-model for the Exit-Code
+    /// Histogram card. The askama template (plan 21-06) substitutes
+    /// `{{ value }}` with zero logic — every conditional copy rendering
+    /// happens in `build_exit_histogram_view` per UI-SPEC § Copywriting
+    /// Contract. Soft-fail produces an empty-state ExitHistogramView with
+    /// `has_min_samples=false; sample_count=0` (NOT `None`) so the template
+    /// branches on `has_min_samples` instead of `{% match %}` per the
+    /// logic-free contract. Tolerated as `dead_code` until plan 21-06 lands
+    /// the askama template insert that consumes it.
+    #[allow(dead_code)]
+    exit_histogram: ExitHistogramView,
 }
 
 #[derive(Template)]
@@ -106,6 +117,105 @@ pub struct DurationView {
     pub sample_count: usize,
     /// Subtitle text per UI-SPEC § Duration card subtitle matrix.
     pub sample_count_display: String,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 21 EXIT-01..05 view-model: Exit-Code Histogram card
+// ---------------------------------------------------------------------------
+//
+// Pre-formatted view-models consumed by the askama template (plan 21-06).
+// All copy strings are server-rendered per UI-SPEC § Copywriting Contract:
+// the template substitutes `{{ value }}` with zero conditional rendering.
+//
+// Construction lives in `build_exit_histogram_view` adjacent to the existing
+// Duration card hydration block. Soft-fail in the handler produces an
+// empty-state view with `has_min_samples=false; sample_count=0` (not
+// `Option<ExitHistogramView>`) so the template branches on `has_min_samples`
+// without a `{% match %}`.
+
+/// Per-bar render payload — one entry per ExitBucket variant in UI-SPEC
+/// display order. All eight fields are pre-formatted strings or pre-clamped
+/// numerics; the template injects them verbatim.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct BucketRender {
+    /// Short label per UI-SPEC § Component Inventory § 10 bucket short-labels:
+    /// "1", "2", "3-9", "10-126", "127", "128-143", "144-254", "255",
+    /// "none", "stopped".
+    pub short_label: String,
+    /// CSS class per UI-SPEC § Color: "err-strong" / "err-muted" / "warn"
+    /// / "stopped" / "null". Maps to a `var(--cd-status-...)` token in
+    /// `app.css`.
+    pub color_class: String,
+    /// Tooltip dot CSS variable name (e.g., "status-error", "status-stopped")
+    /// — drives the small color dot in the tooltip header.
+    pub dot_token: String,
+    /// Bucket count (raw `usize` — template renders verbatim).
+    pub count: usize,
+    /// Bar height percentage, server-clamped to 0..=100 per
+    /// research § Security Domain V5 (defensive; pct is computed in Rust
+    /// and never derived from operator input).
+    pub height_pct: i64,
+    /// Pre-formatted `aria-label` per UI-SPEC § Component Inventory aria_label
+    /// table, with `{N}` substituted by `count`.
+    pub aria_label: String,
+    /// Pre-formatted tooltip title per UI-SPEC § Copywriting Contract:
+    /// `"Exit code(s): {short_label}"`.
+    pub tooltip_title: String,
+    /// Pre-formatted tooltip detail per UI-SPEC § Copywriting Contract:
+    /// `"{count} runs · last seen {rel}"` or `"{count} runs · last seen never"`
+    /// when no top-3 entry exists. BucketStopped uses the locked override
+    /// copy: `"Stopped via UI — cronduit sent SIGKILL. Distinct from
+    /// \"signal-killed\" (128-143) which captures external SIGTERM /
+    /// SIGSEGV / etc."`.
+    pub tooltip_detail: String,
+}
+
+/// Top-N entry render payload for the EXIT-05 "Most frequent codes" sub-table.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TopCodeRender {
+    /// Code label per UI-SPEC § Copywriting Contract:
+    /// 127 → `"127 (command not found)"`,
+    /// 137 → `"137 (SIGKILL — stopped)"`,
+    /// 143 → `"143 (SIGTERM)"`,
+    /// otherwise → `"{code}"` (bare integer).
+    pub label: String,
+    pub count: usize,
+    /// Relative-time render of the most-recent occurrence: e.g.
+    /// `"3 hours"` / `"1 day"` / `"never"` — uses the locally-defined
+    /// `format_relative_time` helper that mirrors `run_detail.rs`.
+    pub last_seen_relative: String,
+}
+
+/// Card-level view-model for the Exit-Code Histogram card on the Job Detail
+/// page (Phase 21 EXIT-01..05). Eight fields, all pre-formatted server-side.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ExitHistogramView {
+    /// True iff `sample_count >= 5` (D-11). Gates the
+    /// `{% if has_min_samples %}` branch in the template.
+    pub has_min_samples: bool,
+    /// Raw row count fed to the aggregator. Used in the empty-state copy
+    /// (`"have N"`) and the "Last N runs (window: 100)" caption.
+    pub sample_count: usize,
+    /// 10 entries — one per ExitBucket variant in UI-SPEC display order:
+    /// Bucket1, Bucket2, Bucket3to9, Bucket10to126, Bucket127, Bucket128to143,
+    /// Bucket144to254, Bucket255, BucketNull, BucketStopped.
+    pub buckets: Vec<BucketRender>,
+    /// Success-rate percent, 0..=100 (display-only; only meaningful when
+    /// `has_min_samples` is true).
+    pub success_rate_pct: u8,
+    /// Pre-formatted success-rate display: `"{pct}%"` when
+    /// `success_rate.is_some()`, `"—"` when `None` (denom == 0 per D-09).
+    pub success_rate_display: String,
+    /// Raw success count for the `{success_count}/{sample_count}` stat.
+    pub success_count: usize,
+    /// Top-3 code render payloads. Length 0..=3.
+    pub top_codes: Vec<TopCodeRender>,
+    /// One-sentence aria summary per UI-SPEC § Accessibility:
+    /// `"Exit code distribution over last {N} runs: {top_buckets_summary}"`.
+    pub chart_aria_summary: String,
 }
 
 pub struct RunHistoryView {
@@ -293,6 +403,20 @@ pub async fn job_detail(
 
         let csrf_token = csrf::get_token_from_cookies(&cookies);
 
+        // Phase 21 EXIT-01..05: empty-state placeholder — replaced in Task 2
+        // by the real fetch + aggregate + view-model build. Construction is
+        // shaped to match `build_exit_histogram_view` for an empty card.
+        let exit_histogram = ExitHistogramView {
+            has_min_samples: false,
+            sample_count: 0,
+            buckets: Vec::new(),
+            success_rate_pct: 0,
+            success_rate_display: "—".to_string(),
+            success_count: 0,
+            top_codes: Vec::new(),
+            chart_aria_summary: String::new(),
+        };
+
         JobDetailPage {
             job: job_view,
             job_id,
@@ -302,6 +426,7 @@ pub async fn job_detail(
             total_pages,
             any_running,
             csrf_token,
+            exit_histogram,
         }
         .into_web_template()
         .into_response()
