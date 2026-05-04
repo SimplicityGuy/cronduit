@@ -1,10 +1,11 @@
 ---
 phase: 23
 slug: job-tagging-dashboard-filter-chips-rc-3
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-05-04
+reviewed_at: 2026-05-04
 ---
 
 # Phase 23 — UI Design Contract
