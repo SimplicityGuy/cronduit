@@ -442,7 +442,10 @@ fn check_tag_charset_and_reserved(job: &JobConfig, path: &Path, errors: &mut Vec
     empty_after_trim.sort();
     empty_after_trim.dedup();
     if !empty_after_trim.is_empty() {
-        let display: Vec<String> = empty_after_trim.iter().map(|t| format!("{:?}", t)).collect();
+        let display: Vec<String> = empty_after_trim
+            .iter()
+            .map(|t| format!("{:?}", t))
+            .collect();
         errors.push(ConfigError {
             file: path.into(),
             line: 0,
@@ -605,11 +608,7 @@ fn preview_jobs(jobs: &[String]) -> String {
 ///
 /// Complexity: O(T^2) where T = unique tag count across fleet. At
 /// homelab scale (≤16 jobs × ≤16 tags = 256 max), microseconds.
-fn check_tag_substring_collision(
-    jobs: &[JobConfig],
-    path: &Path,
-    errors: &mut Vec<ConfigError>,
-) {
+fn check_tag_substring_collision(jobs: &[JobConfig], path: &Path, errors: &mut Vec<ConfigError>) {
     use std::collections::{BTreeSet, HashMap};
 
     // Step 1: build {tag → [jobs_using_it]} from the POST-normalization
@@ -2246,7 +2245,10 @@ mod tests {
         );
         let mut errors = Vec::new();
         check_tag_count_per_job(&job, Path::new("x"), &mut errors);
-        assert!(errors.is_empty(), "post-normalize+dedup count: got {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "post-normalize+dedup count: got {errors:?}"
+        );
     }
 
     #[test]
@@ -2310,7 +2312,11 @@ mod tests {
             "expected 3 pair errors; got {} -- {errors:?}",
             errors.len()
         );
-        let all_messages: String = errors.iter().map(|e| e.message.as_str()).collect::<Vec<_>>().join("\n");
+        let all_messages: String = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         // Each pair appears in shorter-substring-of-longer order.
         assert!(
             all_messages.contains("'bac' (used by 'job-a') is a substring of 'back'"),
@@ -2425,7 +2431,9 @@ tags = ["backup"]
         let mut errors = Vec::new();
         run_all_checks(&cfg, Path::new("x"), toml_text, &mut errors);
         assert!(
-            errors.iter().any(|e| e.message.contains("is a substring of")),
+            errors
+                .iter()
+                .any(|e| e.message.contains("is a substring of")),
             "substring-collision must be raised: got {errors:?}"
         );
     }
