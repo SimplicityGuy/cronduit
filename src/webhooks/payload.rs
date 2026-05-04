@@ -136,6 +136,7 @@ mod tests {
             image_digest,
             config_hash,
             scheduled_for: None, // Phase 21 FCTX-06: test fixture
+            tags: Vec::new(),    // Phase 22: defaulted; Plan 04 widens for real values
         }
     }
 

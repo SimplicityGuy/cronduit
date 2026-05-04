@@ -519,6 +519,7 @@ mod tests {
             image_digest: None,
             config_hash: None,
             scheduled_for: None, // Phase 21 FCTX-06: test fixture
+            tags: Vec::new(),    // Phase 22: defaulted; Plan 04 widens for real values
         };
         let payload = WebhookPayload::build(&event, &fctx, &run, 1, "1.2.0");
         let body_bytes = serde_json::to_vec(&payload).expect("canonical payload must serialize");

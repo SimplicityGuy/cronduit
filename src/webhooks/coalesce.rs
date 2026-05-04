@@ -206,6 +206,7 @@ mod tests {
             r#"{"command":"echo fp"}"#,
             "hash-fp",
             3600,
+            "[]",
         )
         .await
         .expect("upsert job");

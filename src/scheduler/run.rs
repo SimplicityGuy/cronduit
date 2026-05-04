@@ -741,6 +741,7 @@ mod tests {
             config_json,
             "testhash",
             3600,
+            "[]",
         )
         .await
         .unwrap();
