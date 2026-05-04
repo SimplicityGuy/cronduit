@@ -129,6 +129,18 @@ cmd = ["echo", "Hello from cronduit defaults!"]
 # with watchtower.enable=false (inherited) AND the two traefik labels (per-job).
 # Per-key collision (none here) would resolve per-job-wins. See README § Labels.
 labels = { "traefik.enable" = "true", "traefik.http.routers.hello.rule" = "Host(`hello.local`)" }
+# Phase 22 / TAG-01..05 -- per-job organizational tags. Charset is
+# `^[a-z0-9][a-z0-9_-]{0,30}$` (lowercase ASCII alphanumeric + `_-`,
+# leading [a-z0-9], 1-31 chars). Reserved names: cronduit, system,
+# internal. Per-job cap of 16 (post-normalization+dedup); fleet-wide
+# substring-collision pass rejects e.g. `["foo", "foobar"]`. Tags are
+# per-job ONLY (not in [defaults]) to avoid the substring-collision
+# detection problem on every config-load. See README § Configuration >
+# Tags. Operator copy-paste safety: this demo intentionally adds tags
+# to ONE job only, with two non-substring values (`demo` is not a
+# substring of `hello` and vice-versa) -- copying the line into a
+# second job leaves the file valid.
+tags = ["demo", "hello"]
 
 # 5. Docker job demonstrating per-job field overrides winning over [defaults]
 #    (CONF-06). Contrast with `hello-world` above (job 4): job 4 inherits
