@@ -50,7 +50,7 @@ Inbound: scheduler emits a `RunFinalized` event on every terminal status. Outbou
 
 - [ ] **WH-08**: SSRF is documented as accepted risk (no allow/block-list filter in v1.2 — half-built filter is worse than no filter; deferred to v1.3 as an explicit feature). `THREAT_MODEL.md` gains Threat Model 5 (Webhook Outbound) enumerating: operator-with-UI-access can configure a webhook URL pointing at any internal service; cronduit is loopback-bound by default; reverse-proxy fronting with auth is the v1.2 mitigation. `T-V12-WH-17`.
 
-- [ ] **WH-09**: Webhook payload schema includes (at minimum): `payload_version: "v1"`, `event_type: "run_finalized"`, `run_id`, `job_id`, `job_name`, `status`, `exit_code`, `started_at`, `finished_at`, `duration_ms`, `streak_position`, `consecutive_failures`, `image_digest` (docker jobs only), `config_hash`, `tags`, plus a `cronduit_version` field. The schema is locked at v1.2.0; future additions are additive (new fields only); breaking changes require a `payload_version: "v2"` bump. `T-V12-WH-18`, `T-V12-WH-19`.
+- [x] **WH-09**: Webhook payload schema includes (at minimum): `payload_version: "v1"`, `event_type: "run_finalized"`, `run_id`, `job_id`, `job_name`, `status`, `exit_code`, `started_at`, `finished_at`, `duration_ms`, `streak_position`, `consecutive_failures`, `image_digest` (docker jobs only), `config_hash`, `tags`, plus a `cronduit_version` field. The schema is locked at v1.2.0; future additions are additive (new fields only); breaking changes require a `payload_version: "v2"` bump. `T-V12-WH-18`, `T-V12-WH-19`.
 
 - [ ] **WH-10**: Webhook delivery survives scheduler reload (SIGHUP / `POST /api/reload` / file-watch). In-flight deliveries are NOT cancelled; new deliveries continue to be queued. On graceful shutdown (SIGTERM), the worker drains the queue with a configurable `webhook_drain_grace = "30s"` deadline (default), then drops remaining queued deliveries with a counter increment. `T-V12-WH-20`, `T-V12-WH-21`.
 
@@ -180,7 +180,7 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | WH-06     | 18    | Pending |
 | WH-07     | 20    | Pending |
 | WH-08     | 20    | Pending |
-| WH-09     | 18    | Pending |
+| WH-09     | 18    | Complete |
 | WH-10     | 20    | Pending |
 | WH-11     | 20    | Pending |
 | LBL-01    | 17    | Complete |

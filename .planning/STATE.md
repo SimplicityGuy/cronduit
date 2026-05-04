@@ -4,14 +4,14 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 22 context gathered
-last_updated: "2026-05-04T19:49:33.453Z"
+last_updated: "2026-05-04T19:58:01.162Z"
 last_activity: 2026-05-04
 progress:
   total_phases: 10
   completed_phases: 7
   total_plans: 62
-  completed_plans: 59
-  percent: 95
+  completed_plans: 60
+  percent: 97
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 21 (failure-context-ui-panel-exit-code-histogram-card-rc-2) — EXECUTING
-Plan: 7 of 11
+Plan: 8 of 11
 Status: Ready to execute
 Last activity: 2026-05-04
 
-Progress: [██████████] 95%
+Progress: [██████████] 97%
 
 ## v1.2 Roadmap Summary
 
@@ -140,6 +140,7 @@ All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 - [Phase 21-04]: FCTX panel data flow wired in run_detail handler — gating to status ∈ {failed, timeout} (excludes 'error' per landmine §11); soft-fail tracing::warn! with locked field shape from api.rs:127-132; build_fctx_view assembles all 11 FctxView fields per UI-SPEC § Copywriting Contract; askama template (plan 21-06) substitutes {{ value }} with zero logic
 - [Phase 21-05]: Exit Histogram view-model wired into job_detail handler — three pre-formatted structs (BucketRender, TopCodeRender, ExitHistogramView) sibling to DurationView; const-then-fetch-then-build pattern adjacent to Duration card; soft-fail tracing::warn! upgrade per D-12 (NEW logic vs dashboard sparkline .unwrap_or_default()); 10-entry display-order Vec with server-clamped height_pct (research § Security V5); locked UI-SPEC color/copy mappings via static lookup helpers; logic-free template contract — askama template (plan 21-06) substitutes {{ value }} with zero logic
 - [Phase ?]: [Phase 21-06]: FCTX panel + Exit Histogram template inserts + 16+28 cd-* CSS classes landed in @layer components — askama logic-free contract honored (template substitutes {{ value }} verbatim); print-mode rule + reduced-motion extension applied; outer chrome on cd-exit-card via inline style matching Duration sibling (no near-duplicate class); .cd-tooltip (Phase 13) reused with new .cd-exit-bar:hover anchor selector; #[allow(dead_code)] removed from page-level fields now that templates consume them; Tailwind rebuild via build.rs regenerates assets/static/app.css alongside source
+- [Phase ?]: Plan 22-04: WH-09 closed end-to-end — WebhookPayload.tags reads run.tags.clone() (D-05); old structural-breadcrumb test deleted (D-06.5)
 
 ### Open questions
 
@@ -178,7 +179,7 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-04T19:49:33.447Z
+Last session: 2026-05-04T19:57:46.453Z
 Stopped at: Phase 22 context gathered
 Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
 
