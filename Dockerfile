@@ -12,7 +12,7 @@
 # trixie, so no install-line changes are needed.
 
 # ---- builder ----
-FROM --platform=$BUILDPLATFORM rust:1.94.1-slim-trixie AS builder
+FROM --platform=$BUILDPLATFORM rust:1.95.0-slim-trixie AS builder
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
