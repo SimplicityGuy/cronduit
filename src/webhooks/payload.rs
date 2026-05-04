@@ -139,8 +139,21 @@ mod tests {
             image_digest,
             config_hash,
             scheduled_for: None, // Phase 21 FCTX-06: test fixture
-            tags: Vec::new(),    // Phase 22: defaulted; Plan 04 widens for real values
+            tags: Vec::new(),    // Phase 22: defaulted; fixture_run_detail_with_tags overrides
         }
+    }
+
+    /// Phase 22 WH-09 / D-05: 3-arg variant for tests that need to seed
+    /// non-empty tag values into `DbRunDetail.tags`. Backwards-compatible
+    /// with the seven existing `fixture_run_detail(None, None)` callers.
+    fn fixture_run_detail_with_tags(
+        image_digest: Option<String>,
+        config_hash: Option<String>,
+        tags: Vec<String>,
+    ) -> DbRunDetail {
+        let mut r = fixture_run_detail(image_digest, config_hash);
+        r.tags = tags;
+        r
     }
 
     #[test]
@@ -233,6 +246,30 @@ mod tests {
         let s = serde_json::to_string(&p).unwrap();
         assert!(s.contains("\"image_digest\":null"));
         assert!(s.contains("\"config_hash\":null"));
+    }
+
+    #[test]
+    fn payload_tags_carries_real_values() {
+        // Phase 22 WH-09 / D-05 / D-06.5: the placeholder is gone.
+        // Receivers see real tag values from the jobs.tags column,
+        // round-tripped through DbRunDetail.tags into the wire JSON.
+        // Sorted-canonical order is emitted (operator-written
+        // ["weekly", "backup"] becomes ["backup", "weekly"] after the
+        // upsert path's normalize+sort+dedup; this test asserts the
+        // ORDER in the wire payload).
+        let event = fixture_event();
+        let fctx = fixture_fctx();
+        let run = fixture_run_detail_with_tags(
+            None,
+            None,
+            vec!["backup".to_string(), "weekly".to_string()],
+        );
+        let p = WebhookPayload::build(&event, &fctx, &run, 1, "1.2.0");
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(
+            s.contains(r#""tags":["backup","weekly"]"#),
+            "tags must round-trip into payload preserving sorted-canonical order: {s}"
+        );
     }
 
     #[test]
