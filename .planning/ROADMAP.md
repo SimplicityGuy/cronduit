@@ -254,15 +254,15 @@ Plans:
   3. An operator who writes a tag like `MyTag!` or `cronduit` (reserved) gets a config-load ERROR pointing at the offending tag — the validator never silently mutates; the charset regex `^[a-z0-9][a-z0-9_-]{0,30}$` is enforced.
   4. An operator who configures one job with `tags = ["back"]` and another with `tags = ["backup"]` gets a config-load ERROR (substring-collision check) — the SQL filter `tags LIKE '%"' || ?tag || '"%'` would otherwise produce false positives.
 
-**Plans:** 6 plans
+**Plans:** 3/6 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 22-01-PLAN.md — Schema + serde field + sqlite/postgres migration pair (TAG-01, TAG-02)
+- [x] 22-01-PLAN.md — Schema + serde field + sqlite/postgres migration pair (TAG-01, TAG-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 22-02-PLAN.md — Four validators in `validate.rs`: charset+reserved, count cap (16), fleet-level substring-collision; D-04 order locked (TAG-03, TAG-04, TAG-05)
-- [ ] 22-03-PLAN.md — DB plumbing: upsert_job widening + DbRunDetail.tags + get_run_by_id row-map + sync.rs callers + hash.rs D-01 comment + tags_excluded_from_hash regression test (TAG-02)
+- [x] 22-02-PLAN.md — Four validators in `validate.rs`: charset+reserved, count cap (16), fleet-level substring-collision; D-04 order locked (TAG-03, TAG-04, TAG-05)
+- [x] 22-03-PLAN.md — DB plumbing: upsert_job widening + DbRunDetail.tags + get_run_by_id row-map + sync.rs callers + hash.rs D-01 comment + tags_excluded_from_hash regression test (TAG-02)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 22-04-PLAN.md — WH-09 webhook payload backfill: src/webhooks/payload.rs L88 vec![] → run.tags.clone(); test rename payload_tags_carries_real_values (WH-09)
@@ -330,7 +330,7 @@ Plans:
 | 19. Webhook HMAC Signing + Receiver Examples | 6/6 | Complete   | 2026-04-30 |
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 10/11 | In Progress|  |
-| 22. Job Tagging Schema + Validators | 0/6 | Planned    | — |
+| 22. Job Tagging Schema + Validators | 3/6 | In Progress|  |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 0/— | Not started | — |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
 

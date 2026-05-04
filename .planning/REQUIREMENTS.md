@@ -112,7 +112,7 @@ UI-only filter chips on the dashboard. NO effect on webhooks (WH-09 includes tag
 
 - [ ] **TAG-01**: A new `tags: Vec<String>` field is added to `JobConfig` (TOML: `tags = ["backup", "weekly"]`). NOT added to `DefaultsConfig` (per-job only — the `[defaults] + per-job + use_defaults = false` override pattern does NOT apply to tags). `T-V12-TAG-01`.
 
-- [ ] **TAG-02**: Tags are persisted to a new `jobs.tags TEXT NOT NULL DEFAULT '[]'` column (JSON-serialized array; structurally parity-friendly across SQLite + Postgres without JSONB ops). Migration is a single-file additive nullable→default '[]' (NOT the three-file tightening pattern; old jobs get default `'[]'` automatically on column add). `T-V12-TAG-02`.
+- [x] **TAG-02**: Tags are persisted to a new `jobs.tags TEXT NOT NULL DEFAULT '[]'` column (JSON-serialized array; structurally parity-friendly across SQLite + Postgres without JSONB ops). Migration is a single-file additive nullable→default '[]' (NOT the three-file tightening pattern; old jobs get default `'[]'` automatically on column add). `T-V12-TAG-02`.
 
 - [ ] **TAG-03**: Tag normalization at config-load: lowercase + trim. `["Backup", "backup ", "BACKUP"]` collapse to `["backup"]`. Operators get a config-load WARN (not error) when normalization would collapse multiple tags to the same canonical form — flags the deduplication so operators notice. `T-V12-TAG-03`, `T-V12-TAG-04`.
 
@@ -203,7 +203,7 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | EXIT-05   | 21    | Complete |
 | EXIT-06   | 21    | Pending |
 | TAG-01    | 22    | Pending |
-| TAG-02    | 22    | Pending |
+| TAG-02    | 22    | Complete |
 | TAG-03    | 22    | Pending |
 | TAG-04    | 22    | Pending |
 | TAG-05    | 22    | Pending |
