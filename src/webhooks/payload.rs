@@ -48,8 +48,11 @@ pub struct WebhookPayload<'a> {
     /// `null` for pre-v1.2 rows; populated for runs after Phase 16's
     /// `job_runs.config_hash` column landed.
     pub config_hash: Option<String>,
-    /// Empty `[]` until Phase 22 lights up real values. Schema-stable
-    /// — Phase 22 cutover does NOT break receivers.
+    /// Real values from `jobs.tags` column via `DbRunDetail.tags` (Phase 22
+    /// WH-09 / D-05). Sorted-canonical order. Always emitted (never omitted)
+    /// for schema stability; receivers can index without `KeyError`. Per
+    /// WH-09 the field is part of the locked v1.2.0 payload schema —
+    /// future additions are additive only.
     pub tags: Vec<String>,
     /// `env!("CARGO_PKG_VERSION")` baked at compile time (D-07; aligns
     /// with `feedback_tag_release_version_match.md` project memory).
@@ -85,7 +88,7 @@ impl<'a> WebhookPayload<'a> {
             consecutive_failures: fctx.consecutive_failures,
             image_digest: run.image_digest.clone(),
             config_hash: run.config_hash.clone(),
-            tags: vec![],
+            tags: run.tags.clone(), // Phase 22 WH-09 / D-05
             cronduit_version,
         }
     }
@@ -230,16 +233,6 @@ mod tests {
         let s = serde_json::to_string(&p).unwrap();
         assert!(s.contains("\"image_digest\":null"));
         assert!(s.contains("\"config_hash\":null"));
-    }
-
-    #[test]
-    fn payload_tags_empty_array_until_p22() {
-        let event = fixture_event();
-        let fctx = fixture_fctx();
-        let run = fixture_run_detail(None, None);
-        let p = WebhookPayload::build(&event, &fctx, &run, 1, "1.2.0");
-        let s = serde_json::to_string(&p).unwrap();
-        assert!(s.contains("\"tags\":[]"));
     }
 
     #[test]
