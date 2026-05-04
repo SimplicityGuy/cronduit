@@ -19,6 +19,26 @@ static LABEL_KEY_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9._-]*$").unwrap()
 });
 
+/// Phase 22 TAG-04: tag charset regex. Anchored leading alphanumeric +
+/// 0-30 body chars from [a-z0-9_-]; total length 1-31. Pattern is
+/// checked against the post-normalization (lowercase + trim) form per
+/// D-04 step 2 — uppercase input is normalized first and would only
+/// fail charset if it contained chars outside [a-z0-9_-] post-lowercase.
+static TAG_CHARSET_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-z0-9][a-z0-9_-]{0,30}$").unwrap());
+
+/// Phase 22 TAG-04: reserved tag names. Finite list (NOT a prefix —
+/// operators can use `cronduit2` or `cronduit-foo` freely). Expansion
+/// is a single-line edit if needed in v1.3.
+const RESERVED_TAGS: &[&str] = &["cronduit", "system", "internal"];
+
+/// Phase 22 D-08: hard cap on tag count per job (post-dedup).
+/// Rationale: (a) Phase 23 chip UI on a single dashboard row stays
+/// readable — 16 chips fits next to a job name; (b) operators rarely
+/// need >16 organizational dimensions on a single job; (c) the cap can
+/// be lifted later without a migration if it bites.
+const MAX_TAGS_PER_JOB: usize = 16;
+
 /// Canonical RunFinalized status values per src/scheduler/run.rs:315-322.
 /// Used by `check_webhook_block_completeness` for the operator's `webhook.states` filter.
 const VALID_WEBHOOK_STATES: &[&str] = &[
@@ -62,7 +82,15 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         // Phase 18 / WH-01 — webhook validators.
         check_webhook_url(job, path, errors);
         check_webhook_block_completeness(job, path, errors);
+        // Phase 22 / TAG-* — D-04 order: normalize → reject (charset + reserved
+        // + empty) → dedup with WARN (folded into check_tag_charset_and_reserved).
+        check_tag_charset_and_reserved(job, path, errors);
+        check_tag_count_per_job(job, path, errors); // Phase 22 / D-08
     }
+    // Phase 22 / TAG-05 — fleet-level substring-collision pass (D-03).
+    // MUST run AFTER the per-job loop so the tag set has already been
+    // normalized + dedup'd per-job (D-04 lock).
+    check_tag_substring_collision(&cfg.jobs, path, errors);
 }
 
 fn check_timezone(tz: &str, path: &Path, errors: &mut Vec<ConfigError>) {
@@ -377,6 +405,274 @@ fn check_label_key_chars(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigEr
             invalid.join(", ")
         ),
     });
+}
+
+/// Phase 22 TAG-03 + TAG-04: per-job tag validation.
+///
+/// D-04 order:
+/// 1. Normalize: `tags.iter().map(|t| t.trim().to_lowercase())`.
+/// 2. Reject empty/whitespace-only inputs (Pitfall 6 — never silently drop).
+/// 3. Reject charset violations (`^[a-z0-9][a-z0-9_-]{0,30}$`) on the
+///    post-normalization form. Capital input lowercases and passes.
+/// 4. Reject reserved names (`cronduit`, `system`, `internal`) on the
+///    post-normalization form (so `Cronduit` is also rejected).
+/// 5. Emit `tracing::warn!` line if normalization caused a dedup collapse
+///    (TAG-03 WARN flags it; never blocks). Operator sees:
+///    `WARN job '<name>': tags ["Backup", "backup ", "BACKUP"] collapsed to ["backup"] (case + whitespace normalization)`.
+///
+/// HashMap/iteration determinism: every offending list is `.sort()`ed
+/// before `.join(", ")` per Pitfall 3 (`validate.rs:184` precedent).
+fn check_tag_charset_and_reserved(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.tags.is_empty() {
+        return;
+    }
+
+    // Step 1: normalize (trim + lowercase). Preserve raw alongside for the
+    // empty-after-trim diagnostic and the WARN line.
+    let normalized: Vec<String> = job.tags.iter().map(|t| t.trim().to_lowercase()).collect();
+
+    // Step 2: empty/whitespace-only (Pitfall 6) — uses raw inputs to keep
+    // the message honest about what the operator wrote.
+    let mut empty_after_trim: Vec<String> = job
+        .tags
+        .iter()
+        .filter(|t| t.trim().is_empty())
+        .cloned()
+        .collect();
+    empty_after_trim.sort();
+    empty_after_trim.dedup();
+    if !empty_after_trim.is_empty() {
+        let display: Vec<String> = empty_after_trim.iter().map(|t| format!("{:?}", t)).collect();
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: empty or whitespace-only tags are not allowed: {}. Remove the empty entries.",
+                job.name,
+                display.join(", ")
+            ),
+        });
+    }
+
+    // Step 3: charset (post-normalization). Skip already-empty entries —
+    // they are reported by Step 2.
+    let mut bad_charset: Vec<String> = normalized
+        .iter()
+        .filter(|t| !t.is_empty() && !TAG_CHARSET_RE.is_match(t))
+        .cloned()
+        .collect();
+    bad_charset.sort();
+    bad_charset.dedup();
+    if !bad_charset.is_empty() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: tags fail charset `^[a-z0-9][a-z0-9_-]{{0,30}}$` (lowercase ASCII alphanumeric + underscore + dash; 1-31 chars; must start with [a-z0-9]): {}. Rename or remove these tags.",
+                job.name,
+                bad_charset
+                    .iter()
+                    .map(|t| format!("`{}`", t))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        });
+    }
+
+    // Step 4: reserved names (post-normalization).
+    let mut reserved_hits: Vec<String> = normalized
+        .iter()
+        .filter(|t| RESERVED_TAGS.contains(&t.as_str()))
+        .cloned()
+        .collect();
+    reserved_hits.sort();
+    reserved_hits.dedup();
+    if !reserved_hits.is_empty() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: reserved tag names not allowed: {}. Reserved list is {:?}; pick a different tag.",
+                job.name,
+                reserved_hits
+                    .iter()
+                    .map(|t| format!("`{}`", t))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                RESERVED_TAGS
+            ),
+        });
+    }
+
+    // Step 5: dedup-collapse WARN (TAG-03). Group raw inputs by canonical form;
+    // any group with len > 1 means the operator wrote N inputs that collapsed
+    // to 1. Skip groups whose canonical is empty (those are already errors).
+    let mut groups: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for (raw_t, norm_t) in job.tags.iter().zip(normalized.iter()) {
+        if norm_t.is_empty() {
+            continue;
+        }
+        groups
+            .entry(norm_t.clone())
+            .or_default()
+            .push(raw_t.clone());
+    }
+    let mut collapses: Vec<(String, Vec<String>)> = groups
+        .into_iter()
+        .filter(|(_, raws)| raws.len() > 1)
+        .collect();
+    collapses.sort_by(|a, b| a.0.cmp(&b.0));
+    if !collapses.is_empty() {
+        for (canon, raws) in &collapses {
+            tracing::warn!(
+                job = %job.name,
+                inputs = ?raws,
+                canonical = %canon,
+                "job '{}': tags {:?} collapsed to [{:?}] (case + whitespace normalization)",
+                job.name,
+                raws,
+                canon
+            );
+        }
+    }
+}
+
+/// Phase 22 D-08: per-job count cap of 16 enforced on the POST-dedup
+/// tag count. D-04 step 4 lock: operates on what the operator
+/// effectively meant after normalization, not the raw input length.
+fn check_tag_count_per_job(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.tags.is_empty() {
+        return;
+    }
+    // Same normalization as check_tag_charset_and_reserved; could be
+    // factored into a shared `normalize_tags` helper but inlining keeps
+    // each validator self-contained and the cost is microseconds.
+    let mut normalized: Vec<String> = job
+        .tags
+        .iter()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    normalized.sort();
+    normalized.dedup();
+
+    if normalized.len() > MAX_TAGS_PER_JOB {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: has {} tags; max is {}. Remove tags or split into multiple jobs.",
+                job.name,
+                normalized.len(),
+                MAX_TAGS_PER_JOB
+            ),
+        });
+    }
+}
+
+/// Phase 22 D-03: format up to 3 representative job names for the
+/// substring-collision error message body. Beyond 3, append `(+N more)`
+/// to keep the error scannable when many jobs share an offending tag.
+fn preview_jobs(jobs: &[String]) -> String {
+    if jobs.len() <= 3 {
+        format!("'{}'", jobs.join("', '"))
+    } else {
+        format!(
+            "'{}', '{}', '{}' (+{} more)",
+            jobs[0],
+            jobs[1],
+            jobs[2],
+            jobs.len() - 3
+        )
+    }
+}
+
+/// Phase 22 TAG-05 / D-03: fleet-level substring-collision check.
+/// Operates on the post-normalization, post-dedup tag set across the
+/// WHOLE fleet (after the per-job loop completes). For each pair of
+/// distinct tags where one is a substring of the other (`s1.contains(s2)`
+/// where `s1 != s2`), emit ONE `ConfigError` naming both tags + the
+/// jobs that use each.
+///
+/// Plain `str::contains` (NOT regex) per CONTEXT specifics § L530-537.
+/// Identical tags across jobs (job A and B both have `backup`) are NOT
+/// collisions — `BTreeSet` uniqueness + `i < j` iteration skips equal
+/// pairs.
+///
+/// Complexity: O(T^2) where T = unique tag count across fleet. At
+/// homelab scale (≤16 jobs × ≤16 tags = 256 max), microseconds.
+fn check_tag_substring_collision(
+    jobs: &[JobConfig],
+    path: &Path,
+    errors: &mut Vec<ConfigError>,
+) {
+    use std::collections::{BTreeSet, HashMap};
+
+    // Step 1: build {tag → [jobs_using_it]} from the POST-normalization
+    // view. BTreeSet<String> per job for inner uniqueness.
+    let mut tag_to_jobs: HashMap<String, Vec<String>> = HashMap::new();
+    for job in jobs {
+        let normalized: BTreeSet<String> = job
+            .tags
+            .iter()
+            .map(|t| t.trim().to_lowercase())
+            .filter(|t| !t.is_empty()) // already rejected by Step 2 of charset validator
+            .collect();
+        for tag in normalized {
+            tag_to_jobs.entry(tag).or_default().push(job.name.clone());
+        }
+    }
+    // Stable sort of jobs per tag (for the `(+N more)` listing determinism).
+    for v in tag_to_jobs.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+
+    // Step 2: collect sorted unique tags for deterministic pair iteration.
+    let tags: Vec<&String> = {
+        let mut v: Vec<&String> = tag_to_jobs.keys().collect();
+        v.sort();
+        v
+    };
+
+    // Step 3: O(n^2) pair check with i < j (skips equal pairs and avoids
+    // double-counting symmetric collisions).
+    for i in 0..tags.len() {
+        for j in (i + 1)..tags.len() {
+            let a = tags[i];
+            let b = tags[j];
+            // Equal tags impossible here (BTreeSet uniqueness + i < j).
+            if a.contains(b.as_str()) || b.contains(a.as_str()) {
+                let jobs_a = &tag_to_jobs[a];
+                let jobs_b = &tag_to_jobs[b];
+                let preview_a = preview_jobs(jobs_a);
+                let preview_b = preview_jobs(jobs_b);
+                // Order the message so the SHORTER tag appears first in the
+                // "tag '...' is a substring of '...'" phrasing, which reads
+                // most naturally to the operator. When lengths are equal but
+                // strings differ (impossible since equal-length distinct
+                // strings can't be substrings of each other), default to (a, b).
+                let (short_t, short_jobs, long_t, long_jobs) = if a.len() <= b.len() {
+                    (a, &preview_a, b, &preview_b)
+                } else {
+                    (b, &preview_b, a, &preview_a)
+                };
+                errors.push(ConfigError {
+                    file: path.into(),
+                    line: 0,
+                    col: 0,
+                    message: format!(
+                        "tag '{}' (used by {}) is a substring of '{}' (used by {}); rename or remove one to avoid SQL substring false-positives at filter time.",
+                        short_t, short_jobs, long_t, long_jobs
+                    ),
+                });
+            }
+        }
+    }
 }
 
 /// Phase 20 / WH-07 (D-19): Classify an HTTP webhook URL's host against the
