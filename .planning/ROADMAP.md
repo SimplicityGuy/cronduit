@@ -246,7 +246,7 @@ Plans:
 
 **Depends on**: Phase 15 (independent of webhook/FCTX work)
 
-**Requirements**: TAG-01, TAG-02, TAG-03, TAG-04, TAG-05
+**Requirements**: TAG-01, TAG-02, TAG-03, TAG-04, TAG-05 (plus closes WH-09 from Phase 18 — webhook payload backfill end-to-end)
 
 **Success Criteria** (what must be TRUE):
   1. An operator who writes `tags = ["backup", "weekly"]` on a `[[jobs]]` block sees those tags persisted to the new `jobs.tags` JSON column; the field is per-job only (NOT supported in `[defaults]`).
@@ -254,7 +254,27 @@ Plans:
   3. An operator who writes a tag like `MyTag!` or `cronduit` (reserved) gets a config-load ERROR pointing at the offending tag — the validator never silently mutates; the charset regex `^[a-z0-9][a-z0-9_-]{0,30}$` is enforced.
   4. An operator who configures one job with `tags = ["back"]` and another with `tags = ["backup"]` gets a config-load ERROR (substring-collision check) — the SQL filter `tags LIKE '%"' || ?tag || '"%'` would otherwise produce false positives.
 
-**Plans**: TBD
+**Plans:** 6 plans
+
+Plans:
+**Wave 1**
+- [ ] 22-01-PLAN.md — Schema + serde field + sqlite/postgres migration pair (TAG-01, TAG-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 22-02-PLAN.md — Four validators in `validate.rs`: charset+reserved, count cap (16), fleet-level substring-collision; D-04 order locked (TAG-03, TAG-04, TAG-05)
+- [ ] 22-03-PLAN.md — DB plumbing: upsert_job widening + DbRunDetail.tags + get_run_by_id row-map + sync.rs callers + hash.rs D-01 comment + tags_excluded_from_hash regression test (TAG-02)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 22-04-PLAN.md — WH-09 webhook payload backfill: src/webhooks/payload.rs L88 vec![] → run.tags.clone(); test rename payload_tags_carries_real_values (WH-09)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 22-05-PLAN.md — Integration tests (tests/v12_tags_validators.rs) + examples/cronduit.toml demo line + three uat-tags-* just recipes (TAG-01..05)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 22-06-PLAN.md — 22-HUMAN-UAT.md maintainer runbook (autonomous=false; 4 scenarios per D-10) (TAG-01..05)
+
+**Cross-cutting constraints:**
+- No new external crates; `cargo tree -i openssl-sys` remains empty (D-17)
 
 ### Phase 23: Job Tagging Dashboard Filter Chips — rc.3
 
@@ -310,7 +330,7 @@ Plans:
 | 19. Webhook HMAC Signing + Receiver Examples | 6/6 | Complete   | 2026-04-30 |
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 10/11 | In Progress|  |
-| 22. Job Tagging Schema + Validators | 0/— | Not started | — |
+| 22. Job Tagging Schema + Validators | 0/6 | Planned    | — |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 0/— | Not started | — |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
 
