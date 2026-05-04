@@ -64,6 +64,7 @@ async fn explain_uses_index_sqlite() {
         r#"{"command":"echo a"}"#,
         "hash-a",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job A");
@@ -76,6 +77,7 @@ async fn explain_uses_index_sqlite() {
         r#"{"command":"echo b"}"#,
         "hash-b",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job B");
@@ -184,6 +186,7 @@ async fn explain_uses_index_postgres() {
         r#"{"command":"echo pg"}"#,
         "hash-pg",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");
@@ -341,6 +344,7 @@ async fn limit_10000_enforced() {
         r#"{"command":"echo"}"#,
         "limit-hash",
         3600,
+        "[]",
     )
     .await
     .expect("upsert");

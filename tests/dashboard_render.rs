@@ -53,7 +53,7 @@ async fn build_test_app() -> (axum::Router, DbPool) {
 
 async fn seed_job(pool: &DbPool, name: &str, schedule: &str) -> i64 {
     queries::upsert_job(
-        pool, name, schedule, schedule, "command", "{}", "deadbeef", 300,
+        pool, name, schedule, schedule, "command", "{}", "deadbeef", 300, "[]",
     )
     .await
     .expect("upsert job")

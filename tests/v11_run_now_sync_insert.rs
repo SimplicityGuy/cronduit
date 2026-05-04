@@ -94,6 +94,7 @@ async fn seed_job(pool: &DbPool, name: &str) -> i64 {
         r#"{"command":"echo hello"}"#,
         "deadbeef",
         300,
+        "[]",
     )
     .await
     .expect("upsert job")

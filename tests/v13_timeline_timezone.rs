@@ -76,6 +76,7 @@ async fn pdt_label_in_timeline_render() {
         r#"{"command":"echo"}"#,
         "hash-tz",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");

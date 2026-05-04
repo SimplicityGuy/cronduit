@@ -45,6 +45,7 @@ async fn seed_job(
         config_json,
         "stop-exec-hash",
         timeout_secs,
+        "[]",
     )
     .await
     .expect("upsert job");

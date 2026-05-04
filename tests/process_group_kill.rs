@@ -64,6 +64,7 @@ async fn seed_command_job(pool: &DbPool, name: &str, command_str: &str) -> DbJob
         &format!(r#"{{"command":{}}}"#, serde_json::json!(command_str)),
         "pg-kill-hash",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");
@@ -95,6 +96,7 @@ async fn seed_script_job(pool: &DbPool, name: &str, body: &str) -> DbJob {
         &config_json,
         "pg-kill-hash",
         3600,
+        "[]",
     )
     .await
     .expect("upsert script job");

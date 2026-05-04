@@ -48,6 +48,7 @@ async fn setup_pool_with_job() -> (DbPool, i64) {
         r#"{"command":"echo race"}"#,
         "race-hash",
         3600,
+        "[]",
     )
     .await
     .expect("upsert seed job");

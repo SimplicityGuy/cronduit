@@ -78,6 +78,7 @@ async fn seed_command_job(pool: &DbPool, name: &str, command_str: &str) -> DbJob
         &format!(r#"{{"command":{}}}"#, serde_json::json!(command_str)),
         "metrics-stopped-hash",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");

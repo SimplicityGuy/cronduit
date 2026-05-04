@@ -40,6 +40,7 @@ async fn seed_running_run(pool: &DbPool, job_name: &str) -> i64 {
         "{}",
         "deadbeef",
         300,
+        "[]",
     )
     .await
     .expect("upsert job");
