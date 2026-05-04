@@ -150,6 +150,24 @@ pub struct JobConfig {
     /// meaning "run with NO command", semantically distinct from None).
     #[serde(default)]
     pub cmd: Option<Vec<String>>,
+    /// Phase 22 TAG-01..05 / WH-09: organizational tags attached to a job.
+    /// Per-job ONLY — explicitly NOT on `DefaultsConfig` (TAG-01 — the
+    /// `[defaults]` + per-job + `use_defaults = false` override pattern
+    /// does NOT apply to tags by design; would create the substring-
+    /// collision detection problem on every config-load).
+    ///
+    /// Validators land in Plan 02 (charset `^[a-z0-9][a-z0-9_-]{0,30}$`,
+    /// reserved names `["cronduit", "system", "internal"]`, fleet-level
+    /// substring-collision check, per-job count cap of 16). Persistence
+    /// flows through `jobs.tags TEXT NOT NULL DEFAULT '[]'` column added
+    /// in this same plan (Plan 01).
+    ///
+    /// Empty Vec is the canonical "no tags" form (matches the column
+    /// default `'[]'` and the round-trip read path). `#[serde(default)]`
+    /// makes the TOML field optional; omitted-in-TOML produces
+    /// `Vec::new()`.
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Operator-defined webhook delivery configuration for this job.
     /// Per WH-01 / D-01..D-05. When None, `apply_defaults` may fill it from
     /// `[defaults].webhook` (replace-on-collision; see `defaults.rs`).

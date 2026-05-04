@@ -703,6 +703,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: None,
         }
     }
@@ -1174,6 +1175,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: wh,
         }
     }

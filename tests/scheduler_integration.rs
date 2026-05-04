@@ -74,6 +74,7 @@ fn make_job(
         timeout,
         delete: None,
         cmd: None,
+        tags: Vec::new(),
         webhook: None,
     }
 }
