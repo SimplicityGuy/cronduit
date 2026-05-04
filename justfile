@@ -45,18 +45,18 @@ clean:
     cargo clean
     rm -rf .sqlx/tmp assets/static/app.css cronduit.dev.db cronduit.dev.db-wal cronduit.dev.db-shm
 
-# Uses v4.2.2. Config lives in assets/src/app.css via @import "tailwindcss",
+# Uses v4.2.4. Config lives in assets/src/app.css via @import "tailwindcss",
 # @source "../../templates", and @theme — no tailwind.config.js (v4 format).
 [group('build')]
 [doc('Download the standalone Tailwind binary (NO Node) and rebuild app.css')]
 tailwind:
     @mkdir -p assets/static bin
     @if [ ! -x ./bin/tailwindcss ]; then \
-        echo "Downloading standalone Tailwind binary (v4.2.2)..."; \
+        echo "Downloading standalone Tailwind binary (v4.2.4)..."; \
         OS=$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/macos/'); \
         ARCH=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/'); \
         curl -sSLo ./bin/tailwindcss \
-            "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.2.2/tailwindcss-${OS}-${ARCH}"; \
+            "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.2.4/tailwindcss-${OS}-${ARCH}"; \
         chmod +x ./bin/tailwindcss; \
     fi
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --minify
@@ -1157,3 +1157,271 @@ uat-fctx-a11y:
     echo "  - Visit /jobs/{ID}. Tab onto a histogram bar. Confirm focus ring + tooltip appear."
     echo ""
     echo "All 4 phases complete. If any failed, capture the screenshot/issue details for 21-HUMAN-UAT.md."
+
+# ===== Phase 22 — job-tagging UAT recipes (D-10 + D-11) =====
+# Plan 22-05. Maintainer-facing scaffolds for the Plan 22-06 HUMAN-UAT
+# scenarios. Recipes follow the project memory rule
+# `feedback_uat_use_just_commands.md` — every step is either a `just`
+# recipe call OR a raw `sqlite3 cronduit.dev.db ...` inspection (the
+# `uat-fctx-bugfix-spot-check` / `uat-fctx-panel` precedent at
+# justfile:267-273 + 987-1014). NO new primitives are introduced; the
+# three recipes below compose the existing `build`, `db-reset`, `dev`,
+# `check-config`, `api-job-id`, `api-run-now`, and `uat-webhook-mock`
+# recipes only (D-11 + P18 D-25 / P21 D-19 precedent). Per
+# `feedback_uat_user_validates.md` the recipes do NOT self-assert
+# "passed" — final verdict is the maintainer's eyeball.
+
+# TAG-02 persistence spot-check. Writes a 3-tag TOML to .tmp/, runs
+# `just check-config` to confirm the validators accept it, brings up the
+# dev daemon (operator-driven so the lifecycle is visible), and prints
+# the jobs.tags column for eyeball verification of the sorted-canonical
+# JSON form (operator wrote `["weekly","backup","prod"]`, column shows
+# `["backup","prod","weekly"]`).
+[group('uat')]
+[doc('Phase 22 — TAG-02 persistence spot-check (operator validates jobs.tags column shape)')]
+uat-tags-persist:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 22 UAT: TAG-02 persistence spot-check"
+    echo ""
+    echo "Step 1: Build cronduit."
+    just build
+    echo ""
+    echo "Step 2: Reset dev DB (so the upsert path runs cleanly)."
+    just db-reset
+    echo ""
+    echo "Step 3: Write a 3-tag TOML to .tmp/cronduit.toml."
+    mkdir -p .tmp
+    cat > .tmp/uat-tags-persist.toml <<'TOML_EOF'
+    [server]
+    bind = "127.0.0.1:8080"
+    timezone = "UTC"
+
+    [[jobs]]
+    name = "uat-tags-persist-demo"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["weekly", "backup", "prod"]
+    TOML_EOF
+    echo ""
+    echo "Step 4: Validate the TOML via just check-config (must exit 0)."
+    just check-config .tmp/uat-tags-persist.toml
+    echo ""
+    echo "Step 5: Start cronduit in another terminal so the upsert runs:"
+    echo "        cargo run -- run --config .tmp/uat-tags-persist.toml --log-format text"
+    echo "        Wait for 'Listening on 127.0.0.1:8080'. Then PRESS ENTER here."
+    read
+    echo ""
+    echo "Step 6: Print jobs.tags column for the demo row (raw sqlite3 inspection,"
+    echo "        per the uat-fctx-bugfix-spot-check / uat-fctx-panel precedent)."
+    sqlite3 cronduit.dev.db "SELECT name, tags FROM jobs WHERE name = 'uat-tags-persist-demo';"
+    echo ""
+    echo "Expected output: tags = '[\"backup\",\"prod\",\"weekly\"]' (sorted-canonical JSON;"
+    echo "                  operator wrote weekly,backup,prod -> column stores backup,prod,weekly)."
+    echo "Maintainer: confirm the column form is the sorted-canonical JSON. The maintainer"
+    echo "            is the source of truth — Claude does NOT mark this passed."
+
+# TAG-03/04/05 + D-08 validator UX walk. Walks the maintainer through
+# each rejection path (charset, reserved, empty, substring-collision,
+# count cap, dedup-collapse WARN) by writing a fixture TOML per case
+# and running `just check-config` against it. The validators emit
+# multi-error output; the maintainer reads each message for clarity +
+# operator-actionability.
+[group('uat')]
+[doc('Phase 22 — validator error-UX walk (operator validates each rejection-path message)')]
+uat-tags-validators:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 22 UAT: validator error-UX walk"
+    echo ""
+    echo "Step 1: Build cronduit."
+    just build
+    mkdir -p .tmp
+    echo ""
+
+    # Reusable preamble for every fixture.
+    PREAMBLE=$(cat <<'PRE_EOF'
+    [server]
+    bind = "127.0.0.1:8080"
+    timezone = "UTC"
+    PRE_EOF
+    )
+
+    echo "--- Case 1: TAG-04 charset reject (tags = [\"MyTag!\"]) ---"
+    cat > .tmp/uat-tags-charset.toml <<TOML_EOF
+    $PREAMBLE
+    [[jobs]]
+    name = "j-bad-charset"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["MyTag!"]
+    TOML_EOF
+    just check-config .tmp/uat-tags-charset.toml || true
+    echo ""
+    echo "Maintainer: verify the error names the offending tag and the charset regex."
+    echo ""
+
+    echo "--- Case 2: TAG-04 reserved reject (tags = [\"cronduit\"]) ---"
+    cat > .tmp/uat-tags-reserved.toml <<TOML_EOF
+    $PREAMBLE
+    [[jobs]]
+    name = "j-bad-reserved"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["cronduit"]
+    TOML_EOF
+    just check-config .tmp/uat-tags-reserved.toml || true
+    echo ""
+    echo "Maintainer: verify the error lists the reserved set and points at 'cronduit'."
+    echo ""
+
+    echo "--- Case 3: TAG-04 empty reject (tags = [\"\", \"   \"]) ---"
+    cat > .tmp/uat-tags-empty.toml <<TOML_EOF
+    $PREAMBLE
+    [[jobs]]
+    name = "j-bad-empty"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["", "   "]
+    TOML_EOF
+    just check-config .tmp/uat-tags-empty.toml || true
+    echo ""
+    echo "Maintainer: verify the error names empty/whitespace-only entries clearly."
+    echo ""
+
+    echo "--- Case 4: TAG-05 substring-collision (jobs back / backup) ---"
+    cat > .tmp/uat-tags-collision.toml <<TOML_EOF
+    $PREAMBLE
+    [[jobs]]
+    name = "j-back"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["back"]
+
+    [[jobs]]
+    name = "j-backup"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup"]
+    TOML_EOF
+    just check-config .tmp/uat-tags-collision.toml || true
+    echo ""
+    echo "Maintainer: verify the error names BOTH tags and at least one of the two jobs."
+    echo ""
+
+    echo "--- Case 5: D-08 count-cap reject (17 unique tags) ---"
+    {
+      echo "$PREAMBLE"
+      echo ""
+      echo "[[jobs]]"
+      echo "name = \"j-too-many\""
+      echo "schedule = \"*/5 * * * *\""
+      echo "command = \"true\""
+      echo "use_defaults = false"
+      echo "timeout = \"5m\""
+      printf 'tags = ['
+      for i in $(seq 1 9); do printf '"t%02d", ' "$i"; done
+      for i in $(seq 10 16); do printf '"u%02d", ' "$i"; done
+      printf '"u17"]\n'
+    } > .tmp/uat-tags-count.toml
+    just check-config .tmp/uat-tags-count.toml || true
+    echo ""
+    echo "Maintainer: verify the error mentions BOTH 17 (actual) and 16 (max)."
+    echo ""
+
+    echo "--- Case 6: TAG-03 dedup-collapse WARN (tags = [\"Backup\", \"backup \", \"BACKUP\"]) ---"
+    cat > .tmp/uat-tags-dedup.toml <<TOML_EOF
+    $PREAMBLE
+    [[jobs]]
+    name = "j-dedup"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["Backup", "backup ", "BACKUP"]
+    TOML_EOF
+    just check-config .tmp/uat-tags-dedup.toml
+    echo ""
+    echo "Maintainer: verify check-config exits 0 (WARN-only path) AND a WARN line"
+    echo "            naming all three originals + the canonical 'backup' is logged."
+    echo ""
+    echo "All 6 cases printed. The maintainer is the source of truth — Claude does NOT mark this passed."
+
+# WH-09 webhook backfill end-to-end. Boots the P18 mock receiver, runs
+# cronduit with a tagged failing job + webhook config, fires the job,
+# and surfaces the last 30 lines of the receiver log so the maintainer
+# can confirm the delivered payload contains the real tags array.
+# Recipe-calls-recipe per D-11: build / db-reset / uat-webhook-mock /
+# uat-webhook-fire / uat-webhook-verify (all existing P18 recipes).
+[group('uat')]
+[doc('Phase 22 — WH-09 webhook backfill (operator validates payload tags array)')]
+uat-tags-webhook:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 22 UAT: WH-09 webhook backfill end-to-end"
+    echo ""
+    echo "Recipe chain: build -> db-reset -> just uat-webhook-mock (ANOTHER"
+    echo "              terminal) -> just uat-webhook-fire -> just uat-webhook-verify."
+    echo ""
+    echo "Step 1: Build cronduit + reset dev DB."
+    just build
+    just db-reset
+    echo ""
+    echo "Step 2: Write a tagged-failing-job + webhook TOML to"
+    echo "        .tmp/uat-tags-webhook.toml (delivers to 127.0.0.1:9999"
+    echo "        — the P18 mock receiver port from uat-webhook-mock)."
+    mkdir -p .tmp
+    cat > .tmp/uat-tags-webhook.toml <<'TOML_EOF'
+    [server]
+    bind = "127.0.0.1:8080"
+    timezone = "UTC"
+
+    [[jobs]]
+    name = "uat-tags-webhook-demo"
+    schedule = "*/5 * * * *"
+    command = "false"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup", "weekly"]
+    webhook = { url = "http://127.0.0.1:9999/tags-demo", states = ["failed"], unsigned = true }
+    TOML_EOF
+    echo ""
+    echo "Step 3: Validate the TOML up-front (catch typos before the run)."
+    just check-config .tmp/uat-tags-webhook.toml
+    echo ""
+    echo "Step 4: Start the P18 mock receiver in ANOTHER terminal:"
+    echo "        just uat-webhook-mock"
+    echo "        (logs at /tmp/cronduit-webhook-mock.log; Ctrl-C when done)"
+    echo "        Then PRESS ENTER here to continue."
+    read
+    echo ""
+    echo "Step 5: Start cronduit in a THIRD terminal:"
+    echo "        cargo run -- run --config .tmp/uat-tags-webhook.toml --log-format text"
+    echo "        Wait for 'Listening on 127.0.0.1:8080'. Then PRESS ENTER here."
+    read
+    echo ""
+    echo "Step 6: Resolve the job id and force a Run Now (composes the P18"
+    echo "        api-job-id + api-run-now / uat-webhook-fire chain)."
+    just uat-webhook-fire uat-tags-webhook-demo
+    echo ""
+    echo "Step 7: Wait ~5s for the webhook worker to deliver, then surface the"
+    echo "        last 30 lines of the receiver log (P18 uat-webhook-verify)."
+    sleep 5
+    just uat-webhook-verify
+    echo ""
+    echo "Maintainer: confirm the POST body contains the substring"
+    echo "            '\"tags\":[\"backup\",\"weekly\"]'"
+    echo "            (sorted-canonical, real values — closes WH-09 end-to-end)."
+    echo "            Claude does NOT mark this passed."

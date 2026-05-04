@@ -660,6 +660,7 @@ mod tests {
             r#"{"command":"echo done"}"#,
             "h1",
             3600,
+            "[]",
         )
         .await
         .unwrap();
@@ -732,6 +733,7 @@ mod tests {
             r#"{"command":"sleep 60"}"#,
             "h1",
             3600,
+            "[]",
         )
         .await
         .unwrap();

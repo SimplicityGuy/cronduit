@@ -19,6 +19,26 @@ static LABEL_KEY_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^[a-zA-Z0-9_][a-zA-Z0-9._-]*$").unwrap()
 });
 
+/// Phase 22 TAG-04: tag charset regex. Anchored leading alphanumeric +
+/// 0-30 body chars from [a-z0-9_-]; total length 1-31. Pattern is
+/// checked against the post-normalization (lowercase + trim) form per
+/// D-04 step 2 — uppercase input is normalized first and would only
+/// fail charset if it contained chars outside [a-z0-9_-] post-lowercase.
+static TAG_CHARSET_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-z0-9][a-z0-9_-]{0,30}$").unwrap());
+
+/// Phase 22 TAG-04: reserved tag names. Finite list (NOT a prefix —
+/// operators can use `cronduit2` or `cronduit-foo` freely). Expansion
+/// is a single-line edit if needed in v1.3.
+const RESERVED_TAGS: &[&str] = &["cronduit", "system", "internal"];
+
+/// Phase 22 D-08: hard cap on tag count per job (post-dedup).
+/// Rationale: (a) Phase 23 chip UI on a single dashboard row stays
+/// readable — 16 chips fits next to a job name; (b) operators rarely
+/// need >16 organizational dimensions on a single job; (c) the cap can
+/// be lifted later without a migration if it bites.
+const MAX_TAGS_PER_JOB: usize = 16;
+
 /// Canonical RunFinalized status values per src/scheduler/run.rs:315-322.
 /// Used by `check_webhook_block_completeness` for the operator's `webhook.states` filter.
 const VALID_WEBHOOK_STATES: &[&str] = &[
@@ -62,7 +82,15 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         // Phase 18 / WH-01 — webhook validators.
         check_webhook_url(job, path, errors);
         check_webhook_block_completeness(job, path, errors);
+        // Phase 22 / TAG-* — D-04 order: normalize → reject (charset + reserved
+        // + empty) → dedup with WARN (folded into check_tag_charset_and_reserved).
+        check_tag_charset_and_reserved(job, path, errors);
+        check_tag_count_per_job(job, path, errors); // Phase 22 / D-08
     }
+    // Phase 22 / TAG-05 — fleet-level substring-collision pass (D-03).
+    // MUST run AFTER the per-job loop so the tag set has already been
+    // normalized + dedup'd per-job (D-04 lock).
+    check_tag_substring_collision(&cfg.jobs, path, errors);
 }
 
 fn check_timezone(tz: &str, path: &Path, errors: &mut Vec<ConfigError>) {
@@ -377,6 +405,273 @@ fn check_label_key_chars(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigEr
             invalid.join(", ")
         ),
     });
+}
+
+/// Phase 22 TAG-03 + TAG-04: per-job tag validation.
+///
+/// D-04 order:
+/// 1. Normalize: `tags.iter().map(|t| t.trim().to_lowercase())`.
+/// 2. Reject empty/whitespace-only inputs (Pitfall 6 — never silently drop).
+/// 3. Reject charset violations (`^[a-z0-9][a-z0-9_-]{0,30}$`) on the
+///    post-normalization form. Capital input lowercases and passes.
+/// 4. Reject reserved names (`cronduit`, `system`, `internal`) on the
+///    post-normalization form (so `Cronduit` is also rejected).
+/// 5. Emit `tracing::warn!` line if normalization caused a dedup collapse
+///    (TAG-03 WARN flags it; never blocks). Operator sees:
+///    `WARN job '<name>': tags ["Backup", "backup ", "BACKUP"] collapsed to ["backup"] (case + whitespace normalization)`.
+///
+/// HashMap/iteration determinism: every offending list is `.sort()`ed
+/// before `.join(", ")` per Pitfall 3 (`validate.rs:184` precedent).
+fn check_tag_charset_and_reserved(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.tags.is_empty() {
+        return;
+    }
+
+    // Step 1: normalize (trim + lowercase). Preserve raw alongside for the
+    // empty-after-trim diagnostic and the WARN line.
+    let normalized: Vec<String> = job.tags.iter().map(|t| t.trim().to_lowercase()).collect();
+
+    // Step 2: empty/whitespace-only (Pitfall 6) — uses raw inputs to keep
+    // the message honest about what the operator wrote.
+    let mut empty_after_trim: Vec<String> = job
+        .tags
+        .iter()
+        .filter(|t| t.trim().is_empty())
+        .cloned()
+        .collect();
+    empty_after_trim.sort();
+    empty_after_trim.dedup();
+    if !empty_after_trim.is_empty() {
+        let display: Vec<String> = empty_after_trim
+            .iter()
+            .map(|t| format!("{:?}", t))
+            .collect();
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: empty or whitespace-only tags are not allowed: {}. Remove the empty entries.",
+                job.name,
+                display.join(", ")
+            ),
+        });
+    }
+
+    // Step 3: charset (post-normalization). Skip already-empty entries —
+    // they are reported by Step 2.
+    let mut bad_charset: Vec<String> = normalized
+        .iter()
+        .filter(|t| !t.is_empty() && !TAG_CHARSET_RE.is_match(t))
+        .cloned()
+        .collect();
+    bad_charset.sort();
+    bad_charset.dedup();
+    if !bad_charset.is_empty() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: tags fail charset `^[a-z0-9][a-z0-9_-]{{0,30}}$` (lowercase ASCII alphanumeric + underscore + dash; 1-31 chars; must start with [a-z0-9]): {}. Rename or remove these tags.",
+                job.name,
+                bad_charset
+                    .iter()
+                    .map(|t| format!("`{}`", t))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        });
+    }
+
+    // Step 4: reserved names (post-normalization).
+    let mut reserved_hits: Vec<String> = normalized
+        .iter()
+        .filter(|t| RESERVED_TAGS.contains(&t.as_str()))
+        .cloned()
+        .collect();
+    reserved_hits.sort();
+    reserved_hits.dedup();
+    if !reserved_hits.is_empty() {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: reserved tag names not allowed: {}. Reserved list is {:?}; pick a different tag.",
+                job.name,
+                reserved_hits
+                    .iter()
+                    .map(|t| format!("`{}`", t))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                RESERVED_TAGS
+            ),
+        });
+    }
+
+    // Step 5: dedup-collapse WARN (TAG-03). Group raw inputs by canonical form;
+    // any group with len > 1 means the operator wrote N inputs that collapsed
+    // to 1. Skip groups whose canonical is empty (those are already errors).
+    let mut groups: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for (raw_t, norm_t) in job.tags.iter().zip(normalized.iter()) {
+        if norm_t.is_empty() {
+            continue;
+        }
+        groups
+            .entry(norm_t.clone())
+            .or_default()
+            .push(raw_t.clone());
+    }
+    let mut collapses: Vec<(String, Vec<String>)> = groups
+        .into_iter()
+        .filter(|(_, raws)| raws.len() > 1)
+        .collect();
+    collapses.sort_by(|a, b| a.0.cmp(&b.0));
+    if !collapses.is_empty() {
+        for (canon, raws) in &collapses {
+            tracing::warn!(
+                job = %job.name,
+                inputs = ?raws,
+                canonical = %canon,
+                "job '{}': tags {:?} collapsed to [{:?}] (case + whitespace normalization)",
+                job.name,
+                raws,
+                canon
+            );
+        }
+    }
+}
+
+/// Phase 22 D-08: per-job count cap of 16 enforced on the POST-dedup
+/// tag count. D-04 step 4 lock: operates on what the operator
+/// effectively meant after normalization, not the raw input length.
+fn check_tag_count_per_job(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.tags.is_empty() {
+        return;
+    }
+    // Same normalization as check_tag_charset_and_reserved; could be
+    // factored into a shared `normalize_tags` helper but inlining keeps
+    // each validator self-contained and the cost is microseconds.
+    let mut normalized: Vec<String> = job
+        .tags
+        .iter()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    normalized.sort();
+    normalized.dedup();
+
+    if normalized.len() > MAX_TAGS_PER_JOB {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}`: has {} tags; max is {}. Remove tags or split into multiple jobs.",
+                job.name,
+                normalized.len(),
+                MAX_TAGS_PER_JOB
+            ),
+        });
+    }
+}
+
+/// Phase 22 D-03: format up to 3 representative job names for the
+/// substring-collision error message body. Beyond 3, append `(+N more)`
+/// to keep the error scannable when many jobs share an offending tag.
+fn preview_jobs(jobs: &[String]) -> String {
+    if jobs.len() <= 3 {
+        format!("'{}'", jobs.join("', '"))
+    } else {
+        format!(
+            "'{}', '{}', '{}' (+{} more)",
+            jobs[0],
+            jobs[1],
+            jobs[2],
+            jobs.len() - 3
+        )
+    }
+}
+
+/// Phase 22 TAG-05 / D-03: fleet-level substring-collision check.
+/// Operates on the post-normalization, post-dedup tag set across the
+/// WHOLE fleet (after the per-job loop completes). For each pair of
+/// distinct tags where one is a substring of the other (`s1.contains(s2)`
+/// where `s1 != s2`), emit ONE `ConfigError` naming both tags + the
+/// jobs that use each.
+///
+/// Plain `str::contains` (NOT regex) per CONTEXT specifics § L530-537.
+/// Identical tags across jobs (job A and B both have `backup`) are NOT
+/// collisions — `BTreeSet` uniqueness + `i < j` iteration skips equal
+/// pairs.
+///
+/// Complexity: O(T^2) where T = unique tag count across fleet. At
+/// homelab scale (≤16 jobs × ≤16 tags = 256 max), microseconds.
+fn check_tag_substring_collision(jobs: &[JobConfig], path: &Path, errors: &mut Vec<ConfigError>) {
+    use std::collections::{BTreeSet, HashMap};
+
+    // Step 1: build {tag → [jobs_using_it]} from the POST-normalization
+    // view. BTreeSet<String> per job for inner uniqueness.
+    let mut tag_to_jobs: HashMap<String, Vec<String>> = HashMap::new();
+    for job in jobs {
+        let normalized: BTreeSet<String> = job
+            .tags
+            .iter()
+            .map(|t| t.trim().to_lowercase())
+            .filter(|t| !t.is_empty()) // already rejected by Step 2 of charset validator
+            .collect();
+        for tag in normalized {
+            tag_to_jobs.entry(tag).or_default().push(job.name.clone());
+        }
+    }
+    // Stable sort of jobs per tag (for the `(+N more)` listing determinism).
+    for v in tag_to_jobs.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+
+    // Step 2: collect sorted unique tags for deterministic pair iteration.
+    let tags: Vec<&String> = {
+        let mut v: Vec<&String> = tag_to_jobs.keys().collect();
+        v.sort();
+        v
+    };
+
+    // Step 3: O(n^2) pair check with i < j (skips equal pairs and avoids
+    // double-counting symmetric collisions).
+    for i in 0..tags.len() {
+        for j in (i + 1)..tags.len() {
+            let a = tags[i];
+            let b = tags[j];
+            // Equal tags impossible here (BTreeSet uniqueness + i < j).
+            if a.contains(b.as_str()) || b.contains(a.as_str()) {
+                let jobs_a = &tag_to_jobs[a];
+                let jobs_b = &tag_to_jobs[b];
+                let preview_a = preview_jobs(jobs_a);
+                let preview_b = preview_jobs(jobs_b);
+                // Order the message so the SHORTER tag appears first in the
+                // "tag '...' is a substring of '...'" phrasing, which reads
+                // most naturally to the operator. When lengths are equal but
+                // strings differ (impossible since equal-length distinct
+                // strings can't be substrings of each other), default to (a, b).
+                let (short_t, short_jobs, long_t, long_jobs) = if a.len() <= b.len() {
+                    (a, &preview_a, b, &preview_b)
+                } else {
+                    (b, &preview_b, a, &preview_a)
+                };
+                errors.push(ConfigError {
+                    file: path.into(),
+                    line: 0,
+                    col: 0,
+                    message: format!(
+                        "tag '{}' (used by {}) is a substring of '{}' (used by {}); rename or remove one to avoid SQL substring false-positives at filter time.",
+                        short_t, short_jobs, long_t, long_jobs
+                    ),
+                });
+            }
+        }
+    }
 }
 
 /// Phase 20 / WH-07 (D-19): Classify an HTTP webhook URL's host against the
@@ -703,6 +998,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: None,
         }
     }
@@ -1174,6 +1470,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: wh,
         }
     }
@@ -1618,6 +1915,526 @@ mod tests {
                 .contains("127/8, ::1, 10/8, 172.16/12, 192.168/16, fd00::/8"),
             "D-21 verbatim allowed-nets list missing: {}",
             errors[0].message
+        );
+    }
+
+    // ---- Phase 22 / TAG-* tag validators (TAG-03, TAG-04, TAG-05, D-08) ----
+
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing::subscriber::DefaultGuard;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    /// MakeWriter test fixture for capturing tracing output. Used by the
+    /// TAG-03 dedup-collapse WARN test (`tracing-test` crate is NOT a dep,
+    /// per D-17 — verified 2026-05-04).
+    #[derive(Clone, Default)]
+    struct CapturedWriter {
+        buf: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl CapturedWriter {
+        fn new() -> Self {
+            Self::default()
+        }
+        fn captured(&self) -> String {
+            let v = self.buf.lock().unwrap();
+            String::from_utf8_lossy(&v).into_owned()
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            let mut v = self.buf.lock().unwrap();
+            v.extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for CapturedWriter {
+        type Writer = CapturedWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Install a thread-local subscriber that captures all WARN-level logs
+    /// into the returned `CapturedWriter`. The `DefaultGuard` MUST stay
+    /// alive for the whole test body (drop it at the end to restore the
+    /// previous subscriber).
+    fn install_capturing_subscriber() -> (CapturedWriter, DefaultGuard) {
+        let writer = CapturedWriter::new();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer.clone())
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .without_time()
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        (writer, guard)
+    }
+
+    /// Build a JobConfig with the given name + tags, otherwise minimally valid.
+    fn make_job_with_tags(name: &str, tags: Vec<String>) -> JobConfig {
+        JobConfig {
+            name: name.into(),
+            schedule: "* * * * *".into(),
+            command: Some("true".into()),
+            script: None,
+            image: None,
+            use_defaults: None,
+            env: Default::default(),
+            volumes: None,
+            labels: None,
+            network: None,
+            container_name: None,
+            timeout: None,
+            delete: None,
+            cmd: None,
+            tags,
+            webhook: None,
+        }
+    }
+
+    // ---- check_tag_charset_and_reserved (Task 1, behaviors 1-12) ----
+
+    #[test]
+    fn tag_charset_empty_tags_no_errors_no_warn() {
+        // Behavior 1: tags = [] → no errors, no WARN (early return)
+        let (writer, _guard) = install_capturing_subscriber();
+        let job = make_job_with_tags("j", vec![]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert!(errors.is_empty());
+        assert!(writer.captured().is_empty(), "no WARN expected for empty");
+    }
+
+    #[test]
+    fn tag_charset_capital_normalizes_then_passes() {
+        // Behavior 2: tags = ["Backup"] → no errors (lowercase passes charset)
+        let job = make_job_with_tags("j", vec!["Backup".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert!(
+            errors.is_empty(),
+            "D-04 step 2 — capital normalizes-then-passes: got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn tag_charset_special_char_rejected() {
+        // Behavior 3: tags = ["MyTag!"] → ONE charset ConfigError
+        let job = make_job_with_tags("j", vec!["MyTag!".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("charset"));
+        assert!(errors[0].message.contains("`mytag!`"));
+    }
+
+    #[test]
+    fn tag_charset_reserved_cronduit_rejected() {
+        // Behavior 4
+        let job = make_job_with_tags("j", vec!["cronduit".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("reserved tag names"));
+        assert!(errors[0].message.contains("`cronduit`"));
+    }
+
+    #[test]
+    fn tag_charset_reserved_system_rejected() {
+        // Behavior 5
+        let job = make_job_with_tags("j", vec!["system".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("reserved tag names"));
+        assert!(errors[0].message.contains("`system`"));
+    }
+
+    #[test]
+    fn tag_charset_reserved_internal_rejected() {
+        // Behavior 6
+        let job = make_job_with_tags("j", vec!["internal".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("reserved tag names"));
+        assert!(errors[0].message.contains("`internal`"));
+    }
+
+    #[test]
+    fn tag_charset_capital_reserved_rejected_post_normalization() {
+        // Behavior 7: tags = ["Cronduit"] → reserved check runs on normalized form
+        let job = make_job_with_tags("j", vec!["Cronduit".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("reserved tag names"));
+        assert!(errors[0].message.contains("`cronduit`"));
+    }
+
+    #[test]
+    fn tag_charset_empty_string_rejected() {
+        // Behavior 8: tags = [""] → ONE empty-tag ConfigError
+        let job = make_job_with_tags("j", vec!["".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("empty or whitespace-only"));
+    }
+
+    #[test]
+    fn tag_charset_whitespace_only_rejected() {
+        // Behavior 9: tags = ["   "] → ONE empty-tag ConfigError (Pitfall 6)
+        let job = make_job_with_tags("j", vec!["   ".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("empty or whitespace-only"));
+    }
+
+    #[test]
+    fn tag_dedup_collapse_warns_with_inputs_named() {
+        // Behavior 10: tags = ["Backup", "backup ", "BACKUP"] → 0 errors,
+        // tracing::warn! emitted naming all originals + canonical form.
+        let (writer, _guard) = install_capturing_subscriber();
+        let mut errors = Vec::new();
+        let job = make_job_with_tags(
+            "nightly-backup",
+            vec![
+                "Backup".to_string(),
+                "backup ".to_string(),
+                "BACKUP".to_string(),
+            ],
+        );
+        let path = Path::new("test.toml");
+        check_tag_charset_and_reserved(&job, path, &mut errors);
+
+        // Zero ConfigErrors — WARN-only path.
+        assert_eq!(
+            errors.len(),
+            0,
+            "dedup-collapse must NOT push ConfigErrors; got {errors:?}"
+        );
+
+        // WARN captured + names original inputs + canonical form.
+        let captured = writer.captured();
+        assert!(
+            captured.contains("nightly-backup"),
+            "WARN must name the job; captured={captured}"
+        );
+        assert!(
+            captured.contains("\"Backup\""),
+            "WARN must name original input \"Backup\"; captured={captured}"
+        );
+        assert!(
+            captured.contains("\"backup \""),
+            "WARN must name original input \"backup \" (with trailing space); captured={captured}"
+        );
+        assert!(
+            captured.contains("\"BACKUP\""),
+            "WARN must name original input \"BACKUP\"; captured={captured}"
+        );
+        assert!(
+            captured.contains("\"backup\""),
+            "WARN must name canonical form \"backup\"; captured={captured}"
+        );
+    }
+
+    #[test]
+    fn tag_charset_valid_chars_accepted() {
+        // Behavior 11: tags = ["a-1", "z_y", "abc-def_ghi"] → no errors
+        let job = make_job_with_tags(
+            "j",
+            vec![
+                "a-1".to_string(),
+                "z_y".to_string(),
+                "abc-def_ghi".to_string(),
+            ],
+        );
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert!(errors.is_empty(), "valid chars must pass: got {errors:?}");
+    }
+
+    #[test]
+    fn tag_charset_digits_leading_accepted() {
+        // Behavior 12: tags = ["123abc"] → no errors (digits-leading is allowed)
+        let job = make_job_with_tags("j", vec!["123abc".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_charset_and_reserved(&job, Path::new("x"), &mut errors);
+        assert!(
+            errors.is_empty(),
+            "digits-leading must pass: got {errors:?}"
+        );
+    }
+
+    // ---- check_tag_count_per_job (Task 2, behaviors 1-6) ----
+
+    #[test]
+    fn tag_count_empty_tags_no_error() {
+        // Task 2 Behavior 1
+        let job = make_job_with_tags("j", vec![]);
+        let mut errors = Vec::new();
+        check_tag_count_per_job(&job, Path::new("x"), &mut errors);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn tag_count_at_cap_16_accepted() {
+        // Task 2 Behavior 2: cap is INCLUSIVE — exactly 16 unique tags must pass
+        let tags: Vec<String> = (0..16).map(|i| format!("t{:02}", i)).collect();
+        let job = make_job_with_tags("j", tags);
+        let mut errors = Vec::new();
+        check_tag_count_per_job(&job, Path::new("x"), &mut errors);
+        assert!(
+            errors.is_empty(),
+            "16 tags is at the cap, must pass: got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn tag_count_over_cap_17_rejected() {
+        // Task 2 Behavior 3: 17 unique tags → ONE count-cap ConfigError
+        let tags: Vec<String> = (0..17).map(|i| format!("t{:02}", i)).collect();
+        let job = make_job_with_tags("nightly-backup", tags);
+        let mut errors = Vec::new();
+        check_tag_count_per_job(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        let msg = &errors[0].message;
+        assert!(msg.contains("nightly-backup"));
+        assert!(msg.contains("17"));
+        assert!(msg.contains("16"));
+        // Exact message shape (D-08 lock).
+        assert_eq!(
+            msg,
+            "[[jobs]] `nightly-backup`: has 17 tags; max is 16. Remove tags or split into multiple jobs."
+        );
+    }
+
+    #[test]
+    fn tag_count_dedup_aware_no_error_for_duplicates() {
+        // Task 2 Behavior 4: 20 duplicates of "a" → no error (post-dedup is 1)
+        let tags: Vec<String> = std::iter::repeat_n("a".to_string(), 20).collect();
+        let job = make_job_with_tags("j", tags);
+        let mut errors = Vec::new();
+        check_tag_count_per_job(&job, Path::new("x"), &mut errors);
+        assert!(
+            errors.is_empty(),
+            "D-04 step 4 — cap on POST-dedup count: got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn tag_count_normalize_then_dedup_aware() {
+        // Task 2 Behavior 5: ["A", "a", "b", "B"] → post-normalize+dedup: 2 tags → no error
+        let job = make_job_with_tags(
+            "j",
+            vec![
+                "A".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+                "B".to_string(),
+            ],
+        );
+        let mut errors = Vec::new();
+        check_tag_count_per_job(&job, Path::new("x"), &mut errors);
+        assert!(
+            errors.is_empty(),
+            "post-normalize+dedup count: got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn tag_count_message_shape_exact() {
+        // Task 2 Behavior 6: error message exact shape — checked above in
+        // tag_count_over_cap_17_rejected; this re-asserts with a different N.
+        let tags: Vec<String> = (0..20).map(|i| format!("t{:02}", i)).collect();
+        let job = make_job_with_tags("backup-job", tags);
+        let mut errors = Vec::new();
+        check_tag_count_per_job(&job, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].message,
+            "[[jobs]] `backup-job`: has 20 tags; max is 16. Remove tags or split into multiple jobs."
+        );
+    }
+
+    // ---- check_tag_substring_collision (Task 3, behaviors 1-6) ----
+
+    #[test]
+    fn tag_substring_collision_pair_back_backup() {
+        // Task 3 Behavior 1: ["back"] + ["backup"] → 1 ConfigError
+        let job_a = make_job_with_tags("job-a", vec!["back".to_string()]);
+        let job_b = make_job_with_tags("job-b", vec!["backup".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_substring_collision(&[job_a, job_b], Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        let msg = &errors[0].message;
+        // Expected: short tag first ('back' is a substring of 'backup').
+        assert_eq!(
+            msg,
+            "tag 'back' (used by 'job-a') is a substring of 'backup' (used by 'job-b'); rename or remove one to avoid SQL substring false-positives at filter time."
+        );
+    }
+
+    #[test]
+    fn tag_substring_collision_identical_tags_zero_errors() {
+        // Task 3 Behavior 2: both jobs ["backup"] → 0 errors (sharing allowed)
+        let job_a = make_job_with_tags("job-a", vec!["backup".to_string()]);
+        let job_b = make_job_with_tags("job-b", vec!["backup".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_substring_collision(&[job_a, job_b], Path::new("x"), &mut errors);
+        assert!(
+            errors.is_empty(),
+            "identical tags across jobs must be allowed: got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn tag_substring_collision_three_way_three_errors() {
+        // Task 3 Behavior 3: ["bac"] + ["back"] + ["backup"] → 3 ConfigErrors
+        // (pairs: bac↔back, bac↔backup, back↔backup)
+        let job_a = make_job_with_tags("job-a", vec!["bac".to_string()]);
+        let job_b = make_job_with_tags("job-b", vec!["back".to_string()]);
+        let job_c = make_job_with_tags("job-c", vec!["backup".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_substring_collision(&[job_a, job_b, job_c], Path::new("x"), &mut errors);
+        assert_eq!(
+            errors.len(),
+            3,
+            "expected 3 pair errors; got {} -- {errors:?}",
+            errors.len()
+        );
+        let all_messages: String = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Each pair appears in shorter-substring-of-longer order.
+        assert!(
+            all_messages.contains("'bac' (used by 'job-a') is a substring of 'back'"),
+            "missing bac↔back pair: {all_messages}"
+        );
+        assert!(
+            all_messages.contains("'bac' (used by 'job-a') is a substring of 'backup'"),
+            "missing bac↔backup pair: {all_messages}"
+        );
+        assert!(
+            all_messages.contains("'back' (used by 'job-b') is a substring of 'backup'"),
+            "missing back↔backup pair: {all_messages}"
+        );
+    }
+
+    #[test]
+    fn tag_substring_collision_preview_caps_at_three() {
+        // Task 3 Behavior 4: 5 jobs use 'back' + 1 uses 'backup'
+        // → 1 error; preview lists `'a', 'b', 'c' (+2 more)` for back.
+        let jobs: Vec<JobConfig> = vec![
+            make_job_with_tags("a", vec!["back".to_string()]),
+            make_job_with_tags("b", vec!["back".to_string()]),
+            make_job_with_tags("c", vec!["back".to_string()]),
+            make_job_with_tags("d", vec!["back".to_string()]),
+            make_job_with_tags("e", vec!["back".to_string()]),
+            make_job_with_tags("z", vec!["backup".to_string()]),
+        ];
+        let mut errors = Vec::new();
+        check_tag_substring_collision(&jobs, Path::new("x"), &mut errors);
+        assert_eq!(errors.len(), 1);
+        let msg = &errors[0].message;
+        // Preview for 'back' (5 jobs) → "'a', 'b', 'c' (+2 more)"
+        assert!(
+            msg.contains("'a', 'b', 'c' (+2 more)"),
+            "preview cap: got {msg}"
+        );
+        // Preview for 'backup' (1 job) → "'z'"
+        assert!(msg.contains("'z'"), "single-job preview: got {msg}");
+    }
+
+    #[test]
+    fn tag_substring_collision_non_substring_pair_zero_errors() {
+        // Task 3 Behavior 5: ["backup"] + ["weekly"] → 0 errors
+        let job_a = make_job_with_tags("job-a", vec!["backup".to_string()]);
+        let job_b = make_job_with_tags("job-b", vec!["weekly".to_string()]);
+        let mut errors = Vec::new();
+        check_tag_substring_collision(&[job_a, job_b], Path::new("x"), &mut errors);
+        assert!(errors.is_empty(), "non-substring pair: got {errors:?}");
+    }
+
+    #[test]
+    fn tag_substring_collision_empty_fleet_zero_errors() {
+        // Task 3 Behavior 6: empty fleet → 0 errors (no iteration)
+        let mut errors = Vec::new();
+        check_tag_substring_collision(&[], Path::new("x"), &mut errors);
+        assert!(errors.is_empty());
+    }
+
+    // ---- D-04 order regression-lock (validator order in run_all_checks) ----
+
+    #[test]
+    fn run_all_checks_d04_order_capital_normalizes_then_passes() {
+        // Locks the D-04 step-2 invariant end-to-end: a TOML with
+        // `tags = ["Backup"]` must produce ZERO errors (capital normalizes
+        // before charset/reserved checks). This guards against future
+        // regressions that move the charset check before normalization.
+        use crate::config::Config;
+        let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[[jobs]]
+name = "j1"
+schedule = "* * * * *"
+command = "true"
+tags = ["Backup"]
+"#;
+        let cfg: Config = toml::from_str(toml_text).expect("parse");
+        let mut errors = Vec::new();
+        run_all_checks(&cfg, Path::new("x"), toml_text, &mut errors);
+        assert!(
+            errors.is_empty(),
+            "D-04 step 2 lock — capital normalizes-then-passes through full validator pipeline: got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn run_all_checks_substring_collision_runs_after_per_job_loop() {
+        // Locks D-04 step 5: substring-collision is fleet-level and runs
+        // AFTER the per-job loop. Verified indirectly by constructing two
+        // jobs with substring-colliding tags and asserting the error appears.
+        use crate::config::Config;
+        let toml_text = r#"
+[server]
+bind = "127.0.0.1:0"
+timezone = "UTC"
+
+[[jobs]]
+name = "j1"
+schedule = "* * * * *"
+command = "true"
+tags = ["back"]
+
+[[jobs]]
+name = "j2"
+schedule = "* * * * *"
+command = "true"
+tags = ["backup"]
+"#;
+        let cfg: Config = toml::from_str(toml_text).expect("parse");
+        let mut errors = Vec::new();
+        run_all_checks(&cfg, Path::new("x"), toml_text, &mut errors);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("is a substring of")),
+            "substring-collision must be raised: got {errors:?}"
         );
     }
 }

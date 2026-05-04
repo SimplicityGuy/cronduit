@@ -163,6 +163,24 @@ pub async fn sync_config_to_db(
             .unwrap_or_else(|| job.schedule.clone());
         let timeout_secs = job.timeout.unwrap_or(Duration::from_secs(3600)).as_secs() as i64;
 
+        // Phase 22 TAG-01: build sorted-canonical JSON form for jobs.tags column.
+        // Sorting before serialization makes the column value stable across
+        // re-uploads of the same TOML and keeps the substring-collision pass
+        // deterministic (RESEARCH § Section 1 + Pitfall 1). Tags from the
+        // validator (Plan 02) are already trimmed/lowercased; we sort+dedup
+        // here defensively before serializing.
+        let tags_json = {
+            let mut sorted: Vec<String> = job
+                .tags
+                .iter()
+                .map(|t| t.trim().to_lowercase())
+                .filter(|t| !t.is_empty())
+                .collect();
+            sorted.sort();
+            sorted.dedup();
+            serde_json::to_string(&sorted).unwrap_or_else(|_| "[]".to_string())
+        };
+
         // Use the cached DB lookup from the first pass instead of fetching again.
         let existing = existing_cache.remove(&job.name).flatten();
 
@@ -183,6 +201,7 @@ pub async fn sync_config_to_db(
                     &config_json,
                     &hash,
                     timeout_secs,
+                    &tags_json,
                 )
                 .await?;
                 updated += 1;
@@ -198,6 +217,7 @@ pub async fn sync_config_to_db(
                     &config_json,
                     &hash,
                     timeout_secs,
+                    &tags_json,
                 )
                 .await?;
                 inserted += 1;
@@ -275,6 +295,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: None,
         }
     }
@@ -445,6 +466,7 @@ mod tests {
                 timeout: None,
                 delete: None,
                 cmd: None,
+                tags: Vec::new(),
                 webhook: None,
             }],
         };

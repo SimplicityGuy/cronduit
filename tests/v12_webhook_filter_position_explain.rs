@@ -129,6 +129,7 @@ async fn filter_position_query_uses_idx_job_runs_job_id_start_sqlite() {
         r#"{"command":"echo fp"}"#,
         "hash-fp",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");
@@ -243,6 +244,7 @@ async fn filter_position_query_uses_idx_job_runs_job_id_start_postgres() {
         r#"{"command":"echo pg-fp"}"#,
         "hash-pg-fp",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");

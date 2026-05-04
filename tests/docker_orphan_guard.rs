@@ -54,6 +54,7 @@ async fn ensure_parent_job(pool: &DbPool, name: &str) -> i64 {
         r#"{"command":"true"}"#,
         &format!("hash-{name}"),
         3600,
+        "[]",
     )
     .await
     .expect("seed parent job")

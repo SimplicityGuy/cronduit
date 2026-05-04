@@ -133,6 +133,7 @@ async fn explain_uses_index_sqlite() {
         r#"{"command":"echo fctx"}"#,
         "hash-fctx",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");
@@ -243,6 +244,7 @@ async fn explain_uses_index_postgres() {
         r#"{"command":"echo pg-fctx"}"#,
         "hash-pg-fctx",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");
@@ -415,6 +417,7 @@ async fn explain_uses_index_sqlite_post_scheduled_for() {
         r#"{"command":"echo fctx-post"}"#,
         "hash-fctx-post",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");
@@ -525,6 +528,7 @@ async fn explain_uses_index_postgres_post_scheduled_for() {
         r#"{"command":"echo pg-fctx-post"}"#,
         "hash-pg-fctx-post",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");

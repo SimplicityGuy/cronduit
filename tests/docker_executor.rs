@@ -194,6 +194,7 @@ async fn test_docker_orphan_reconciliation() {
         r#"{"image": "alpine:latest"}"#,
         "hash1",
         3600,
+        "[]",
     )
     .await
     .unwrap();

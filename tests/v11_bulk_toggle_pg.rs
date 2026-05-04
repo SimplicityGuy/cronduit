@@ -56,6 +56,7 @@ async fn seed_job(pool: &DbPool, name: &str) -> i64 {
         r#"{"command":"echo hi"}"#,
         &format!("hash-{name}"),
         300,
+        "[]",
     )
     .await
     .expect("upsert job")
@@ -81,6 +82,7 @@ async fn upsert_invariant_pg() {
         r#"{"command":"echo CHANGED"}"#,
         "hash-alpha-v2",
         600,
+        "[]",
     )
     .await
     .expect("re-upsert job");

@@ -224,6 +224,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: None,
         }
     }
@@ -555,6 +556,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: None,
         };
         let merged = apply_defaults(job, None);
@@ -739,6 +741,7 @@ mod tests {
             timeout: Some(Duration::from_secs(300)),
             delete: Some(true),
             cmd: Some(vec!["echo".to_string(), "parity".to_string()]),
+            tags: Vec::new(),
             webhook: None,
         };
 
@@ -856,6 +859,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: None,
         };
         let defaults = DefaultsConfig {
@@ -898,6 +902,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: None,
         };
         let defaults = DefaultsConfig {
@@ -948,6 +953,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: Some(per_job_wh.clone()),
         };
         let defaults = DefaultsConfig {
@@ -992,6 +998,7 @@ mod tests {
             timeout: None,
             delete: None,
             cmd: None,
+            tags: Vec::new(),
             webhook: None,
         };
         let defaults = DefaultsConfig {

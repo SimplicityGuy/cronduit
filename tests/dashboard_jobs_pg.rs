@@ -40,6 +40,7 @@ async fn get_dashboard_jobs_postgres_smoke() {
         r#"{"command":"echo hi"}"#,
         "hash-dash-pg",
         3600,
+        "[]",
     )
     .await
     .expect("upsert job");

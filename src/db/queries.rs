@@ -58,6 +58,12 @@ pub struct DbJob {
 
 /// Upsert a job by name. On conflict, updates all mutable fields and
 /// re-enables the job. Returns the job id.
+///
+/// `tags_json` -- sorted-canonical JSON-serialized `Vec<String>` per
+/// D-09 sub-bullet (Phase 22 TAG-01 / TAG-02). Production callers in
+/// `src/scheduler/sync.rs` build this via `serde_json::to_string` of a
+/// sorted+deduped Vec; #[cfg(test)] callers may pass `"[]"` (matches
+/// the column default) when tag semantics are not under test.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_job(
     pool: &DbPool,
@@ -68,14 +74,15 @@ pub async fn upsert_job(
     config_json: &str,
     config_hash: &str,
     timeout_secs: i64,
+    tags_json: &str,
 ) -> anyhow::Result<i64> {
     let now = chrono::Utc::now().to_rfc3339();
 
     match pool.writer() {
         PoolRef::Sqlite(p) => {
             let row = sqlx::query(
-                r#"INSERT INTO jobs (name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?8)
+                r#"INSERT INTO jobs (name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, tags, created_at, updated_at)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?9, ?9)
                    ON CONFLICT(name) DO UPDATE SET
                        schedule = excluded.schedule,
                        resolved_schedule = excluded.resolved_schedule,
@@ -84,6 +91,7 @@ pub async fn upsert_job(
                        config_hash = excluded.config_hash,
                        enabled = 1,
                        timeout_secs = excluded.timeout_secs,
+                       tags = excluded.tags,
                        updated_at = excluded.updated_at
                    RETURNING id"#,
             )
@@ -94,6 +102,7 @@ pub async fn upsert_job(
             .bind(config_json)
             .bind(config_hash)
             .bind(timeout_secs)
+            .bind(tags_json)
             .bind(&now)
             .fetch_one(p)
             .await?;
@@ -101,8 +110,8 @@ pub async fn upsert_job(
         }
         PoolRef::Postgres(p) => {
             let row = sqlx::query(
-                r#"INSERT INTO jobs (name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, created_at, updated_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $8)
+                r#"INSERT INTO jobs (name, schedule, resolved_schedule, job_type, config_json, config_hash, enabled, timeout_secs, tags, created_at, updated_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $9)
                    ON CONFLICT(name) DO UPDATE SET
                        schedule = EXCLUDED.schedule,
                        resolved_schedule = EXCLUDED.resolved_schedule,
@@ -111,6 +120,7 @@ pub async fn upsert_job(
                        config_hash = EXCLUDED.config_hash,
                        enabled = 1,
                        timeout_secs = EXCLUDED.timeout_secs,
+                       tags = EXCLUDED.tags,
                        updated_at = EXCLUDED.updated_at
                    RETURNING id"#,
             )
@@ -121,6 +131,7 @@ pub async fn upsert_job(
             .bind(config_json)
             .bind(config_hash)
             .bind(timeout_secs)
+            .bind(tags_json)
             .bind(&now)
             .fetch_one(p)
             .await?;
@@ -645,6 +656,12 @@ pub struct DbRunDetail {
     /// migration `*_000009_scheduled_for_add.up.sql` (D-04 — no backfill).
     /// The FIRE SKEW row in the failure-context panel hides on NULL per UI-SPEC.
     pub scheduled_for: Option<String>,
+    /// Phase 22 TAG-01 / WH-09: tags from the joined `jobs.tags` JSON column,
+    /// deserialized to `Vec<String>` at the row-mapping site. Empty Vec when
+    /// the job has no tags (column is NOT NULL DEFAULT '[]'); never None
+    /// — schema guarantees a value. Sorted-canonical order per the upsert
+    /// path's `serde_json::to_string` of a sorted+deduped Vec.
+    pub tags: Vec<String>,
 }
 
 /// Phase 16 FCTX-07: failure-context query result. Returned by
@@ -1391,7 +1408,8 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
     let sql_sqlite = r#"
         SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
                r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message,
-               r.image_digest, r.config_hash, r.scheduled_for
+               r.image_digest, r.config_hash, r.scheduled_for,
+               j.tags AS tags_json
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = ?1
@@ -1399,7 +1417,8 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
     let sql_postgres = r#"
         SELECT r.id, r.job_id, r.job_run_number, j.name AS job_name, r.status, r.trigger,
                r.start_time, r.end_time, r.duration_ms, r.exit_code, r.error_message,
-               r.image_digest, r.config_hash, r.scheduled_for
+               r.image_digest, r.config_hash, r.scheduled_for,
+               j.tags AS tags_json
         FROM job_runs r
         JOIN jobs j ON j.id = r.job_id
         WHERE r.id = $1
@@ -1426,6 +1445,15 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
                 image_digest: r.get("image_digest"), // Phase 16 FOUND-14
                 config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
                 scheduled_for: r.get("scheduled_for"), // Phase 21 FCTX-06
+                tags: {
+                    // Phase 22 TAG-01: forgiving on corrupt JSON — column is NOT NULL
+                    // DEFAULT '[]' so corruption is structurally impossible from
+                    // cronduit-controlled writes; if a future writer ever bugs and
+                    // stores invalid JSON, fall back to Vec::new() rather than
+                    // panicking and breaking webhook delivery.
+                    let s: String = r.get("tags_json");
+                    serde_json::from_str(&s).unwrap_or_default()
+                },
             }))
         }
         PoolRef::Postgres(p) => {
@@ -1448,6 +1476,11 @@ pub async fn get_run_by_id(pool: &DbPool, run_id: i64) -> anyhow::Result<Option<
                 image_digest: r.get("image_digest"), // Phase 16 FOUND-14
                 config_hash: r.get("config_hash"),   // Phase 16 FCTX-04
                 scheduled_for: r.get("scheduled_for"), // Phase 21 FCTX-06
+                tags: {
+                    // Phase 22 TAG-01: forgiving on corrupt JSON — see SQLite arm.
+                    let s: String = r.get("tags_json");
+                    serde_json::from_str(&s).unwrap_or_default()
+                },
             }))
         }
     }
@@ -2006,6 +2039,7 @@ mod tests {
             r#"{"name":"test-job"}"#,
             "abc123",
             3600,
+            "[]",
         )
         .await
         .unwrap();
@@ -2032,6 +2066,7 @@ mod tests {
             r#"{"name":"test-job"}"#,
             "hash1",
             3600,
+            "[]",
         )
         .await
         .unwrap();
@@ -2050,6 +2085,7 @@ mod tests {
             r#"{"name":"test-job","changed":true}"#,
             "hash2",
             7200,
+            "[]",
         )
         .await
         .unwrap();
@@ -2077,6 +2113,7 @@ mod tests {
             r#"{"name":"test-job"}"#,
             "same-hash",
             3600,
+            "[]",
         )
         .await
         .unwrap();
@@ -2098,6 +2135,7 @@ mod tests {
             "{}",
             "h1",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2110,6 +2148,7 @@ mod tests {
             "{}",
             "h2",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2139,6 +2178,7 @@ mod tests {
             "{}",
             "h1",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2151,6 +2191,7 @@ mod tests {
             "{}",
             "h2",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2172,6 +2213,7 @@ mod tests {
             "{}",
             "h1",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2184,6 +2226,7 @@ mod tests {
             "{}",
             "h2",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2196,6 +2239,7 @@ mod tests {
             "{}",
             "h3",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2225,6 +2269,7 @@ mod tests {
             "{}",
             "h1",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2267,6 +2312,7 @@ mod tests {
             "{}",
             "h1",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2316,6 +2362,7 @@ mod tests {
             "{}",
             "h1",
             60,
+            "[]",
         )
         .await
         .unwrap();
@@ -2373,6 +2420,7 @@ mod tests {
             &format!(r#"{{"command":"echo {name}"}}"#),
             &format!("hash-{name}"),
             3600,
+            "[]",
         )
         .await
         .unwrap()
