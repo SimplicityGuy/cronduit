@@ -48,6 +48,11 @@ pub fn compute_config_hash(job: &JobConfig) -> String {
         map.insert("labels", serde_json::json!(l));
     }
     // DO NOT include `env` -- its values are SecretString and must not be hashed/logged.
+    // DO NOT include `tags` (Phase 22 / D-01) -- tags are organizational
+    // metadata, not docker-execution input. A tag-only edit must NOT
+    // trigger "config changed since last success" in the FCTX panel
+    // (the hash is read by Phase 16 FCTX-04 plumbing). Symmetric with the
+    // D-02 lock: tags are also NOT included in serialize_config_json.
 
     let bytes = serde_json::to_vec(&map).expect("serde_json BTreeMap never fails");
     let mut h = Sha256::new();
@@ -328,6 +333,36 @@ mod tests {
             compute_config_hash(&a),
             compute_config_hash(&b),
             "hash must change when label value changes (per LBL-01)"
+        );
+    }
+
+    #[test]
+    fn tags_excluded_from_hash() {
+        // Phase 22 D-01 regression lock: tag-only edits MUST NOT change
+        // compute_config_hash output. If this test ever fails, the function
+        // has been extended to include tags -- which dilutes the FCTX
+        // "config changed since last success" signal (tags are organizational
+        // metadata, not docker-execution input).
+        let mut a = mk_job();
+        let mut b = mk_job();
+        a.tags = vec!["backup".to_string(), "weekly".to_string()];
+        b.tags = vec!["unrelated".to_string()];
+
+        let hash_a = compute_config_hash(&a);
+        let hash_b = compute_config_hash(&b);
+
+        assert_eq!(
+            hash_a, hash_b,
+            "tag-only edits must produce identical config hash (D-01); got hash_a={hash_a}, hash_b={hash_b}",
+        );
+
+        // Bonus check: a third JobConfig with tags = vec![] hashes identically.
+        let mut c = mk_job();
+        c.tags = vec![];
+        let hash_c = compute_config_hash(&c);
+        assert_eq!(
+            hash_a, hash_c,
+            "empty tags vs populated tags must hash identically (D-01)"
         );
     }
 }
