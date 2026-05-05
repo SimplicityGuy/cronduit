@@ -291,7 +291,7 @@ Plans:
   4. An operator can share a filtered dashboard URL like `/?tag=backup&tag=weekly` (repeated `?tag=` params); the chips render in the active state on page load — bookmarkable.
   5. An operator pushing the `v1.2.0-rc.3` tag sees the GHCR image published at `ghcr.io/SimplicityGuy/cronduit:v1.2.0-rc.3` on both architectures.
 
-**Plans:** 6/8 plans executed
+**Plans:** 7/8 plans executed
 
 Plans:
 **Wave 0**
@@ -311,7 +311,7 @@ Plans:
 - [x] 23-06-PLAN.md — UAT: 3 just uat-chips-* recipes + README Tag Filter Chips subsection (TAG-06, TAG-07; V-15, V-16)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 23-07-PLAN.md — HUMAN-UAT: 23-HUMAN-UAT.md autonomous=false maintainer plan with 6 scenarios (TAG-06, TAG-07, TAG-08)
+- [x] 23-07-PLAN.md — HUMAN-UAT: 23-HUMAN-UAT.md autonomous=false maintainer plan with 6 scenarios (TAG-06, TAG-07, TAG-08)
 
 **Wave 6** *(blocked on Wave 5 completion)*
 - [ ] 23-08-PLAN.md — RC3-PREFLIGHT: 23-RC3-PREFLIGHT.md autonomous=false rc.3 cut runbook (mirrors P21 RC2-PREFLIGHT verbatim modulo rc.2→rc.3 + P21→P23 substitutions; V-17)
@@ -360,7 +360,7 @@ Plans:
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 10/11 | In Progress|  |
 | 22. Job Tagging Schema + Validators | 4/6 | In Progress|  |
-| 23. Job Tagging Dashboard Filter Chips — rc.3 | 6/8 | In Progress|  |
+| 23. Job Tagging Dashboard Filter Chips — rc.3 | 7/8 | In Progress|  |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
 
 ## v1.2 Build Order
