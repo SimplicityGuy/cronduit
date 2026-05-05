@@ -2,13 +2,19 @@
 
 use askama::Template;
 use askama_web::WebTemplateExt;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::response::IntoResponse;
+// Phase 23 TAG-06: `axum_extra::extract::Query` (uses `serde_html_form`
+// internally) is the LOAD-BEARING extractor swap — `axum::extract::Query`
+// silently collapses repeated `?tag=foo&tag=bar` keys to the last value,
+// which is the EXACT failure mode TAG-06 forbids (RESEARCH § Pitfall 1).
+// V-05 (`active_tags_parsed_from_repeated_query`) is the regression assertion.
+use axum_extra::extract::Query;
 use axum_htmx::HxRequest;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
 
 use crate::db::queries::{self, DashboardJob, DashboardSparkRow};
@@ -28,6 +34,20 @@ pub struct DashboardParams {
     pub sort: String,
     #[serde(default = "default_order")]
     pub order: String,
+    /// Phase 23 TAG-06: zero-or-more active tag filters from `?tag=foo&tag=bar`.
+    /// URL key is singular (`tag`), Rust field is plural (`tags`) so the URL
+    /// form reads `?tag=backup&tag=weekly` per the TAG-06 lock. Deserialized via
+    /// `axum_extra::extract::Query<DashboardParams>` (uses `serde_html_form`
+    /// under the hood — supports repeated keys). `axum::extract::Query` would
+    /// silently collapse duplicates to one — that is the EXACT failure mode
+    /// TAG-06 forbids (RESEARCH § Pitfall 1).
+    ///
+    /// **NEVER trust this field for SQL composition** without first
+    /// intersecting with the fleet-tag fold (the handler enforces this per
+    /// UI-SPEC § Stale-tag URL handling — silent server-side drop). The
+    /// `dashboard()` handler is the single owner of that intersection.
+    #[serde(default, rename = "tag")]
+    pub tags: Vec<String>,
 }
 
 fn default_sort() -> String {
@@ -50,6 +70,30 @@ struct DashboardPage {
     order: String,
     config_path: String,
     csrf_token: String,
+    /// Phase 23 TAG-06: distinct fleet tag set, alphabetical, used to
+    /// render one chip per tag in the chip strip. Empty when no job has
+    /// any tags — chip strip is hidden via HTML5 `hidden` attribute (D-02).
+    fleet_tags: Vec<String>,
+    /// Phase 23 TAG-06: post-toggle canonicalized active tag set
+    /// (sorted, deduped, fleet-intersected). Drives chip active state +
+    /// hidden `<input name="tag">` siblings + sort-header href tag suffix.
+    active_tags: Vec<String>,
+    /// Phase 23 D-11 / RESEARCH § Pattern 5 Option A: precomputed per-chip
+    /// view models (one per fleet tag). Each `ChipView` carries `tag`,
+    /// `is_active`, `href` (post-toggle URL query string, URL-encoded),
+    /// and `aria_label`. Single source of truth for chip `href` + `hx-get`
+    /// (DRY between the two attributes).
+    chips: Vec<ChipView>,
+    /// Phase 23 D-11: full-page render NEVER uses OOB swap. The field
+    /// MUST exist on this struct (set to `false`) so that
+    /// `templates/partials/job_table.html`, included from
+    /// `templates/pages/dashboard.html`, can reference
+    /// `{% if include_oob_chip_strip %}` without an askama compile-time
+    /// error. Askama 0.15 included templates have full access to the
+    /// parent context — and ahead-of-time compilation REQUIRES every
+    /// variable referenced in the included template to be reachable from
+    /// the parent struct.
+    include_oob_chip_strip: bool,
 }
 
 #[derive(Template)]
@@ -57,6 +101,136 @@ struct DashboardPage {
 struct JobTablePartial {
     jobs: Vec<DashboardJobView>,
     csrf_token: String,
+    /// Phase 23 D-11: HTMX OOB swap — the partial response renders BOTH
+    /// the chip strip (OOB-swapped into `#cd-tag-chip-strip` on the live
+    /// page) AND the table body (target swap).
+    fleet_tags: Vec<String>,
+    active_tags: Vec<String>,
+    /// Phase 23: precomputed chip views (one per fleet tag).
+    chips: Vec<ChipView>,
+    /// Phase 23 D-11: when `true`, the partial template renders the
+    /// chip strip with `hx-swap-oob="true"` on the OUTER wrapper FIRST,
+    /// followed by the table body. The OOB element targets the live
+    /// `#cd-tag-chip-strip` on the page for in-place state replacement.
+    /// HTMX path sets this to `true`; full-page path sets to `false`.
+    include_oob_chip_strip: bool,
+}
+
+/// Phase 23 D-11 / RESEARCH § Pattern 5 Option A: precomputed per-chip
+/// view model. The handler computes the post-toggle URL once per chip;
+/// the template renders it via `<a href="?{{ chip.href }}" hx-get="?{{ chip.href }}">`.
+/// Single source of truth for href + hx-get (DRY); avoids inline askama
+/// iteration over `active_tags` inside chip markup.
+///
+/// `pub(crate)` so the dashboard tests can assert the post-toggle URL
+/// shape directly (WR-03), sidestepping askama's HTML auto-escape
+/// (which renders `&` as `&amp;` in the rendered attribute value).
+#[derive(Debug)]
+pub struct ChipView {
+    /// The tag name itself (e.g., "backup"). Rendered by askama with the
+    /// default auto-escape; never use the `|safe` filter on this field.
+    pub tag: String,
+    /// Whether this chip is in the current `active_tags` set. Drives the
+    /// `cd-tag-chip--active` vs `cd-tag-chip--inactive` class, the
+    /// `aria-pressed` value, and the active-vs-inactive `aria_label` suffix.
+    pub is_active: bool,
+    /// Post-toggle URL query string (without leading `?`), e.g.,
+    /// `filter=&sort=name&order=asc&tag=backup&tag=weekly`. Active tags
+    /// in the URL are sorted alphabetical (canonicalized per UI-SPEC §
+    /// URL canonicalization). Tag values are URL-encoded via
+    /// `url::form_urlencoded::Serializer` (defense-in-depth; the P22
+    /// charset regex already prevents structural escape).
+    pub href: String,
+    /// Operator-visible aria-label for the chip — "Tag filter: backup
+    /// (active — click to remove)" or "Tag filter: weekly (inactive —
+    /// click to add)". Encapsulated in the view-model so the template
+    /// renders a single field rather than branching inline.
+    pub aria_label: String,
+}
+
+/// Phase 23: build a `Vec<ChipView>` from the fleet-tag set + active set
+/// + current request params.
+///
+/// Each chip's `href` is the post-toggle URL: active chips emit URLs that
+/// REMOVE their tag; inactive chips emit URLs that ADD their tag. The
+/// post-toggle active set is canonicalized alphabetical before
+/// serialization so all chip URLs (and bookmarks) share the same canonical
+/// form.
+///
+/// Tag values are URL-encoded via `url::form_urlencoded::Serializer`
+/// (the `url` crate is a direct dep at v2.5.8). The P22 charset regex
+/// already prevents structural escape upstream; this is defense-in-depth.
+///
+/// `pub(crate)` so dashboard integration tests can assert chip URL
+/// shape directly (WR-03 regression — askama's auto-escape mangles the
+/// rendered `hx-get` attribute, so per-chip URL assertions live at the
+/// builder boundary).
+pub(crate) fn build_chip_views(
+    fleet_tags: &[String],
+    active_tags: &[String],
+    filter: &str,
+    sort: &str,
+    order: &str,
+) -> Vec<ChipView> {
+    fleet_tags
+        .iter()
+        .map(|tag| {
+            let is_active = active_tags.iter().any(|t| t == tag);
+
+            // Compute the post-toggle active set:
+            //  - if currently active   → REMOVE this tag (toggle off)
+            //  - if currently inactive → ADD this tag (toggle on),
+            //    re-canonicalize (sort + dedup)
+            let mut next: Vec<String> = active_tags.to_vec();
+            if is_active {
+                next.retain(|t| t != tag);
+            } else {
+                next.push(tag.clone());
+                next.sort();
+                next.dedup();
+            }
+
+            // Build the post-toggle query string. Use
+            // `url::form_urlencoded::Serializer` (the `url` crate at
+            // v2.5.8 is already a direct dep — see Cargo.toml). It emits
+            // `application/x-www-form-urlencoded` form-encoded pairs,
+            // which is exactly what `axum_extra::extract::Query`
+            // (backed by `serde_html_form`) round-trips on the way in.
+            let mut href = String::new();
+            {
+                let mut ser = url::form_urlencoded::Serializer::new(&mut href);
+                // Phase 23 WR-04: skip `filter=` when the value is empty so
+                // bookmarkable URLs don't carry a noisy default-empty pair
+                // (`/?filter=&sort=name&order=asc&tag=backup` →
+                // `/?sort=name&order=asc&tag=backup`). Functionally equivalent
+                // — `axum_extra::Query` defaults `filter` to `""` either way —
+                // and the sort-header anchors gate on `filter` for the same
+                // reason so the chip-strip and sort-header forms stay aligned.
+                if !filter.is_empty() {
+                    ser.append_pair("filter", filter);
+                }
+                ser.append_pair("sort", sort);
+                ser.append_pair("order", order);
+                for t in &next {
+                    ser.append_pair("tag", t);
+                }
+                ser.finish();
+            }
+
+            let aria_label = if is_active {
+                format!("Tag filter: {tag} (active — click to remove)")
+            } else {
+                format!("Tag filter: {tag} (inactive — click to add)")
+            };
+
+            ChipView {
+                tag: tag.clone(),
+                is_active,
+                href,
+                aria_label,
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -247,9 +421,82 @@ pub async fn dashboard(
     } else {
         Some(params.filter.as_str())
     };
-    let jobs = queries::get_dashboard_jobs(&state.pool, filter, &params.sort, &params.order)
-        .await
-        .unwrap_or_default();
+    // Phase 23 D-08 / RESEARCH § Pattern 3: TWO-fetch sequence so the fleet-tag
+    // fold reflects the UNFILTERED fleet (chips render every tag in the fleet,
+    // not only tags surviving the active AND-filter). The first fetch is
+    // unfiltered (active_tags=&[]); we fold its `Vec<DashboardJob>` into
+    // `fleet_tags`. The second fetch applies the active-tag intersection for
+    // the table body. Both reads are cheap at homelab scale (sub-millisecond
+    // over a few hundred jobs); RESEARCH Open Question 1 + PATTERNS.md L296-318
+    // document the deliberate trade-off vs. the single-fetch alternative
+    // (which would hide chips for tags whose only job is filtered out by
+    // another active chip).
+    let unfiltered_jobs = queries::get_dashboard_jobs(
+        &state.pool,
+        None, // no name-filter for fleet-tag fold
+        &params.sort,
+        &params.order,
+        &[], // no tag-filter — fold over the WHOLE fleet
+    )
+    .await
+    .unwrap_or_default();
+
+    // Phase 23 D-08 / D-07: fleet-tag fold. `BTreeSet<String>` -> `Vec<String>`
+    // preserves alphabetical sort and dedupes. Disabled jobs are excluded by
+    // `WHERE j.enabled = 1` upstream — `fleet_tags` is "tags from the rendered
+    // row set" (CONTEXT § Claude's Discretion default).
+    let fleet_tags: Vec<String> = unfiltered_jobs
+        .iter()
+        .flat_map(|j| j.tags.iter().cloned())
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
+
+    // Phase 23 / UI-SPEC § URL canonicalization + § Stale-tag URL handling:
+    // canonicalize case → dedup → alphabetical → intersect with fleet so
+    // stale URL tags are silently dropped (RESEARCH § Pitfall 4 / threat
+    // T-23-03-01). The retain step is the security boundary: any
+    // operator-supplied tag NOT in the fleet is dropped BEFORE reaching SQL.
+    //
+    // WR-01: lowercase BEFORE the retain. Fleet tags are guaranteed
+    // lowercase (validator normalizes via `to_lowercase()` at config-load),
+    // but URL query parsing does NOT lowercase `?tag=` values — so a
+    // bookmarked `?tag=Backup` would case-mismatch the fleet entry
+    // `backup` and silently drop. Canonicalizing case here matches the
+    // operator's intent (chip strip is case-insensitive on input,
+    // case-preserving lowercase on output).
+    let mut active_tags: Vec<String> = params.tags.iter().map(|t| t.to_lowercase()).collect();
+    active_tags.sort();
+    active_tags.dedup();
+    active_tags.retain(|t| fleet_tags.contains(t));
+
+    // Phase 23 D-11 / RESEARCH § Pattern 5 Option A: precompute chip view
+    // models ONCE per request, before the view-model construction. Both the
+    // full-page (DashboardPage) and HTMX-partial (JobTablePartial) renders
+    // receive the same `chips` vector; the OOB partial response renders the
+    // exact same chip data the full-page response would, guaranteeing the
+    // live DOM state matches the canonical URL state.
+    let chips = build_chip_views(
+        &fleet_tags,
+        &active_tags,
+        &params.filter,
+        &params.sort,
+        &params.order,
+    );
+
+    // Now apply the active-tag filter to the actual rendered fleet. The
+    // `unfiltered_jobs` binding is consumed by the fold and goes out of scope
+    // here; the new `jobs` shadows it and keeps the existing role downstream
+    // (sparkline hydration + view-model construction).
+    let jobs = queries::get_dashboard_jobs(
+        &state.pool,
+        filter,
+        &params.sort,
+        &params.order,
+        &active_tags,
+    )
+    .await
+    .unwrap_or_default();
 
     let tz: Tz = state.tz;
     let mut job_views: Vec<DashboardJobView> = jobs.into_iter().map(|j| to_view(j, tz)).collect();
@@ -339,13 +586,25 @@ pub async fn dashboard(
     let csrf_token = csrf::get_token_from_cookies(&cookies);
 
     if is_htmx {
+        // Phase 23 D-11: HTMX path emits the OOB chip strip prefix
+        // (rendered by `templates/partials/job_table.html` when
+        // `include_oob_chip_strip == true`) followed by the table body.
         JobTablePartial {
             jobs: job_views,
             csrf_token,
+            fleet_tags,
+            active_tags,
+            chips,
+            include_oob_chip_strip: true,
         }
         .into_web_template()
         .into_response()
     } else {
+        // Phase 23 D-11: full-page path renders the chip strip in its
+        // natural body position via `templates/pages/dashboard.html`. The
+        // OOB block in the partial template is gated `false` here, so
+        // `{% include %}`-ing the partial inside `<tbody>` does NOT emit
+        // a duplicate chip strip.
         DashboardPage {
             jobs: job_views,
             filter: params.filter,
@@ -353,6 +612,10 @@ pub async fn dashboard(
             order: params.order,
             config_path: state.config_path.display().to_string(),
             csrf_token,
+            fleet_tags,
+            active_tags,
+            chips,
+            include_oob_chip_strip: false,
         }
         .into_web_template()
         .into_response()
@@ -392,5 +655,173 @@ mod tests {
         let now = Utc::now();
         let result = format_relative_past(now, now);
         assert_eq!(result, "just now");
+    }
+
+    // V-05 (unit / handler): `?tag=backup&tag=weekly` deserializes to Vec<String> length 2
+    // via axum_extra::Query. axum::Query would silently collapse duplicates to one — this
+    // is the EXACT failure mode TAG-06 forbids (RESEARCH § Pitfall 1).
+    //
+    // We use `Query::try_from_uri` (axum-extra 0.12 public API at
+    // `axum_extra::extract::query::Query::try_from_uri`) which calls
+    // `serde_html_form::from_str` on the URI's query string — the same path
+    // `from_request_parts` takes when the extractor runs in a real request.
+    // Testing this directly avoids the axum `FromRequestParts<S>` state-type
+    // dance and exercises the load-bearing property: a `Vec<String>` field
+    // receives every occurrence of a repeated `?tag=` key.
+    #[tokio::test]
+    async fn active_tags_parsed_from_repeated_query() {
+        use axum::http::Uri;
+        use axum_extra::extract::Query as AxumExtraQuery;
+
+        let uri: Uri = "/?tag=backup&tag=weekly"
+            .parse()
+            .expect("parse test URI with repeated tag keys");
+
+        let AxumExtraQuery(params): AxumExtraQuery<DashboardParams> =
+            AxumExtraQuery::try_from_uri(&uri)
+                .expect("axum_extra::Query::try_from_uri deserializes repeated keys");
+
+        assert_eq!(
+            params.tags,
+            vec!["backup".to_string(), "weekly".to_string()],
+            "DashboardParams MUST deserialize repeated `tag=` keys into a 2-element \
+             Vec<String>. axum::Query would collapse to vec![\"weekly\"] — that is the \
+             regression this test prevents (RESEARCH § Pitfall 1; TAG-06 lock)."
+        );
+    }
+
+    // V-07 (unit / handler): distinct-tag fold from Vec<DashboardJob> produces
+    // sorted alphabetical Vec<String> for chip strip (CONTEXT D-08, RESEARCH § Pattern 3).
+    //
+    // The fold lives inline in the `dashboard()` handler (BTreeSet<String> ->
+    // Vec<String> via flat_map + collect chain). This unit test exercises the
+    // exact same pattern against a hand-built `Vec<DashboardJob>` so we can
+    // assert the load-bearing property (alphabetical-distinct) without
+    // standing up a database or routing layer.
+    #[tokio::test]
+    async fn distinct_tag_fold_alphabetical() {
+        use crate::db::queries::DashboardJob;
+        use std::collections::BTreeSet;
+
+        fn mk_job(name: &str, tags: Vec<&str>) -> DashboardJob {
+            DashboardJob {
+                id: 0,
+                name: name.to_string(),
+                schedule: "*/5 * * * *".to_string(),
+                resolved_schedule: "*/5 * * * *".to_string(),
+                job_type: "command".to_string(),
+                timeout_secs: 300,
+                last_status: None,
+                last_run_time: None,
+                last_trigger: None,
+                enabled_override: None,
+                tags: tags.into_iter().map(String::from).collect(),
+            }
+        }
+
+        let jobs = [
+            mk_job("a", vec!["weekly", "backup"]),
+            mk_job("b", vec!["backup", "prod"]),
+            mk_job("c", vec![]),
+        ];
+
+        let fleet_tags: Vec<String> = jobs
+            .iter()
+            .flat_map(|j| j.tags.iter().cloned())
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            fleet_tags,
+            vec![
+                "backup".to_string(),
+                "prod".to_string(),
+                "weekly".to_string()
+            ],
+            "BTreeSet -> Vec MUST yield distinct alphabetical fleet tags. Duplicates \
+             across jobs (`backup` in jobs 'a' and 'b') MUST collapse to one chip; \
+             empty-tag jobs MUST contribute nothing; output MUST be alphabetical."
+        );
+    }
+
+    // WR-03 regression: `chip.href` is the SINGLE SOURCE OF TRUTH for the
+    // chip's `<a href>` AND `hx-get` attributes. Askama HTML-escapes `&`
+    // separators on render (`&` -> `&amp;`) and the browser+HTMX decode
+    // them transparently, so this test asserts on the BUILDER OUTPUT
+    // (pre-escape) — that is the surface we control. A future change that
+    // accidentally diverges `href` from `hx-get` (e.g., adds an inline
+    // form-encode in the template for one attribute but not the other)
+    // would be caught by template review; a future change that emits the
+    // wrong post-toggle URL from the BUILDER is what this test catches.
+    #[test]
+    fn build_chip_views_post_toggle_active_remove_inactive_add() {
+        let fleet = ["backup".to_string(), "weekly".to_string()];
+        let active = ["backup".to_string()];
+        let chips = build_chip_views(&fleet, &active, "", "name", "asc");
+
+        let backup = chips
+            .iter()
+            .find(|c| c.tag == "backup")
+            .expect("backup chip in output");
+        assert!(
+            backup.is_active,
+            "backup is in active set; chip MUST render is_active=true"
+        );
+        // Active chip's post-toggle URL DROPS its own tag (toggle off).
+        // Empty filter is omitted by WR-04 — the URL contains only
+        // `sort` + `order` and no tags.
+        assert_eq!(
+            backup.href, "sort=name&order=asc",
+            "active backup chip's post-toggle URL MUST drop its own tag (toggle off) \
+             AND omit the empty filter pair (WR-04). got: {}",
+            backup.href
+        );
+
+        let weekly = chips
+            .iter()
+            .find(|c| c.tag == "weekly")
+            .expect("weekly chip in output");
+        assert!(
+            !weekly.is_active,
+            "weekly is NOT in active set; chip MUST render is_active=false"
+        );
+        // Inactive chip's post-toggle URL ADDS itself to the canonical
+        // (sorted, deduped) active set: `[backup, weekly]`. The two `&`
+        // separators here are literal in the builder output; askama
+        // escapes them to `&amp;` at render time, but builder-level
+        // assertions sidestep the escape (review note WR-03).
+        assert_eq!(
+            weekly.href, "sort=name&order=asc&tag=backup&tag=weekly",
+            "inactive weekly chip's post-toggle URL MUST add itself to the canonical \
+             active set in alphabetical order. got: {}",
+            weekly.href
+        );
+    }
+
+    // WR-03 regression: the `filter` value flows through the builder
+    // verbatim when present, and the URL form-encodes through
+    // `url::form_urlencoded::Serializer`. Confirms the WR-04 gate emits
+    // `filter=...` only when non-empty.
+    #[test]
+    fn build_chip_views_emits_filter_only_when_non_empty() {
+        let fleet = ["backup".to_string()];
+        let active: [String; 0] = [];
+
+        let chips_empty = build_chip_views(&fleet, &active, "", "name", "asc");
+        let backup_empty = chips_empty.iter().find(|c| c.tag == "backup").unwrap();
+        assert!(
+            !backup_empty.href.starts_with("filter="),
+            "empty filter MUST NOT emit `filter=` (WR-04); got: {}",
+            backup_empty.href
+        );
+
+        let chips_with = build_chip_views(&fleet, &active, "alpha", "name", "asc");
+        let backup_with = chips_with.iter().find(|c| c.tag == "backup").unwrap();
+        assert!(
+            backup_with.href.starts_with("filter=alpha&"),
+            "non-empty filter MUST emit `filter=alpha&` as the leading pair; got: {}",
+            backup_with.href
+        );
     }
 }

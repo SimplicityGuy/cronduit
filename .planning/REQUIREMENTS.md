@@ -120,11 +120,11 @@ UI-only filter chips on the dashboard. NO effect on webhooks (WH-09 includes tag
 
 - [ ] **TAG-05**: Tag substring-collision check at config-load: rejects fleets where one tag is a substring of another (e.g., `back` and `backup` cannot both exist). The SQL filter `tags LIKE '%"' || ?tag || '"%'` is structurally parity-friendly across SQLite + Postgres but vulnerable to substring false-positives without this validator. `T-V12-TAG-07`.
 
-- [ ] **TAG-06**: The dashboard renders filter chips for every distinct tag in the current fleet. Clicking a chip toggles its filter state (active = teal-bordered + bold; inactive = grey). Multiple active chips compose with **AND semantics** (job must have ALL active tags to render). URL state via repeated `?tag=` params (e.g., `/?tag=backup&tag=weekly`); shareable, bookmarkable. `T-V12-TAG-08`, `T-V12-TAG-09`.
+- [x] **TAG-06**: The dashboard renders filter chips for every distinct tag in the current fleet. Clicking a chip toggles its filter state (active = teal-bordered + bold; inactive = grey). Multiple active chips compose with **AND semantics** (job must have ALL active tags to render). URL state via repeated `?tag=` params (e.g., `/?tag=backup&tag=weekly`); shareable, bookmarkable. `T-V12-TAG-08`, `T-V12-TAG-09`.
 
-- [ ] **TAG-07**: When ANY tag filter is active, untagged jobs are hidden from the dashboard (least-surprise behavior for an active filter). The tag-filter composes with the existing v1.0 name-filter via **AND** (job must match BOTH name-filter AND tag-filter). `T-V12-TAG-10`.
+- [x] **TAG-07**: When ANY tag filter is active, untagged jobs are hidden from the dashboard (least-surprise behavior for an active filter). The tag-filter composes with the existing v1.0 name-filter via **AND** (job must match BOTH name-filter AND tag-filter). `T-V12-TAG-10`.
 
-- [ ] **TAG-08**: Tag dashboard rendering uses CSS-only chip components (no JS framework, no canvas); HTMX swaps the dashboard partial on chip toggle (matches v1.0 dashboard polling architecture). `T-V12-TAG-11`.
+- [x] **TAG-08**: Tag dashboard rendering uses CSS-only chip components (no JS framework, no canvas); HTMX swaps the dashboard partial on chip toggle (matches v1.0 dashboard polling architecture). `T-V12-TAG-11`.
 
 ## Future Requirements
 
@@ -207,9 +207,9 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | TAG-03    | 22    | Pending |
 | TAG-04    | 22    | Pending |
 | TAG-05    | 22    | Pending |
-| TAG-06    | 23    | Pending |
-| TAG-07    | 23    | Pending |
-| TAG-08    | 23    | Pending |
+| TAG-06    | 23    | Complete |
+| TAG-07    | 23    | Complete |
+| TAG-08    | 23    | Complete |
 
 **Total:** 41 requirements across 6 categories (3 FOUND + 11 WH + 6 LBL + 7 FCTX + 6 EXIT + 8 TAG). Phase mapping populated by `/gsd-roadmapper` 2026-04-25; v1.2 roadmap covers Phases 15-24 with three rc cuts embedded (rc.1 in P20, rc.2 in P21, rc.3 in P23, final v1.2.0 in P24).
 

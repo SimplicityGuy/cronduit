@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: "Phase 22 shipped — PR #58 (pending maintainer UAT)"
-stopped_at: Phase 22 context gathered
-last_updated: "2026-05-04T20:24:28.306Z"
-last_activity: 2026-05-04
+status: "Phase 23 shipped — PR #59"
+stopped_at: Completed 23-08-PLAN.md (Wave 7 — rc.3 PREFLIGHT runbook authored; maintainer EXECUTES post-PR-merge)
+last_updated: "2026-05-05T16:37:27.320Z"
+last_activity: 2026-05-05
 progress:
   total_phases: 10
-  completed_phases: 8
-  total_plans: 62
-  completed_plans: 62
+  completed_phases: 9
+  total_plans: 70
+  completed_plans: 70
   percent: 100
 ---
 
@@ -21,18 +21,18 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 21 — failure-context-ui-panel-exit-code-histogram-card-rc-2
+**Current focus:** Phase 23 — job-tagging-dashboard-filter-chips-rc-3
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 21 (failure-context-ui-panel-exit-code-histogram-card-rc-2) — EXECUTING
-Plan: 8 of 11
-Status: Phase 22 shipped — PR #58 (pending maintainer UAT)
-Last activity: 2026-05-04
+Phase: 23 (job-tagging-dashboard-filter-chips-rc-3) — EXECUTING
+Plan: 8 of 8
+Status: Phase 23 shipped — PR #59
+Last activity: 2026-05-05
 
-Progress: [██████████] 97%
+Progress: [██████████] 100%
 
 ## v1.2 Roadmap Summary
 
@@ -141,6 +141,16 @@ All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 - [Phase 21-05]: Exit Histogram view-model wired into job_detail handler — three pre-formatted structs (BucketRender, TopCodeRender, ExitHistogramView) sibling to DurationView; const-then-fetch-then-build pattern adjacent to Duration card; soft-fail tracing::warn! upgrade per D-12 (NEW logic vs dashboard sparkline .unwrap_or_default()); 10-entry display-order Vec with server-clamped height_pct (research § Security V5); locked UI-SPEC color/copy mappings via static lookup helpers; logic-free template contract — askama template (plan 21-06) substitutes {{ value }} with zero logic
 - [Phase ?]: [Phase 21-06]: FCTX panel + Exit Histogram template inserts + 16+28 cd-* CSS classes landed in @layer components — askama logic-free contract honored (template substitutes {{ value }} verbatim); print-mode rule + reduced-motion extension applied; outer chrome on cd-exit-card via inline style matching Duration sibling (no near-duplicate class); .cd-tooltip (Phase 13) reused with new .cd-exit-bar:hover anchor selector; #[allow(dead_code)] removed from page-level fields now that templates consume them; Tailwind rebuild via build.rs regenerates assets/static/app.css alongside source
 - [Phase ?]: Plan 22-04: WH-09 closed end-to-end — WebhookPayload.tags reads run.tags.clone() (D-05); old structural-breadcrumb test deleted (D-06.5)
+- [Phase ?]: [Phase 23-01]: Wave-0 test scaffolding pattern landed — 12 named #[tokio::test] async functions in tests/v12_tags_dashboard.rs (V-01..V-04, V-06, V-08..V-14) + 2 named in src/web/handlers/dashboard.rs::tests (V-05, V-07), all in todo!() state. Wave 1-3 plans now have a stable, compiling test surface to land impls against.
+- [Phase 23]: Plan 23-02 — DB layer accepts active_tags: &[String]; both backend arms compose variadic AND-chain via parameterized binds; conditional tags != '[]' clause gates TAG-07 untagged-hidden semantics; V-01..V-04 GREEN
+- [Phase ?]: [Phase 23-04]: cd-tag-chip-* component family added to @layer components per UI-SPEC § Component Inventory § CSS contract — triple-channel a11y active state (border + color + font-weight 700); :focus-visible box-shadow 0 0 0 2px var(--cd-green-dim) matches Phase 13/14/21 pattern; @media (prefers-reduced-motion: reduce) and @media print extended single-line (NOT duplicated); ZERO new token declarations introduced. UI-SPEC-claimed tokens --cd-space-10 and --cd-radius-full ABSENT from :root — substituted literals 40px and 9999px inline with adjacent fallback comment per plan's pre-authorized procedure; gap surfaced in 23-04-SUMMARY § Known Stubs / Token Gaps. V-11 (css_only_chip_no_inline_js) goes GREEN after Plan 23-05.
+- [Phase ?]: Plan 23-05: ChipView precomputation pattern (RESEARCH § Pattern 5 Option A) — handler builds Vec<ChipView> once per request via url::form_urlencoded::Serializer; both view-model arms receive the same data; OOB partial response renders identical chip data to full-page response (DOM/URL state lockstep).
+- [Phase ?]: Plan 23-05: Dual-struct field placement of include_oob_chip_strip driven by askama 0.15 include-scope rule — DashboardPage carries the field set false (chip strip in natural body position); JobTablePartial carries it set true (OOB prefix renders in HTMX response). Single source of struct definitions for Phase 23.
+- [Phase ?]: Plan 23-05: url::form_urlencoded::Serializer for chip href encoding (NOT a new urlencoding/percent_encoding direct dep) — symmetric with axum_extra::Query (serde_html_form) on the way back; the url crate v2.5.8 is already a direct dep used by SSRF guard + DB URL parsing. Zero new external crates.
+- [Phase ?]: Plan 23-05: OOB block lives in templates/partials/job_table.html (Option A from PATTERNS) gated on include_oob_chip_strip — single template carries three behaviors (full-page include with flag false, HTMX response body with flag true). Avoids dual-Template-derive or response-composer complexity.
+- [Phase ?]: Plan 23-06: three uat-chips-* just recipes mirror P22 uat-tags-* recipe-calls-recipe pattern verbatim (each writes synthetic-tag TOML to .tmp/uat-chips-*.toml, chains build/db-reset/check-config, gates with read prompts, ends with maintainer-validates ritual); README ### Tag Filter Chips subsection slots between ### Labels (P17) and ### Job Types under ## Configuration — text-only, zero mermaid (UI-SPEC § Decisions Rationale recommends short subsection).
+- [Phase ?]: [Phase 23-07]: 23-HUMAN-UAT.md autonomous=false maintainer runbook landed with 6 scenarios per CONTEXT D-17 — three recipe-driven (uat-chips-render / uat-chips-and-filter / uat-chips-share-url) + three eyeball-only (mobile / light / a11y); Scenario 6 covers WCAG 2.2 AAA touch target >= 44px, :focus-visible ring, aria-pressed true/false, three-channel active state encoding (border + label color + bold weight); maintainer EXECUTES runbook in separate /gsd-verify-work session before Phase 23 PR merge per project memory feedback_uat_user_validates.md
+- [Phase ?]: [Phase 23-08]: 23-RC3-PREFLIGHT.md authored as verbatim mirror of 21-RC2-PREFLIGHT.md per CONTEXT D-15 — rc.2->rc.3 / P21->P23 / FCTX->tag-chips / EXIT-06->tags-as-Prometheus-out-of-scope / plan-list 01-10->01-07 substitutions; autonomous=false maintainer-EXECUTES; Cargo.toml unchanged at 1.2.0 (-rc.3 tag-only); NO release.yml/cliff.toml/docs/release-rc.md edits per D-16; :latest stays at v1.1.0 via P12 D-10 hyphen-gate; Phase 23 plans 8/8 complete.
 
 ### Open questions
 
@@ -179,8 +189,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-04T19:57:46.453Z
-Stopped at: Phase 22 context gathered
-Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
+Last session: 2026-05-05T03:17:09.304Z
+Stopped at: Completed 23-08-PLAN.md (Wave 7 — rc.3 PREFLIGHT runbook authored; maintainer EXECUTES post-PR-merge)
+Resume command: `/gsd-execute-phase 23` to launch Plan 23-07 (HUMAN-UAT runbook, autonomous=false)
 
-**Planned Phase:** 20 — Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1 (HTTPS-required for non-loopback/non-RFC1918, SSRF guards, retry schedule t=0/30s/300s with full-jitter, 30s drain on shutdown, Prometheus metrics)
+**Planned Plan:** 23-07 — HUMAN-UAT runbook (autonomous=false maintainer plan with 6 scenarios covering the three uat-chips-* recipes plus mobile viewport / light-mode / keyboard nav / screen-reader narration / name-filter compose; TAG-06, TAG-07, TAG-08)

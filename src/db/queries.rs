@@ -601,6 +601,13 @@ pub struct DashboardJob {
     /// Some(1) = forced enabled — defensive only). Carried for downstream view rendering
     /// (Plan 05 surfaces this on the dashboard chrome).
     pub enabled_override: Option<i64>,
+    /// Phase 23 TAG-06: tags from the joined `jobs.tags` JSON column,
+    /// deserialized to `Vec<String>` at the row-mapping site. Empty Vec when
+    /// the job has no tags (column is NOT NULL DEFAULT '[]' — schema guarantees
+    /// a value). Sorted-canonical order per Phase 22 D-09. Consumed by the
+    /// dashboard chip strip fleet-tag fold (D-08) and the chip strip render
+    /// (D-01..D-04 + UI-SPEC § Component Inventory).
+    pub tags: Vec<String>,
 }
 
 /// A row from job_runs for the run history view.
@@ -812,6 +819,31 @@ pub struct Paginated<T> {
     pub total: i64,
 }
 
+/// Phase 23 CR-01: escape LIKE metacharacters in a tag value before binding.
+///
+/// The Phase 22 tag charset (`^[a-z0-9][a-z0-9_-]{0,30}$`) admits `_`, which
+/// is a single-character wildcard in both SQLite and PostgreSQL `LIKE`. The
+/// dashboard tag-filter SQL is `tags LIKE ?` against a JSON-quote-anchored
+/// pattern (`%"<tag>"%`). Without escaping, `?tag=back_up` would also match
+/// rows whose `tags` JSON contains `"back-up"` / `"backaup"` / etc., silently
+/// widening the operator-supplied AND-filter (the P22 TAG-05 substring-
+/// collision validator runs `str::contains`, which is purely literal and
+/// does not catch wildcard equivalence). The two valid LIKE metacharacters
+/// in standard SQL are `%` (zero-or-more chars) and `_` (one char); `\` is
+/// reserved for our explicit ESCAPE clause. The `LIKE ... ESCAPE '\'` form
+/// is portable to both backends (SQLite documents it; PostgreSQL has an
+/// implicit `\` escape but accepts the explicit form too).
+fn escape_like(t: &str) -> String {
+    let mut out = String::with_capacity(t.len() + 4);
+    for c in t.chars() {
+        if c == '\\' || c == '%' || c == '_' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Fetch enabled jobs with their most recent run status for the dashboard.
 ///
 /// T-03-04: Filter uses parameterized LIKE query. Sort uses whitelist match.
@@ -820,6 +852,7 @@ pub async fn get_dashboard_jobs(
     filter: Option<&str>,
     sort: &str,
     order: &str,
+    active_tags: &[String],
 ) -> anyhow::Result<Vec<DashboardJob>> {
     // Build ORDER BY from whitelist — never interpolate user input into SQL.
     let order_clause = match (sort, order) {
@@ -835,10 +868,37 @@ pub async fn get_dashboard_jobs(
     };
 
     let has_filter = filter.is_some_and(|f| !f.is_empty());
+    let tag_bind_start = if has_filter { 2 } else { 1 };
+
+    // Phase 23 D-09 / CR-01: variadic AND-chain. The COUNT comes from
+    // active_tags.len() — server-controlled (handler intersects against
+    // fleet_tags before passing). Bind values flow through `bind()` (never
+    // string-interpolated). P22 TAG-05 substring-collision validator at
+    // config-load prevents `back`/`backup` LIKE ambiguity, and the explicit
+    // `ESCAPE '\\'` clause + `escape_like` at bind time prevents the `_`-as-
+    // wildcard cross-match (CR-01: `back_up` vs `back-up` / `backaup`). Both
+    // SQLite and Postgres accept the explicit ESCAPE form.
+    let tag_predicates_sqlite: String = (0..active_tags.len())
+        .map(|i| format!("AND tags LIKE ?{} ESCAPE '\\'", tag_bind_start + i))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let tag_predicates_postgres: String = (0..active_tags.len())
+        .map(|i| format!("AND tags LIKE ${} ESCAPE '\\'", tag_bind_start + i))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Phase 23 D-09 / TAG-07: untagged-hidden ONLY when active set is
+    // non-empty. RESEARCH § Pitfall 7: making this clause unconditional
+    // would silently hide all untagged jobs on the default load.
+    let untagged_clause = if !active_tags.is_empty() {
+        "AND tags != '[]'"
+    } else {
+        ""
+    };
 
     let base_sql = if has_filter {
         format!(
-            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
+            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override, j.tags AS tags_json,
                       lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                FROM jobs j
                LEFT JOIN (
@@ -846,12 +906,12 @@ pub async fn get_dashboard_jobs(
                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                    FROM job_runs
                ) lr ON lr.job_id = j.id AND lr.rn = 1
-               WHERE j.enabled = 1 AND LOWER(j.name) LIKE ?1
+               WHERE j.enabled = 1 AND LOWER(j.name) LIKE ?1 {tag_predicates_sqlite} {untagged_clause}
                {order_clause}"#
         )
     } else {
         format!(
-            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
+            r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override, j.tags AS tags_json,
                       lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                FROM jobs j
                LEFT JOIN (
@@ -859,18 +919,29 @@ pub async fn get_dashboard_jobs(
                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                    FROM job_runs
                ) lr ON lr.job_id = j.id AND lr.rn = 1
-               WHERE j.enabled = 1
+               WHERE j.enabled = 1 {tag_predicates_sqlite} {untagged_clause}
                {order_clause}"#
         )
     };
 
     match pool.reader() {
         PoolRef::Sqlite(p) => {
-            let rows = if has_filter {
-                let pattern = format!("%{}%", filter.unwrap().to_lowercase());
-                sqlx::query(&base_sql).bind(pattern).fetch_all(p).await?
-            } else {
-                sqlx::query(&base_sql).fetch_all(p).await?
+            let rows = {
+                let mut q = sqlx::query(&base_sql);
+                if has_filter {
+                    let pattern = format!("%{}%", filter.unwrap().to_lowercase());
+                    q = q.bind(pattern);
+                }
+                for t in active_tags {
+                    // Phase 23 D-09 / CR-01: wrap in JSON-quote anchors so LIKE matches the
+                    // JSON-array element exactly. P22 TAG-05 substring-collision validator
+                    // at config-load prevents `back`/`backup` ambiguity; `escape_like` +
+                    // the explicit `ESCAPE '\\'` clause prevent the `_`-as-wildcard
+                    // cross-match (RESEARCH Pattern 1; never use bare `tags LIKE
+                    // '%backup%'` — substring false-positive risk).
+                    q = q.bind(format!(r#"%"{}"%"#, escape_like(t)));
+                }
+                q.fetch_all(p).await?
             };
             Ok(rows
                 .into_iter()
@@ -885,6 +956,14 @@ pub async fn get_dashboard_jobs(
                     last_run_time: r.get("last_run_time"),
                     last_trigger: r.get("last_trigger"),
                     enabled_override: r.try_get("enabled_override").ok().flatten(),
+                    tags: {
+                        // Phase 23 TAG-06: forgiving on corrupt JSON — see Phase 22's
+                        // get_run_by_id row-map (queries.rs:1448-1456) for the same
+                        // pattern. Column is NOT NULL DEFAULT '[]' so corruption is
+                        // structurally impossible from cronduit-controlled writes.
+                        let s: String = r.get("tags_json");
+                        serde_json::from_str(&s).unwrap_or_default()
+                    },
                 })
                 .collect())
         }
@@ -892,7 +971,7 @@ pub async fn get_dashboard_jobs(
             // Postgres uses $1 instead of ?1
             let pg_sql = if has_filter {
                 format!(
-                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
+                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override, j.tags AS tags_json,
                               lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                        FROM jobs j
                        LEFT JOIN (
@@ -900,12 +979,12 @@ pub async fn get_dashboard_jobs(
                                   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                            FROM job_runs
                        ) lr ON lr.job_id = j.id AND lr.rn = 1
-                       WHERE j.enabled = 1 AND LOWER(j.name) LIKE $1
+                       WHERE j.enabled = 1 AND LOWER(j.name) LIKE $1 {tag_predicates_postgres} {untagged_clause}
                        {order_clause}"#
                 )
             } else {
                 format!(
-                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override,
+                    r#"SELECT j.id, j.name, j.schedule, j.resolved_schedule, j.job_type, j.timeout_secs, j.enabled_override, j.tags AS tags_json,
                               lr.status AS last_status, lr.start_time AS last_run_time, lr.trigger AS last_trigger
                        FROM jobs j
                        LEFT JOIN (
@@ -913,15 +992,25 @@ pub async fn get_dashboard_jobs(
                                   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                            FROM job_runs
                        ) lr ON lr.job_id = j.id AND lr.rn = 1
-                       WHERE j.enabled = 1
+                       WHERE j.enabled = 1 {tag_predicates_postgres} {untagged_clause}
                        {order_clause}"#
                 )
             };
-            let rows = if has_filter {
-                let pattern = format!("%{}%", filter.unwrap().to_lowercase());
-                sqlx::query(&pg_sql).bind(pattern).fetch_all(p).await?
-            } else {
-                sqlx::query(&pg_sql).fetch_all(p).await?
+            let rows = {
+                let mut q = sqlx::query(&pg_sql);
+                if has_filter {
+                    let pattern = format!("%{}%", filter.unwrap().to_lowercase());
+                    q = q.bind(pattern);
+                }
+                for t in active_tags {
+                    // Phase 23 D-09 / CR-01: JSON-quote anchored bind value (parity with
+                    // sqlite arm). Substring-collision is structurally prevented by
+                    // P22 TAG-05 validator at config-load; LIKE-wildcard cross-match
+                    // (`back_up` vs `back-up`) is prevented by `escape_like` paired with
+                    // the explicit `ESCAPE '\\'` clause in the predicate.
+                    q = q.bind(format!(r#"%"{}"%"#, escape_like(t)));
+                }
+                q.fetch_all(p).await?
             };
             Ok(rows
                 .into_iter()
@@ -936,6 +1025,13 @@ pub async fn get_dashboard_jobs(
                     last_run_time: r.get("last_run_time"),
                     last_trigger: r.get("last_trigger"),
                     enabled_override: r.try_get("enabled_override").ok().flatten(),
+                    tags: {
+                        // Phase 23 TAG-06: forgiving on corrupt JSON — see Phase 22's
+                        // get_run_by_id row-map for the same pattern. Column is NOT NULL
+                        // DEFAULT '[]' so corruption is structurally impossible.
+                        let s: String = r.get("tags_json");
+                        serde_json::from_str(&s).unwrap_or_default()
+                    },
                 })
                 .collect())
         }
@@ -2463,7 +2559,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         insert_run(&pool, job_id, "failed", "manual").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "asc")
+        let jobs = get_dashboard_jobs(&pool, None, "name", "asc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 1);
@@ -2479,7 +2575,7 @@ mod tests {
         let pool = setup_pool().await;
         create_job_with_runs(&pool, "no-runs-job", "*/5 * * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "asc")
+        let jobs = get_dashboard_jobs(&pool, None, "name", "asc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 1);
@@ -2496,7 +2592,7 @@ mod tests {
         create_job_with_runs(&pool, "test-sync", "*/10 * * * *").await;
         create_job_with_runs(&pool, "deploy-app", "0 0 * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, Some("test"), "name", "asc")
+        let jobs = get_dashboard_jobs(&pool, Some("test"), "name", "asc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 2);
@@ -2513,7 +2609,7 @@ mod tests {
         create_job_with_runs(&pool, "TestJob", "*/5 * * * *").await;
         create_job_with_runs(&pool, "other", "*/10 * * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, Some("TESTJOB"), "name", "asc")
+        let jobs = get_dashboard_jobs(&pool, Some("TESTJOB"), "name", "asc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 1);
@@ -2528,7 +2624,7 @@ mod tests {
         create_job_with_runs(&pool, "zulu", "*/10 * * * *").await;
         create_job_with_runs(&pool, "mike", "0 0 * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "desc")
+        let jobs = get_dashboard_jobs(&pool, None, "name", "desc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 3);

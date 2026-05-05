@@ -1425,3 +1425,253 @@ uat-tags-webhook:
     echo "            '\"tags\":[\"backup\",\"weekly\"]'"
     echo "            (sorted-canonical, real values — closes WH-09 end-to-end)."
     echo "            Claude does NOT mark this passed."
+
+# Phase 23 TAG-06 chip strip render spot-check. Seeds a multi-tag fleet,
+# walks the operator to the dashboard, and prompts for the eyeball criteria
+# from CONTEXT D-17 / UI-SPEC: chip strip renders with every distinct tag
+# in alphabetical order, hidden when fleet has zero tags. Mirrors the P22
+# uat-tags-persist recipe-calls-recipe pattern (build / db-reset / check-config
+# then operator-driven steps with a read prompt). Maintainer is the source
+# of truth — Claude does NOT mark this passed (project memory
+# feedback_uat_user_validates.md).
+[group('uat')]
+[doc('Phase 23 — TAG-06 chip strip rendering spot-check (operator confirms chip strip shows every fleet tag alphabetical, hidden when empty)')]
+uat-chips-render:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 23 UAT: TAG-06 chip strip render spot-check"
+    echo ""
+    echo "Step 1: Build cronduit."
+    just build
+    echo ""
+    echo "Step 2: Reset dev DB."
+    just db-reset
+    echo ""
+    echo "Step 3: Write multi-tag fleet config to .tmp/uat-chips-render.toml."
+    mkdir -p .tmp
+    cat > .tmp/uat-chips-render.toml <<'TOML_EOF'
+    [server]
+    bind = "127.0.0.1:8080"
+    timezone = "UTC"
+
+    [[jobs]]
+    name = "uat-chips-backup-weekly"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup", "weekly"]
+
+    [[jobs]]
+    name = "uat-chips-backup-prod"
+    schedule = "*/7 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup", "prod"]
+
+    [[jobs]]
+    name = "uat-chips-weekly-only"
+    schedule = "*/11 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["weekly"]
+
+    [[jobs]]
+    name = "uat-chips-untagged"
+    schedule = "*/13 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    TOML_EOF
+    echo ""
+    echo "Step 4: Validate the TOML up-front (must exit 0)."
+    just check-config .tmp/uat-chips-render.toml
+    echo ""
+    echo "Step 5: Start cronduit in ANOTHER terminal:"
+    echo "        cargo run -- run --config .tmp/uat-chips-render.toml --log-format text"
+    echo "        Wait for 'Listening on 127.0.0.1:8080'. Then PRESS ENTER here."
+    read
+    echo ""
+    echo "Step 6: Open http://127.0.0.1:8080/ in your browser."
+    echo ""
+    echo "Maintainer: confirm the dashboard shows a chip strip ABOVE the name-filter"
+    echo "            input containing exactly THREE chips in alphabetical order:"
+    echo "            backup / prod / weekly."
+    echo "            All chips are inactive (grey); no chip is teal-bordered + bold yet."
+    echo "            The 'uat-chips-untagged' row is rendered in the table (untagged"
+    echo "            jobs visible by default, before any chip is clicked)."
+    echo ""
+    echo "Step 7 (empty-state spot-check): edit .tmp/uat-chips-render.toml and remove"
+    echo "        every 'tags = [...]' line, then save. The watch_config reload picks it"
+    echo "        up; reload the dashboard."
+    echo ""
+    echo "Maintainer: confirm the chip strip is HIDDEN entirely (the dashboard now"
+    echo "            looks identical to v1.0/v1.1)."
+    echo ""
+    echo "The maintainer is the source of truth — Claude does NOT mark this passed."
+    read -rp "Press enter when you have eyeballed both states and noted the result..."
+
+# Phase 23 TAG-06 + TAG-07 AND-filter + untagged-hidden spot-check. Seeds a
+# fleet engineered to exercise AND-filter intersection (jobs with both tags
+# pass; jobs with only one fail), TAG-07 untagged-hidden (untagged jobs
+# disappear when any chip is active), and AND-composition with the v1.0
+# name-filter. Mirrors the P22 uat-tags-persist recipe-calls-recipe pattern.
+# Maintainer is the source of truth — Claude does NOT mark this passed.
+[group('uat')]
+[doc('Phase 23 — TAG-06 + TAG-07 AND-filter + untagged-hidden spot-check (operator clicks two chips, confirms only AND-matching jobs render and untagged jobs hidden)')]
+uat-chips-and-filter:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 23 UAT: TAG-06 + TAG-07 AND-filter + untagged-hidden"
+    echo ""
+    echo "Step 1: Build cronduit + reset dev DB."
+    just build
+    just db-reset
+    echo ""
+    echo "Step 2: Write a fleet that exercises AND filtering to .tmp/uat-chips-and-filter.toml."
+    mkdir -p .tmp
+    cat > .tmp/uat-chips-and-filter.toml <<'TOML_EOF'
+    [server]
+    bind = "127.0.0.1:8080"
+    timezone = "UTC"
+
+    [[jobs]]
+    name = "prod-backup-weekly"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup", "weekly", "prod"]
+
+    [[jobs]]
+    name = "prod-backup-only"
+    schedule = "*/7 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup", "prod"]
+
+    [[jobs]]
+    name = "dev-backup-weekly"
+    schedule = "*/11 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup", "weekly"]
+
+    [[jobs]]
+    name = "untagged-noise"
+    schedule = "*/13 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    TOML_EOF
+    echo ""
+    echo "Step 3: Validate the TOML up-front (must exit 0)."
+    just check-config .tmp/uat-chips-and-filter.toml
+    echo ""
+    echo "Step 4: Start cronduit in ANOTHER terminal:"
+    echo "        cargo run -- run --config .tmp/uat-chips-and-filter.toml --log-format text"
+    echo "        Wait for 'Listening on 127.0.0.1:8080'. Then PRESS ENTER here."
+    read
+    echo ""
+    echo "Step 5: In your browser, visit http://127.0.0.1:8080/."
+    echo ""
+    echo "Maintainer eyeball criteria — confirm each:"
+    echo "  (a) Click the 'backup' chip → it turns teal-bordered + bold. THREE rows visible:"
+    echo "      prod-backup-weekly, prod-backup-only, dev-backup-weekly."
+    echo "      'untagged-noise' is HIDDEN (TAG-07 untagged-hidden when filter active)."
+    echo "  (b) Click the 'weekly' chip too → both chips teal + bold. TWO rows visible:"
+    echo "      prod-backup-weekly, dev-backup-weekly (AND semantics — both tags required)."
+    echo "      'prod-backup-only' is HIDDEN (missing weekly)."
+    echo "  (c) Type 'prod' in the name filter (both chips still active) → ONE row visible:"
+    echo "      prod-backup-weekly (composes name AND tag filter via AND)."
+    echo "  (d) Click 'weekly' again to deactivate (chip returns to grey). With name='prod'"
+    echo "      and only 'backup' active, TWO rows visible: prod-backup-weekly + prod-backup-only."
+    echo ""
+    echo "The maintainer is the source of truth — Claude does NOT mark this passed."
+    read -rp "Press enter when (a) (b) (c) (d) all confirmed..."
+
+# Phase 23 TAG-06 share-URL bookmarkability spot-check. Operator pastes a
+# shareable URL with repeated ?tag= params into a fresh tab and confirms
+# the chip strip renders in active state on first paint, the table is
+# pre-filtered, and stale tags (tags in URL that don't exist in fleet) are
+# silently dropped. Mirrors the P22 uat-tags-persist recipe-calls-recipe
+# pattern. Maintainer is the source of truth — Claude does NOT mark this passed.
+[group('uat')]
+[doc('Phase 23 — TAG-06 share-URL bookmarkability spot-check (operator pastes ?tag=X&tag=Y URL into a fresh tab, confirms chip strip renders active state on first paint)')]
+uat-chips-share-url:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 23 UAT: TAG-06 shareable URL round-trip"
+    echo ""
+    echo "Step 1: Build cronduit + reset dev DB."
+    just build
+    just db-reset
+    echo ""
+    echo "Step 2: Write a multi-tag fleet to .tmp/uat-chips-share-url.toml."
+    mkdir -p .tmp
+    cat > .tmp/uat-chips-share-url.toml <<'TOML_EOF'
+    [server]
+    bind = "127.0.0.1:8080"
+    timezone = "UTC"
+
+    [[jobs]]
+    name = "share-url-A"
+    schedule = "*/5 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup", "weekly"]
+
+    [[jobs]]
+    name = "share-url-B"
+    schedule = "*/7 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["backup"]
+
+    [[jobs]]
+    name = "share-url-C"
+    schedule = "*/11 * * * *"
+    command = "true"
+    use_defaults = false
+    timeout = "5m"
+    tags = ["weekly"]
+    TOML_EOF
+    echo ""
+    echo "Step 3: Validate the TOML up-front (must exit 0)."
+    just check-config .tmp/uat-chips-share-url.toml
+    echo ""
+    echo "Step 4: Start cronduit in ANOTHER terminal:"
+    echo "        cargo run -- run --config .tmp/uat-chips-share-url.toml --log-format text"
+    echo "        Wait for 'Listening on 127.0.0.1:8080'. Then PRESS ENTER here."
+    read
+    echo ""
+    echo "Step 5: In your browser, visit http://127.0.0.1:8080/."
+    echo "        Click the 'backup' chip. URL bar now reads /?tag=backup."
+    echo "        Click the 'weekly' chip. URL bar now reads /?tag=backup&tag=weekly"
+    echo "        (canonicalized alphabetical — same set, same shareable URL)."
+    echo ""
+    echo "Step 6: COPY the URL from your address bar. Open a fresh browser tab."
+    echo "        Paste the URL. Press enter."
+    echo ""
+    echo "Maintainer eyeball criteria — confirm each:"
+    echo "  (a) The fresh tab loads with BOTH chips already active (teal + bold) on first paint."
+    echo "  (b) The table shows ONLY share-url-A (the only job with both backup and weekly)."
+    echo "  (c) Reloading the page (cmd-R / F5) preserves the active state."
+    echo "  (d) Copying the URL again, opening yet another fresh tab, gives the SAME"
+    echo "      canonical URL (the active set is sorted alphabetically before push-url)."
+    echo ""
+    echo "Step 7 (stale-tag silent-drop edge case):"
+    echo "        Construct http://127.0.0.1:8080/?tag=backup&tag=ghost (a tag that"
+    echo "        does not exist in the fleet). Paste into a fresh tab. Confirm:"
+    echo "  - Page renders 200 OK (no 500)."
+    echo "  - Only the 'backup' chip renders active (no chip for 'ghost' — silently dropped)."
+    echo "  - Table shows share-url-A and share-url-B (the two jobs with the backup tag)."
+    echo ""
+    echo "The maintainer is the source of truth — Claude does NOT mark this passed."
+    read -rp "Press enter when (a) (b) (c) (d) and Step 7 all confirmed..."

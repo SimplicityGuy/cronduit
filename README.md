@@ -284,6 +284,36 @@ labels = { "${TEAM}" = "v" }
 
 See `examples/cronduit.toml` for three integration patterns: Watchtower exclusion in `[defaults]`, Traefik routing labels merged onto a per-job block, and a `use_defaults = false` job that establishes its own clean label set.
 
+### Tag Filter Chips
+
+Tag your jobs in TOML; the dashboard auto-renders filter chips for every distinct tag in your fleet. Click a chip to filter the dashboard to jobs carrying that tag. Multiple active chips compose with AND semantics — only jobs with ALL active tags render. The active set composes with the existing v1.0 name-filter via AND (jobs must match BOTH the name LIKE filter AND every active chip).
+
+Configure tags per job in `cronduit.toml`:
+
+```toml
+[[jobs]]
+name = "nightly-postgres-backup"
+schedule = "0 2 * * *"
+image = "postgres:16-alpine"
+command = ["pg_dumpall"]
+tags = ["backup", "postgres", "nightly"]
+```
+
+Tag rules (validated at config-load):
+
+- **Charset:** `^[a-z0-9][a-z0-9_-]{0,30}$` (ASCII lowercase + digits + `_` + `-`; 31-char max).
+- **Per-job cap:** 16 tags. Substring-collisions across the fleet are rejected too (`back` and `backup` cannot coexist).
+- **Per-job only:** tags are not supported in `[defaults]`. Reserved names (`cronduit`, `system`, `internal`) are rejected.
+
+Chip strip behavior:
+
+- **Empty state.** When no job has any tags, the chip strip is hidden entirely; the dashboard looks identical to v1.0/v1.1.
+- **Untagged-hidden.** When ANY chip is active, untagged jobs are hidden from the dashboard. Removing all active chips restores the unfiltered view.
+- **Bookmarkable URLs.** The active set is encoded as repeated `?tag=` query params (e.g., `/?tag=backup&tag=weekly`, sorted-canonical alphabetical). Copy the URL bar to share a filtered dashboard view; pasting that URL into a fresh tab loads the same chips active on first paint.
+- **Stale tags.** If you remove `tags = [...]` from a job, any bookmarked URL containing that tag silently drops the unknown tag (no error, no 500).
+
+Tags are also delivered in webhook payloads (the `tags` field of the `run_finalized` event — see [docs/WEBHOOKS.md](./docs/WEBHOOKS.md)). Tags are NOT exposed as Prometheus labels (cardinality discipline; same posture as exit codes).
+
 ### Job Types
 
 **Command job** -- runs a local shell command:

@@ -49,7 +49,7 @@
 - [x] **Phase 20: Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1** — HTTPS required for non-loopback/non-RFC1918, 3-attempt full-jitter exponential backoff (t=0/30s/300s × 0.8-1.2× rand), `webhook_deliveries` dead-letter table, 30s drain on shutdown, `cronduit_webhook_*` metric family; **cuts `v1.2.0-rc.1`** (completed 2026-05-01)
 - [ ] **Phase 21: Failure-Context UI Panel + Exit-Code Histogram Card — rc.2** — Inline collapsed-by-default panel on run-detail with 5 P1 signals (time deltas, image-digest delta, config-hash delta, duration-vs-p50, scheduler-fire-skew), 10-bucket exit-code histogram on job-detail with `stopped` as distinct bucket and exit `0` as separate stat; **cuts `v1.2.0-rc.2`**
 - [ ] **Phase 22: Job Tagging Schema + Validators** — `jobs.tags` JSON column, single-file additive migration, lowercase+trim normalization, charset regex `^[a-z0-9][a-z0-9_-]{0,30}$`, reserved-tag rejection, substring-collision check at config-load
-- [ ] **Phase 23: Job Tagging Dashboard Filter Chips — rc.3** — CSS-only chip components on dashboard, AND filter semantics, untagged-hidden when filter active, URL state via repeated `?tag=`, HTMX dashboard partial swap on chip toggle; **cuts `v1.2.0-rc.3`**
+- [x] **Phase 23: Job Tagging Dashboard Filter Chips — rc.3** — CSS-only chip components on dashboard, AND filter semantics, untagged-hidden when filter active, URL state via repeated `?tag=`, HTMX dashboard partial swap on chip toggle; **cuts `v1.2.0-rc.3`** (completed 2026-05-05)
 - [ ] **Phase 24: Milestone Close-Out — final `v1.2.0` ship** — UAT-driven rc loop completion, `THREAT_MODEL.md` Threat Model 5 (Webhook Outbound) + Threat Model 6 (Operator-supplied labels), REQUIREMENTS.md flips to Validated, `MILESTONES.md` v1.2 entry, README updates, `:latest` promoted to `:1.2.0` on both archs
 
 ## Phase Details
@@ -291,7 +291,36 @@ Plans:
   4. An operator can share a filtered dashboard URL like `/?tag=backup&tag=weekly` (repeated `?tag=` params); the chips render in the active state on page load — bookmarkable.
   5. An operator pushing the `v1.2.0-rc.3` tag sees the GHCR image published at `ghcr.io/SimplicityGuy/cronduit:v1.2.0-rc.3` on both architectures.
 
-**Plans**: TBD
+**Plans:** 8/8 plans complete
+
+Plans:
+**Wave 0**
+- [x] 23-01-PLAN.md — Wave-0 test scaffolding: tests/v12_tags_dashboard.rs + dashboard.rs::tests stubs (V-W0)
+
+**Wave 1** *(blocked on Wave 0 completion)*
+- [x] 23-02-PLAN.md — DB layer: DashboardJob.tags + get_dashboard_jobs SELECT/WHERE widening for AND-tag filter + caller passes &[] placeholder (TAG-07; V-01..V-04)
+
+**Wave 2** *(blocked on Wave 1 completion — file overlap on dashboard.rs)*
+- [x] 23-03-PLAN.md — Handler: axum_extra::Query swap + DashboardParams.tags + fleet-tag fold + active-set sort/dedup/intersect + view-models gain fleet_tags/active_tags (TAG-06; V-05, V-07)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 23-04-PLAN.md — CSS: cd-tag-chip-* family in @layer components + reduced-motion + print extensions; zero new tokens (TAG-06, TAG-08)
+- [x] 23-05-PLAN.md — Template: ChipView precompute + chip strip insert above filter row + sort-header href widening + poll hx-include widening + OOB swap composition (TAG-06, TAG-08; V-06, V-08..V-14)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [x] 23-06-PLAN.md — UAT: 3 just uat-chips-* recipes + README Tag Filter Chips subsection (TAG-06, TAG-07; V-15, V-16)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [x] 23-07-PLAN.md — HUMAN-UAT: 23-HUMAN-UAT.md autonomous=false maintainer plan with 6 scenarios (TAG-06, TAG-07, TAG-08)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [x] 23-08-PLAN.md — RC3-PREFLIGHT: 23-RC3-PREFLIGHT.md autonomous=false rc.3 cut runbook (mirrors P21 RC2-PREFLIGHT verbatim modulo rc.2→rc.3 + P21→P23 substitutions; V-17)
+
+**Cross-cutting constraints:**
+- No new external crates; `axum_extra` already in tree; `cargo tree -i openssl-sys` remains empty (D-23)
+- NO modifications to `release.yml` / `cliff.toml` / `docs/release-rc.md` (D-15 / D-16)
+- `Cargo.toml` stays at `1.2.0`; `-rc.3` is tag-only (D-22)
+
 **UI hint**: yes
 
 ### Phase 24: Milestone Close-Out — final `v1.2.0` ship
@@ -331,7 +360,7 @@ Plans:
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 10/11 | In Progress|  |
 | 22. Job Tagging Schema + Validators | 4/6 | In Progress|  |
-| 23. Job Tagging Dashboard Filter Chips — rc.3 | 0/— | Not started | — |
+| 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete   | 2026-05-05 |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
 
 ## v1.2 Build Order
