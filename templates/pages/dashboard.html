@@ -15,6 +15,39 @@
   </p>
 </div>
 {% else %}
+<!-- Phase 23 TAG-06: dashboard tag filter chip strip (UI-SPEC § Component
+     Inventory). Hidden via HTML5 `hidden` attribute when fleet has zero
+     tagged jobs (D-02 — mirrors cd-bulk-action-bar at L46). flex-wrap
+     reflows on narrow viewports (D-03). Class namespace cd-tag-chip-*
+     (D-04). Chip URLs are precomputed Rust-side as ChipView (Plan 23-05
+     Task 1 / RESEARCH § Pattern 5 Option A) — single source of truth for
+     `href` + `hx-get`. Sort-header widening (below) round-trips active
+     tags through both attributes (D-13); the 3s poll's hx-include
+     selector is widened to `[name='tag']` so polling preserves the
+     active filter set (D-12). -->
+<div id="cd-tag-chip-strip"
+     class="cd-tag-chip-strip"
+     {% if fleet_tags.is_empty() %}hidden{% endif %}
+     role="group"
+     aria-label="Filter jobs by tag">
+  {% for chip in chips %}
+  <a class="cd-tag-chip {% if chip.is_active %}cd-tag-chip--active{% else %}cd-tag-chip--inactive{% endif %}"
+     href="?{{ chip.href }}"
+     hx-get="?{{ chip.href }}"
+     hx-target="#job-table-body"
+     hx-swap="innerHTML"
+     hx-push-url="true"
+     aria-pressed="{% if chip.is_active %}true{% else %}false{% endif %}"
+     aria-label="{{ chip.aria_label }}">
+    {{ chip.tag }}
+  </a>
+  {% endfor %}
+
+  {% for tag in active_tags %}
+  <input type="hidden" name="tag" value="{{ tag }}">
+  {% endfor %}
+</div>
+
 <!-- Filter bar -->
 <div class="flex items-center gap-4 mb-6">
   <input
@@ -87,9 +120,9 @@
         </th>
         <!-- Name (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "name" %};color:var(--cd-text-accent){% endif %}">
-          <a href="?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}"
+          <a href="?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              class="no-underline hover:text-(--cd-text-accent){% if sort == "name" %} text-(--cd-text-accent){% else %} text-(--cd-text-secondary){% endif %}"
-             hx-get="/partials/job-table?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}"
+             hx-get="/partials/job-table?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              hx-target="#job-table-body"
              hx-push-url="true">
             Name{% if sort == "name" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
@@ -99,9 +132,9 @@
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Schedule</th>
         <!-- Next Fire (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "next_run" %};color:var(--cd-text-accent){% endif %}">
-          <a href="?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}"
+          <a href="?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              class="no-underline hover:text-(--cd-text-accent){% if sort == "next_run" %} text-(--cd-text-accent){% else %} text-(--cd-text-secondary){% endif %}"
-             hx-get="/partials/job-table?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}"
+             hx-get="/partials/job-table?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              hx-target="#job-table-body"
              hx-push-url="true">
             Next Fire{% if sort == "next_run" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
@@ -109,9 +142,9 @@
         </th>
         <!-- Status (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "status" %};color:var(--cd-text-accent){% endif %}">
-          <a href="?filter={{ filter }}&sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}"
+          <a href="?filter={{ filter }}&sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              class="no-underline hover:text-(--cd-text-accent){% if sort == "status" %} text-(--cd-text-accent){% else %} text-(--cd-text-secondary){% endif %}"
-             hx-get="/partials/job-table?filter={{ filter }}&sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}"
+             hx-get="/partials/job-table?filter={{ filter }}&sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              hx-target="#job-table-body"
              hx-push-url="true">
             Status{% if sort == "status" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
@@ -119,9 +152,9 @@
         </th>
         <!-- Last Run (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "last_run" %};color:var(--cd-text-accent){% endif %}">
-          <a href="?filter={{ filter }}&sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}"
+          <a href="?filter={{ filter }}&sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              class="no-underline hover:text-(--cd-text-accent){% if sort == "last_run" %} text-(--cd-text-accent){% else %} text-(--cd-text-secondary){% endif %}"
-             hx-get="/partials/job-table?filter={{ filter }}&sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}"
+             hx-get="/partials/job-table?filter={{ filter }}&sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              hx-target="#job-table-body"
              hx-push-url="true">
             Last Run{% if sort == "last_run" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
@@ -137,7 +170,7 @@
            hx-get="/partials/job-table"
            hx-trigger="every 3s"
            hx-swap="innerHTML"
-           hx-include="[name='filter'],[name='sort'],[name='order']">
+           hx-include="[name='filter'],[name='sort'],[name='order'],[name='tag']">
       {% include "partials/job_table.html" %}
     </tbody>
   </table>

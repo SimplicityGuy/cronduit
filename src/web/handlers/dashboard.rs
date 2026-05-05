@@ -73,21 +73,16 @@ struct DashboardPage {
     /// Phase 23 TAG-06: distinct fleet tag set, alphabetical, used to
     /// render one chip per tag in the chip strip. Empty when no job has
     /// any tags — chip strip is hidden via HTML5 `hidden` attribute (D-02).
-    /// `#[allow(dead_code)]` while Task 1 lands the struct in isolation;
-    /// Task 2 wires the template inserts and removes the per-field allow.
-    #[allow(dead_code)]
     fleet_tags: Vec<String>,
     /// Phase 23 TAG-06: post-toggle canonicalized active tag set
     /// (sorted, deduped, fleet-intersected). Drives chip active state +
     /// hidden `<input name="tag">` siblings + sort-header href tag suffix.
-    #[allow(dead_code)]
     active_tags: Vec<String>,
     /// Phase 23 D-11 / RESEARCH § Pattern 5 Option A: precomputed per-chip
     /// view models (one per fleet tag). Each `ChipView` carries `tag`,
     /// `is_active`, `href` (post-toggle URL query string, URL-encoded),
     /// and `aria_label`. Single source of truth for chip `href` + `hx-get`
     /// (DRY between the two attributes).
-    #[allow(dead_code)]
     chips: Vec<ChipView>,
     /// Phase 23 D-11: full-page render NEVER uses OOB swap. The field
     /// MUST exist on this struct (set to `false`) so that
@@ -97,7 +92,10 @@ struct DashboardPage {
     /// error. Askama 0.15 included templates have full access to the
     /// parent context — and ahead-of-time compilation REQUIRES every
     /// variable referenced in the included template to be reachable from
-    /// the parent struct.
+    /// the parent struct. `#[allow(dead_code)]` until Task 3 wires the
+    /// partial's OOB block; the field is structurally required at the
+    /// askama compile level immediately, but Rust dead_code only catches
+    /// it post-Task 3.
     #[allow(dead_code)]
     include_oob_chip_strip: bool,
 }
@@ -109,7 +107,7 @@ struct JobTablePartial {
     csrf_token: String,
     /// Phase 23 D-11: HTMX OOB swap — the partial response renders BOTH
     /// the chip strip (OOB-swapped into `#cd-tag-chip-strip` on the live
-    /// page) AND the table body (target swap).
+    /// page) AND the table body (target swap). Wired in Task 3.
     #[allow(dead_code)]
     fleet_tags: Vec<String>,
     #[allow(dead_code)]
