@@ -684,7 +684,9 @@ async fn oob_response_shape() {
          tags in HTMX response (expected: 1)."
     );
     // Belt-and-braces: the <template> opens BEFORE the chip strip and closes AFTER it.
-    let template_open = body.find("<template>").expect("<template> open in HTMX response");
+    let template_open = body
+        .find("<template>")
+        .expect("<template> open in HTMX response");
     let template_close = body
         .find("</template>")
         .expect("</template> close in HTMX response");
