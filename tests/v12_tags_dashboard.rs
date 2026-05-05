@@ -679,39 +679,43 @@ async fn sort_header_carries_active_tags() {
         .expect("body");
     let body = std::str::from_utf8(&bytes).expect("utf-8");
 
-    // Sort-header href carries the active tag — RESEARCH § Pitfall 3.
-    // The askama `urlencode` filter in the template emits `backup` verbatim
-    // (alphanumeric — no escape needed). All four sortable columns + both
-    // attributes (href + hx-get) per column = 8 occurrences of `&tag=backup`
-    // in the body. The chip strip itself uses Rust-side `form_urlencoded`
-    // which emits a single `tag=backup` (no leading `&`, since it's the
-    // first param after `filter` / `sort` / `order`).
-    let sort_header_carries = body.matches("&tag=backup").count();
-    assert!(
-        sort_header_carries >= 8,
-        "Sort-header anchors must carry `&tag=backup` in BOTH href and hx-get for ALL FOUR \
-         sortable columns (Name / Next Fire / Status / Last Run) — expected ≥ 8 occurrences \
-         of `&tag=backup` (4 columns × 2 attributes); got {sort_header_carries}. RESEARCH § \
-         Pitfall 3 regression lock."
-    );
-
-    // The body's Name sort anchor specifically must round-trip the tag.
-    // Anchor-uniquely identifiable substring: `sort=name&order=` appears
-    // ONLY in the Name sort header (twice: once in href, once in hx-get).
-    let name_sort_idx = body
-        .find("sort=name&order=")
-        .expect("Name sort anchor href");
-    // The active-tag suffix `&tag=backup` follows the href value (after
-    // `&order=desc` since URL is ?sort=name&order=desc → next click flips
-    // to asc; either way `&tag=backup` is appended in the active_tags
-    // for-loop). Scan ~200 chars after the sort=name marker.
-    let scan_end = (name_sort_idx + 300).min(body.len());
-    let name_block = &body[name_sort_idx..scan_end];
-    assert!(
-        name_block.contains("&tag=backup"),
-        "Name sort header anchor block must include `&tag=backup` in its href; window from \
-         `sort=name&order=` was: {name_block}"
-    );
+    // WR-02: Sort-header href + hx-get must each carry `&tag=backup`
+    // for EVERY sortable column. Replace the previous count-based
+    // assertion (`>= 8`) with per-column substring assertions so a
+    // future template edit that drops the tag suffix from one column
+    // is caught even when the chip strip's own URL adds extra
+    // `&tag=` occurrences elsewhere in the body. Each column anchor
+    // is uniquely identified by `sort=<col>&order=` (which appears
+    // twice per column — once in `href`, once in `hx-get`); we scan
+    // the ~400-char window starting at each occurrence to verify
+    // both attribute values include the tag suffix.
+    for col in [
+        "sort=name&order=",
+        "sort=next_run&order=",
+        "sort=status&order=",
+        "sort=last_run&order=",
+    ] {
+        let mut search_from = 0usize;
+        let mut hits = 0usize;
+        while let Some(rel) = body[search_from..].find(col) {
+            let idx = search_from + rel;
+            let scan_end = (idx + 400).min(body.len());
+            let block = &body[idx..scan_end];
+            assert!(
+                block.contains("&tag=backup"),
+                "column anchor `{col}` (occurrence #{n}) must include `&tag=backup` — \
+                 RESEARCH § Pitfall 3 regression lock; window: {block}",
+                n = hits + 1,
+            );
+            hits += 1;
+            search_from = idx + col.len();
+        }
+        assert!(
+            hits >= 2,
+            "each sortable column must render `{col}` at least twice (href + hx-get); \
+             got {hits} occurrence(s)"
+        );
+    }
 }
 
 // V-14: Hidden <input name="tag"> rendered for each active tag; poll hx-include lists [name='tag']
