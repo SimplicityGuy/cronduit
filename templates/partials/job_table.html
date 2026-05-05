@@ -12,7 +12,20 @@
    Critical: `hx-swap-oob="true"` lives on the OUTER WRAPPER ONLY (RESEARCH
    § Pitfall 2 — putting it on each chip <a> silently fails because chips
    lack unique IDs). Order matters per RESEARCH § Pitfall 5: OOB element
-   first in the response, then the table body. #}
+   first in the response, then the table body.
+
+   <template> wrap rationale (RESEARCH § Pitfall 1 follow-up — discovered
+   during 23-RC3 UAT, fixed in this hotfix): the swap target for both the
+   3s table-body poll and the chip-toggle action is `<tbody id="job-table-body">`.
+   The HTML5 parser's "in table body" insertion mode rejects non-`<tr>`
+   children — when HTMX innerHTMLs a response containing `<div>` (this
+   OOB block) followed by `<tr>`s into a `<tbody>`, the parser foster-parents
+   the `<div>` and strands the `<tr>` cell contents outside their row
+   wrappers, garbling the entire table. `<template>` is parser-permissive
+   in any context; HTMX 1.9+ unwraps `<template>`-wrapped OOB elements
+   before the foster-parenting parser sees them. See
+   https://htmx.org/docs/#oob_swaps "Troublesome Tables" callout. #}
+<template>
 <div id="cd-tag-chip-strip"
      class="cd-tag-chip-strip"
      {% if fleet_tags.is_empty() %}hidden{% endif %}
@@ -36,6 +49,7 @@
   <input type="hidden" name="tag" value="{{ tag }}">
   {% endfor %}
 </div>
+</template>
 {% endif %}
 {% for job in jobs %}
 <tr class="hover:bg-(--cd-bg-hover) border-b border-(--cd-border-subtle)">
