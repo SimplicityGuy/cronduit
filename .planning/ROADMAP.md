@@ -291,14 +291,14 @@ Plans:
   4. An operator can share a filtered dashboard URL like `/?tag=backup&tag=weekly` (repeated `?tag=` params); the chips render in the active state on page load — bookmarkable.
   5. An operator pushing the `v1.2.0-rc.3` tag sees the GHCR image published at `ghcr.io/SimplicityGuy/cronduit:v1.2.0-rc.3` on both architectures.
 
-**Plans:** 1/8 plans executed
+**Plans:** 2/8 plans executed
 
 Plans:
 **Wave 0**
 - [x] 23-01-PLAN.md — Wave-0 test scaffolding: tests/v12_tags_dashboard.rs + dashboard.rs::tests stubs (V-W0)
 
 **Wave 1** *(blocked on Wave 0 completion)*
-- [ ] 23-02-PLAN.md — DB layer: DashboardJob.tags + get_dashboard_jobs SELECT/WHERE widening for AND-tag filter + caller passes &[] placeholder (TAG-07; V-01..V-04)
+- [x] 23-02-PLAN.md — DB layer: DashboardJob.tags + get_dashboard_jobs SELECT/WHERE widening for AND-tag filter + caller passes &[] placeholder (TAG-07; V-01..V-04)
 
 **Wave 2** *(blocked on Wave 1 completion — file overlap on dashboard.rs)*
 - [ ] 23-03-PLAN.md — Handler: axum_extra::Query swap + DashboardParams.tags + fleet-tag fold + active-set sort/dedup/intersect + view-models gain fleet_tags/active_tags (TAG-06; V-05, V-07)
@@ -360,7 +360,7 @@ Plans:
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 10/11 | In Progress|  |
 | 22. Job Tagging Schema + Validators | 4/6 | In Progress|  |
-| 23. Job Tagging Dashboard Filter Chips — rc.3 | 1/8 | In Progress|  |
+| 23. Job Tagging Dashboard Filter Chips — rc.3 | 2/8 | In Progress|  |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
 
 ## v1.2 Build Order

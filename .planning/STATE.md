@@ -4,14 +4,14 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 23 UI-SPEC approved
-last_updated: "2026-05-05T01:53:06.656Z"
+last_updated: "2026-05-05T02:07:06.062Z"
 last_activity: 2026-05-05
 progress:
   total_phases: 10
   completed_phases: 8
   total_plans: 70
-  completed_plans: 63
-  percent: 90
+  completed_plans: 64
+  percent: 91
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 23 (job-tagging-dashboard-filter-chips-rc-3) — EXECUTING
-Plan: 2 of 8
+Plan: 3 of 8
 Status: Ready to execute
 Last activity: 2026-05-05
 
-Progress: [█████████░] 90%
+Progress: [█████████░] 91%
 
 ## v1.2 Roadmap Summary
 
@@ -142,6 +142,7 @@ All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 - [Phase ?]: [Phase 21-06]: FCTX panel + Exit Histogram template inserts + 16+28 cd-* CSS classes landed in @layer components — askama logic-free contract honored (template substitutes {{ value }} verbatim); print-mode rule + reduced-motion extension applied; outer chrome on cd-exit-card via inline style matching Duration sibling (no near-duplicate class); .cd-tooltip (Phase 13) reused with new .cd-exit-bar:hover anchor selector; #[allow(dead_code)] removed from page-level fields now that templates consume them; Tailwind rebuild via build.rs regenerates assets/static/app.css alongside source
 - [Phase ?]: Plan 22-04: WH-09 closed end-to-end — WebhookPayload.tags reads run.tags.clone() (D-05); old structural-breadcrumb test deleted (D-06.5)
 - [Phase ?]: [Phase 23-01]: Wave-0 test scaffolding pattern landed — 12 named #[tokio::test] async functions in tests/v12_tags_dashboard.rs (V-01..V-04, V-06, V-08..V-14) + 2 named in src/web/handlers/dashboard.rs::tests (V-05, V-07), all in todo!() state. Wave 1-3 plans now have a stable, compiling test surface to land impls against.
+- [Phase 23]: Plan 23-02 — DB layer accepts active_tags: &[String]; both backend arms compose variadic AND-chain via parameterized binds; conditional tags != '[]' clause gates TAG-07 untagged-hidden semantics; V-01..V-04 GREEN
 
 ### Open questions
 
@@ -180,7 +181,7 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-05T01:51:51.319Z
+Last session: 2026-05-05T02:05:40.750Z
 Stopped at: Phase 23 UI-SPEC approved
 Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
 
