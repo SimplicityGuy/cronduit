@@ -819,6 +819,31 @@ pub struct Paginated<T> {
     pub total: i64,
 }
 
+/// Phase 23 CR-01: escape LIKE metacharacters in a tag value before binding.
+///
+/// The Phase 22 tag charset (`^[a-z0-9][a-z0-9_-]{0,30}$`) admits `_`, which
+/// is a single-character wildcard in both SQLite and PostgreSQL `LIKE`. The
+/// dashboard tag-filter SQL is `tags LIKE ?` against a JSON-quote-anchored
+/// pattern (`%"<tag>"%`). Without escaping, `?tag=back_up` would also match
+/// rows whose `tags` JSON contains `"back-up"` / `"backaup"` / etc., silently
+/// widening the operator-supplied AND-filter (the P22 TAG-05 substring-
+/// collision validator runs `str::contains`, which is purely literal and
+/// does not catch wildcard equivalence). The two valid LIKE metacharacters
+/// in standard SQL are `%` (zero-or-more chars) and `_` (one char); `\` is
+/// reserved for our explicit ESCAPE clause. The `LIKE ... ESCAPE '\'` form
+/// is portable to both backends (SQLite documents it; PostgreSQL has an
+/// implicit `\` escape but accepts the explicit form too).
+fn escape_like(t: &str) -> String {
+    let mut out = String::with_capacity(t.len() + 4);
+    for c in t.chars() {
+        if c == '\\' || c == '%' || c == '_' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Fetch enabled jobs with their most recent run status for the dashboard.
 ///
 /// T-03-04: Filter uses parameterized LIKE query. Sort uses whitelist match.
@@ -845,17 +870,20 @@ pub async fn get_dashboard_jobs(
     let has_filter = filter.is_some_and(|f| !f.is_empty());
     let tag_bind_start = if has_filter { 2 } else { 1 };
 
-    // Phase 23 D-09: variadic AND-chain. The COUNT comes from
+    // Phase 23 D-09 / CR-01: variadic AND-chain. The COUNT comes from
     // active_tags.len() — server-controlled (handler intersects against
     // fleet_tags before passing). Bind values flow through `bind()` (never
     // string-interpolated). P22 TAG-05 substring-collision validator at
-    // config-load prevents `back`/`backup` LIKE ambiguity.
+    // config-load prevents `back`/`backup` LIKE ambiguity, and the explicit
+    // `ESCAPE '\\'` clause + `escape_like` at bind time prevents the `_`-as-
+    // wildcard cross-match (CR-01: `back_up` vs `back-up` / `backaup`). Both
+    // SQLite and Postgres accept the explicit ESCAPE form.
     let tag_predicates_sqlite: String = (0..active_tags.len())
-        .map(|i| format!("AND tags LIKE ?{}", tag_bind_start + i))
+        .map(|i| format!("AND tags LIKE ?{} ESCAPE '\\'", tag_bind_start + i))
         .collect::<Vec<_>>()
         .join(" ");
     let tag_predicates_postgres: String = (0..active_tags.len())
-        .map(|i| format!("AND tags LIKE ${}", tag_bind_start + i))
+        .map(|i| format!("AND tags LIKE ${} ESCAPE '\\'", tag_bind_start + i))
         .collect::<Vec<_>>()
         .join(" ");
 
@@ -905,12 +933,13 @@ pub async fn get_dashboard_jobs(
                     q = q.bind(pattern);
                 }
                 for t in active_tags {
-                    // Phase 23 D-09: wrap in JSON-quote anchors so LIKE matches the
-                    // JSON-array element exactly. P22 TAG-05 substring-collision
-                    // validator at config-load prevents `back`/`backup` ambiguity, so
-                    // this LIKE is structurally safe (RESEARCH Pattern 1; never use
-                    // bare `tags LIKE '%backup%'` — substring false-positive risk).
-                    q = q.bind(format!(r#"%"{}"%"#, t));
+                    // Phase 23 D-09 / CR-01: wrap in JSON-quote anchors so LIKE matches the
+                    // JSON-array element exactly. P22 TAG-05 substring-collision validator
+                    // at config-load prevents `back`/`backup` ambiguity; `escape_like` +
+                    // the explicit `ESCAPE '\\'` clause prevent the `_`-as-wildcard
+                    // cross-match (RESEARCH Pattern 1; never use bare `tags LIKE
+                    // '%backup%'` — substring false-positive risk).
+                    q = q.bind(format!(r#"%"{}"%"#, escape_like(t)));
                 }
                 q.fetch_all(p).await?
             };
@@ -974,10 +1003,12 @@ pub async fn get_dashboard_jobs(
                     q = q.bind(pattern);
                 }
                 for t in active_tags {
-                    // Phase 23 D-09: JSON-quote anchored bind value (parity with
+                    // Phase 23 D-09 / CR-01: JSON-quote anchored bind value (parity with
                     // sqlite arm). Substring-collision is structurally prevented by
-                    // P22 TAG-05 validator at config-load.
-                    q = q.bind(format!(r#"%"{}"%"#, t));
+                    // P22 TAG-05 validator at config-load; LIKE-wildcard cross-match
+                    // (`back_up` vs `back-up`) is prevented by `escape_like` paired with
+                    // the explicit `ESCAPE '\\'` clause in the predicate.
+                    q = q.bind(format!(r#"%"{}"%"#, escape_like(t)));
                 }
                 q.fetch_all(p).await?
             };

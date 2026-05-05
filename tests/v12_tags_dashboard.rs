@@ -320,6 +320,34 @@ async fn and_filter_two_tags() {
     );
 }
 
+// CR-01 regression: SQL LIKE wildcard `_` in tag names must NOT cross-match
+// adjacent fleet tags. The Phase 22 charset (`^[a-z0-9][a-z0-9_-]{0,30}$`)
+// admits underscore; without the `escape_like` + `ESCAPE '\\'` pair, the
+// predicate `tags LIKE '%"back_up"%'` would match a row whose tags JSON
+// contains `"back-up"` (or `"backaup"`) because `_` is a single-char
+// wildcard in standard SQL LIKE. TAG-05's substring-collision validator
+// uses `str::contains` and is purely literal — it does NOT catch this
+// equivalence — so the regression has to live at the SQL boundary.
+#[tokio::test]
+async fn underscore_tag_does_not_match_dash_or_other_chars() {
+    let (_app, pool) = build_test_app().await;
+    seed_job_with_tags(&pool, "u", "*/5 * * * *", &["back_up"]).await;
+    seed_job_with_tags(&pool, "d", "*/5 * * * *", &["back-up"]).await;
+    seed_job_with_tags(&pool, "a", "*/5 * * * *", &["backaup"]).await;
+
+    let active = vec!["back_up".to_string()];
+    let rows = queries::get_dashboard_jobs(&pool, None, "name", "asc", &active)
+        .await
+        .expect("get_dashboard_jobs");
+    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["u"],
+        "?tag=back_up MUST NOT match `back-up` or `backaup` — `_` is a single-char SQL LIKE \
+         wildcard and the bind site MUST escape it (CR-01). Got: {names:?}"
+    );
+}
+
 // V-02: Untagged jobs hidden when active set non-empty
 #[tokio::test]
 async fn untagged_hidden_when_filter_active() {
