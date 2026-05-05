@@ -1,3 +1,42 @@
+{% if include_oob_chip_strip %}
+{# Phase 23 D-11 / RESEARCH § Pattern 4: OOB swap chip strip wrapper.
+   Emitted ONLY when this partial is the HTMX response body for a chip
+   toggle (`include_oob_chip_strip == true`, set on `JobTablePartial`).
+   When this partial is `{% include %}`d from `templates/pages/dashboard.html`
+   inside the `<tbody id="job-table-body">` for the full-page render, the
+   `DashboardPage` view-model sets `include_oob_chip_strip == false`, so
+   this block is skipped — the chip strip then renders in its natural
+   body position via `dashboard.html` itself. The full-page template would
+   otherwise get a duplicate (inline + OOB) chip strip.
+
+   Critical: `hx-swap-oob="true"` lives on the OUTER WRAPPER ONLY (RESEARCH
+   § Pitfall 2 — putting it on each chip <a> silently fails because chips
+   lack unique IDs). Order matters per RESEARCH § Pitfall 5: OOB element
+   first in the response, then the table body. #}
+<div id="cd-tag-chip-strip"
+     class="cd-tag-chip-strip"
+     {% if fleet_tags.is_empty() %}hidden{% endif %}
+     hx-swap-oob="true"
+     role="group"
+     aria-label="Filter jobs by tag">
+  {% for chip in chips %}
+  <a class="cd-tag-chip {% if chip.is_active %}cd-tag-chip--active{% else %}cd-tag-chip--inactive{% endif %}"
+     href="?{{ chip.href }}"
+     hx-get="?{{ chip.href }}"
+     hx-target="#job-table-body"
+     hx-swap="innerHTML"
+     hx-push-url="true"
+     aria-pressed="{% if chip.is_active %}true{% else %}false{% endif %}"
+     aria-label="{{ chip.aria_label }}">
+    {{ chip.tag }}
+  </a>
+  {% endfor %}
+
+  {% for tag in active_tags %}
+  <input type="hidden" name="tag" value="{{ tag }}">
+  {% endfor %}
+</div>
+{% endif %}
 {% for job in jobs %}
 <tr class="hover:bg-(--cd-bg-hover) border-b border-(--cd-border-subtle)">
   <td class="py-2 px-4" style="width:44px">

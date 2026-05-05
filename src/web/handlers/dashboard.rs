@@ -92,11 +92,7 @@ struct DashboardPage {
     /// error. Askama 0.15 included templates have full access to the
     /// parent context — and ahead-of-time compilation REQUIRES every
     /// variable referenced in the included template to be reachable from
-    /// the parent struct. `#[allow(dead_code)]` until Task 3 wires the
-    /// partial's OOB block; the field is structurally required at the
-    /// askama compile level immediately, but Rust dead_code only catches
-    /// it post-Task 3.
-    #[allow(dead_code)]
+    /// the parent struct.
     include_oob_chip_strip: bool,
 }
 
@@ -107,20 +103,16 @@ struct JobTablePartial {
     csrf_token: String,
     /// Phase 23 D-11: HTMX OOB swap — the partial response renders BOTH
     /// the chip strip (OOB-swapped into `#cd-tag-chip-strip` on the live
-    /// page) AND the table body (target swap). Wired in Task 3.
-    #[allow(dead_code)]
+    /// page) AND the table body (target swap).
     fleet_tags: Vec<String>,
-    #[allow(dead_code)]
     active_tags: Vec<String>,
     /// Phase 23: precomputed chip views (one per fleet tag).
-    #[allow(dead_code)]
     chips: Vec<ChipView>,
     /// Phase 23 D-11: when `true`, the partial template renders the
     /// chip strip with `hx-swap-oob="true"` on the OUTER wrapper FIRST,
     /// followed by the table body. The OOB element targets the live
     /// `#cd-tag-chip-strip` on the page for in-place state replacement.
     /// HTMX path sets this to `true`; full-page path sets to `false`.
-    #[allow(dead_code)]
     include_oob_chip_strip: bool,
 }
 

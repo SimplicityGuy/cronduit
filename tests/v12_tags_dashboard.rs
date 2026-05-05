@@ -403,11 +403,57 @@ async fn and_with_name_filter() {
 // V-06: Stale tag (not in fleet_tags) silent-dropped at handler
 #[tokio::test]
 async fn stale_tag_silent_drop() {
-    todo!(
-        "Wave 2: seed A=[\"backup\"] → GET /?tag=backup&tag=ghost → body renders only \
-         `backup` chip; `ghost` does not appear; A is rendered (not filtered out by the \
-         unknown tag); response is 200 OK"
-    )
+    let (app, pool) = build_test_app().await;
+    seed_job_with_tags(&pool, "alpha", "*/5 * * * *", &["backup"]).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/?tag=backup&tag=ghost")
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "stale tag must NOT cause 5xx; the handler intersects ?tag= with fleet_tags before SQL"
+    );
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let body = std::str::from_utf8(&bytes).expect("utf-8");
+
+    // backup chip is rendered (active — single fleet tag in active set after intersect).
+    assert!(
+        body.contains(">\n    backup\n  </a>") || body.contains("> backup <"),
+        "backup chip MUST render — it is in the fleet AND in the active URL set"
+    );
+    // ghost chip is NOT rendered — it is in the URL but NOT in the fleet
+    // (silent drop happens at the `active_tags.retain(|t| fleet_tags.contains(t))`
+    // step in the handler — Plan 23-03 / RESEARCH § Pitfall 4 / T-23-03-01).
+    assert!(
+        !body.contains(">\n    ghost\n  </a>"),
+        "ghost chip MUST NOT render — stale URL tag is silently dropped before reaching the \
+         template (handler-side intersect with fleet_tags)"
+    );
+    assert!(
+        !body.contains("> ghost <"),
+        "ghost chip text MUST NOT appear anywhere — silent drop end-to-end"
+    );
+    // The seeded `alpha` job is still in the table — active filter is just
+    // `backup` after the silent drop, and alpha has tags=["backup"], so it
+    // matches the AND filter. Critical: a stale tag must NOT cause SQL to
+    // produce zero rows (which would happen if `ghost` reached the SQL
+    // filter — `tags LIKE '%"ghost"%'` would match nothing).
+    assert!(
+        body.contains("alpha"),
+        "alpha row MUST render — active set after silent drop is just [`backup`]; alpha's \
+         tags=[`backup`] satisfies the AND filter. If ghost reached SQL, NO rows would match \
+         and the table body would be empty (this is the regression V-06 prevents)."
+    );
 }
 
 // V-11: Chip element has correct CSS classes; no inline JS introduced
@@ -469,10 +515,67 @@ async fn css_only_chip_no_inline_js() {
 // V-12: HTMX response renders BOTH `#cd-tag-chip-strip[hx-swap-oob="true"]` AND `#job-table-body` content
 #[tokio::test]
 async fn oob_response_shape() {
-    todo!(
-        "Wave 2: GET /?tag=backup with HX-Request: true header → body contains \
-         id=\"cd-tag-chip-strip\" AND hx-swap-oob=\"true\" AND the table-body rows"
-    )
+    let (app, pool) = build_test_app().await;
+    seed_job_with_tags(&pool, "alpha", "*/5 * * * *", &["backup"]).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/?tag=backup")
+                .header("HX-Request", "true")
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let body = std::str::from_utf8(&bytes).expect("utf-8");
+
+    // The OOB chip strip wrapper is present in the HTMX response.
+    assert!(
+        body.contains("id=\"cd-tag-chip-strip\""),
+        "OOB chip strip wrapper id MUST be present in the HTMX response so HTMX can locate \
+         the live `#cd-tag-chip-strip` on the page and replace it (RESEARCH § Pattern 4)"
+    );
+    assert!(
+        body.contains("hx-swap-oob=\"true\""),
+        "OOB chip strip wrapper MUST carry hx-swap-oob=\"true\""
+    );
+
+    // The table body (existing job_table.html markup for `alpha`) follows.
+    assert!(
+        body.contains("alpha"),
+        "table body must include the seeded `alpha` job's row"
+    );
+
+    // RESEARCH § Pitfall 5 regression lock: chip strip appears BEFORE
+    // table body in the response. HTMX 2.0 OOB elements MUST come at the
+    // top of the response body so the swap engine processes them before
+    // the target swap.
+    let chip_pos = body
+        .find("cd-tag-chip-strip")
+        .expect("chip strip in HTMX response");
+    let alpha_pos = body.find("alpha").expect("alpha row in response");
+    assert!(
+        chip_pos < alpha_pos,
+        "OOB chip strip MUST appear BEFORE table body in the HTMX response (chip_pos={chip_pos}, \
+         alpha_pos={alpha_pos}) — RESEARCH § Pitfall 5"
+    );
+
+    // RESEARCH § Pitfall 2 regression lock: hx-swap-oob is on the WRAPPER
+    // ONLY, not on each chip. Putting it on each chip <a> silently fails
+    // because chips lack unique IDs.
+    let oob_count = body.matches("hx-swap-oob").count();
+    assert_eq!(
+        oob_count, 1,
+        "hx-swap-oob MUST appear EXACTLY ONCE in the HTMX response (on the chip strip wrapper). \
+         Putting it on each chip <a> is the silent-failure mode in RESEARCH § Pitfall 2. Got: \
+         {oob_count} occurrences."
+    );
 }
 
 // V-13: Sort-header href + hx-get both contain &tag=... for every active tag
