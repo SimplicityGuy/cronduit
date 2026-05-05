@@ -6,7 +6,7 @@ autonomous: false
 maintainer_validated: true
 created: 2026-05-04
 requirements: [TAG-06, TAG-07, TAG-08]
-status: pending
+status: passed
 ---
 
 # Phase 23 — Maintainer UAT Runbook
@@ -46,7 +46,7 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 1 passed (chip strip renders alphabetically; empty-state hides the strip).
+- [x] Scenario 1 passed (chip strip renders alphabetically; empty-state hides the strip). — maintainer-validated 2026-05-05
 
 ## Scenario 2 — AND-filter + untagged-hidden + name-filter composition (TAG-06 + TAG-07 / D-17 step 2)
 
@@ -70,7 +70,7 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 2 passed (AND across chips, AND with name-filter, untagged-hidden when filter active).
+- [x] Scenario 2 passed (AND across chips, AND with name-filter, untagged-hidden when filter active). — maintainer-validated 2026-05-05
 
 ## Scenario 3 — Shareable URL round-trip + stale-tag silent-drop (TAG-06 / D-17 step 3)
 
@@ -92,7 +92,7 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 3 passed (shareable URL round-trips; stale tags silently dropped).
+- [x] Scenario 3 passed (shareable URL round-trips; stale tags silently dropped). — maintainer-validated 2026-05-05
 
 ## Scenario 4 — Mobile viewport reflow (TAG-06 + UI-SPEC § Layout / D-17 mobile)
 
@@ -115,7 +115,7 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 4 passed (chip strip reflows cleanly on mobile; touch targets remain ≥ 44px; active state visible).
+- [x] Scenario 4 passed (chip strip reflows cleanly on mobile; touch targets remain ≥ 44px; active state visible). — maintainer-validated 2026-05-05
 
 ## Scenario 5 — Light-mode parity (TAG-06 + UI-SPEC § Color / D-17 light mode)
 
@@ -139,7 +139,7 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 5 passed (light mode renders chip strip with correct token mapping; no hardcoded dark-mode colors leak through).
+- [x] Scenario 5 passed (light mode renders chip strip with correct token mapping; no hardcoded dark-mode colors leak through). — maintainer-validated 2026-05-05
 
 ## Scenario 6 — Keyboard navigation + screen-reader narration (TAG-06 + UI-SPEC § Accessibility / D-17 keyboard + screen-reader)
 
@@ -167,13 +167,13 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 6 passed (keyboard navigation, screen-reader narration including aria-pressed, focus rings, three-channel active encoding, and touch targets all conform to UI-SPEC § Accessibility Contract).
+- [x] Scenario 6 passed (keyboard navigation, screen-reader narration including aria-pressed, focus rings, three-channel active encoding, and touch targets all conform to UI-SPEC § Accessibility Contract). — maintainer-validated 2026-05-05
 
 ## Final sign-off
 
 When all six scenarios above are checked:
 
-- [ ] **Maintainer:** I have run all six scenarios on a clean working tree against a feature branch with Plans 23-01 through 23-06 applied. Each scenario produced the expected operator-observable behavior. Mobile reflow, light-mode parity, keyboard navigation including Enter/Space activation, screen-reader narration with `aria-pressed` state, and three-channel active state encoding (border + label color + bold weight) are all correct. Touch targets are ≥ 44px (WCAG 2.2 AAA). Phase 23 is UAT-complete and ready for the rc.3 cut.
+- [x] **Maintainer:** I have run all six scenarios on a clean working tree against a feature branch with Plans 23-01 through 23-06 applied. Each scenario produced the expected operator-observable behavior. Mobile reflow, light-mode parity, keyboard navigation including Enter/Space activation, screen-reader narration with `aria-pressed` state, and three-channel active state encoding (border + label color + bold weight) are all correct. Touch targets are ≥ 44px (WCAG 2.2 AAA). Phase 23 is UAT-complete and ready for the rc.3 cut.
 
-Maintainer name: ________
-Date: ________
+Maintainer name: Robert Wlodarczyk
+Date: 2026-05-05
