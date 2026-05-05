@@ -2,8 +2,14 @@
 
 use askama::Template;
 use askama_web::WebTemplateExt;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::response::IntoResponse;
+// Phase 23 TAG-06: `axum_extra::extract::Query` (uses `serde_html_form`
+// internally) is the LOAD-BEARING extractor swap — `axum::extract::Query`
+// silently collapses repeated `?tag=foo&tag=bar` keys to the last value,
+// which is the EXACT failure mode TAG-06 forbids (RESEARCH § Pitfall 1).
+// V-05 (`active_tags_parsed_from_repeated_query`) is the regression assertion.
+use axum_extra::extract::Query;
 use axum_htmx::HxRequest;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
@@ -28,6 +34,20 @@ pub struct DashboardParams {
     pub sort: String,
     #[serde(default = "default_order")]
     pub order: String,
+    /// Phase 23 TAG-06: zero-or-more active tag filters from `?tag=foo&tag=bar`.
+    /// URL key is singular (`tag`), Rust field is plural (`tags`) so the URL
+    /// form reads `?tag=backup&tag=weekly` per the TAG-06 lock. Deserialized via
+    /// `axum_extra::extract::Query<DashboardParams>` (uses `serde_html_form`
+    /// under the hood — supports repeated keys). `axum::extract::Query` would
+    /// silently collapse duplicates to one — that is the EXACT failure mode
+    /// TAG-06 forbids (RESEARCH § Pitfall 1).
+    ///
+    /// **NEVER trust this field for SQL composition** without first
+    /// intersecting with the fleet-tag fold (the handler enforces this per
+    /// UI-SPEC § Stale-tag URL handling — silent server-side drop). The
+    /// `dashboard()` handler is the single owner of that intersection.
+    #[serde(default, rename = "tag")]
+    pub tags: Vec<String>,
 }
 
 fn default_sort() -> String {
@@ -402,16 +422,33 @@ mod tests {
     // via axum_extra::Query. axum::Query would silently collapse duplicates to one — this
     // is the EXACT failure mode TAG-06 forbids (RESEARCH § Pitfall 1).
     //
-    // Wave-0 scaffold: body is `todo!()` until Wave 1 lands the
-    // `axum_extra::extract::Query<DashboardParams>` swap and the
-    // `#[serde(default, rename = "tag")] pub tags: Vec<String>` field.
+    // We use `Query::try_from_uri` (axum-extra 0.12 public API at
+    // `axum_extra::extract::query::Query::try_from_uri`) which calls
+    // `serde_html_form::from_str` on the URI's query string — the same path
+    // `from_request_parts` takes when the extractor runs in a real request.
+    // Testing this directly avoids the axum `FromRequestParts<S>` state-type
+    // dance and exercises the load-bearing property: a `Vec<String>` field
+    // receives every occurrence of a repeated `?tag=` key.
     #[tokio::test]
     async fn active_tags_parsed_from_repeated_query() {
-        todo!(
-            "Wave 1: build a test request `?tag=backup&tag=weekly`, run it through \
-             axum_extra::extract::Query<DashboardParams>, assert params.tags == \
-             vec![\"backup\".into(), \"weekly\".into()]"
-        )
+        use axum::http::Uri;
+        use axum_extra::extract::Query as AxumExtraQuery;
+
+        let uri: Uri = "/?tag=backup&tag=weekly"
+            .parse()
+            .expect("parse test URI with repeated tag keys");
+
+        let AxumExtraQuery(params): AxumExtraQuery<DashboardParams> =
+            AxumExtraQuery::try_from_uri(&uri)
+                .expect("axum_extra::Query::try_from_uri deserializes repeated keys");
+
+        assert_eq!(
+            params.tags,
+            vec!["backup".to_string(), "weekly".to_string()],
+            "DashboardParams MUST deserialize repeated `tag=` keys into a 2-element \
+             Vec<String>. axum::Query would collapse to vec![\"weekly\"] — that is the \
+             regression this test prevents (RESEARCH § Pitfall 1; TAG-06 lock)."
+        );
     }
 
     // V-07 (unit / handler): distinct-tag fold from Vec<DashboardJob> produces
