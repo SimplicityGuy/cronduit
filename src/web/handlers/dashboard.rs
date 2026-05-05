@@ -465,8 +465,7 @@ pub async fn dashboard(
     // `backup` and silently drop. Canonicalizing case here matches the
     // operator's intent (chip strip is case-insensitive on input,
     // case-preserving lowercase on output).
-    let mut active_tags: Vec<String> =
-        params.tags.iter().map(|t| t.to_lowercase()).collect();
+    let mut active_tags: Vec<String> = params.tags.iter().map(|t| t.to_lowercase()).collect();
     active_tags.sort();
     active_tags.dedup();
     active_tags.retain(|t| fleet_tags.contains(t));

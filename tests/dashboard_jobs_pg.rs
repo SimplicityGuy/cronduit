@@ -54,7 +54,8 @@ async fn get_dashboard_jobs_postgres_smoke() {
     );
 
     // Filtered path — exercises the buggy line 615 (pre-fix: errors).
-    let result_filtered = queries::get_dashboard_jobs(&pool, Some("dash"), "name", "asc", &[]).await;
+    let result_filtered =
+        queries::get_dashboard_jobs(&pool, Some("dash"), "name", "asc", &[]).await;
     assert!(
         result_filtered.is_ok(),
         "get_dashboard_jobs (filtered) must succeed on Postgres; got: {:?}",
