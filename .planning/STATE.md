@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
-stopped_at: Phase 23 UI-SPEC approved
-last_updated: "2026-05-05T02:54:50.958Z"
+stopped_at: Completed 23-06-PLAN.md (Wave 4 — UAT recipes + README addition)
+last_updated: "2026-05-05T03:02:31.915Z"
 last_activity: 2026-05-05
 progress:
   total_phases: 10
   completed_phases: 8
   total_plans: 70
-  completed_plans: 67
-  percent: 96
+  completed_plans: 68
+  percent: 97
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 23 (job-tagging-dashboard-filter-chips-rc-3) — EXECUTING
-Plan: 5 of 8
+Plan: 6 of 8
 Status: Ready to execute
 Last activity: 2026-05-05
 
-Progress: [██████████] 96%
+Progress: [██████████] 97%
 
 ## v1.2 Roadmap Summary
 
@@ -148,6 +148,7 @@ All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 - [Phase ?]: Plan 23-05: Dual-struct field placement of include_oob_chip_strip driven by askama 0.15 include-scope rule — DashboardPage carries the field set false (chip strip in natural body position); JobTablePartial carries it set true (OOB prefix renders in HTMX response). Single source of struct definitions for Phase 23.
 - [Phase ?]: Plan 23-05: url::form_urlencoded::Serializer for chip href encoding (NOT a new urlencoding/percent_encoding direct dep) — symmetric with axum_extra::Query (serde_html_form) on the way back; the url crate v2.5.8 is already a direct dep used by SSRF guard + DB URL parsing. Zero new external crates.
 - [Phase ?]: Plan 23-05: OOB block lives in templates/partials/job_table.html (Option A from PATTERNS) gated on include_oob_chip_strip — single template carries three behaviors (full-page include with flag false, HTMX response body with flag true). Avoids dual-Template-derive or response-composer complexity.
+- [Phase ?]: Plan 23-06: three uat-chips-* just recipes mirror P22 uat-tags-* recipe-calls-recipe pattern verbatim (each writes synthetic-tag TOML to .tmp/uat-chips-*.toml, chains build/db-reset/check-config, gates with read prompts, ends with maintainer-validates ritual); README ### Tag Filter Chips subsection slots between ### Labels (P17) and ### Job Types under ## Configuration — text-only, zero mermaid (UI-SPEC § Decisions Rationale recommends short subsection).
 
 ### Open questions
 
@@ -186,8 +187,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-05T02:54:50.945Z
-Stopped at: Phase 23 UI-SPEC approved
-Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
+Last session: 2026-05-05T03:02:31.909Z
+Stopped at: Completed 23-06-PLAN.md (Wave 4 — UAT recipes + README addition)
+Resume command: `/gsd-execute-phase 23` to launch Plan 23-07 (HUMAN-UAT runbook, autonomous=false)
 
-**Planned Phase:** 20 — Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1 (HTTPS-required for non-loopback/non-RFC1918, SSRF guards, retry schedule t=0/30s/300s with full-jitter, 30s drain on shutdown, Prometheus metrics)
+**Planned Plan:** 23-07 — HUMAN-UAT runbook (autonomous=false maintainer plan with 6 scenarios covering the three uat-chips-* recipes plus mobile viewport / light-mode / keyboard nav / screen-reader narration / name-filter compose; TAG-06, TAG-07, TAG-08)
