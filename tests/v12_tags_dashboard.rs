@@ -70,12 +70,19 @@ async fn seed_job(pool: &DbPool, name: &str, schedule: &str) -> i64 {
 
 #[allow(dead_code)]
 async fn seed_job_with_tags(pool: &DbPool, name: &str, schedule: &str, tags: &[&str]) -> i64 {
-    // NEW for Phase 23: serializes `tags` to sorted-canonical JSON via
-    // serde_json::to_string and passes it as the tags_json arg to upsert_job.
-    // Matches Phase 22 D-09 sorted-canonical storage form. Wave 1 fills
-    // this in.
-    let _ = (pool, name, schedule, tags);
-    todo!("Wave 0: implement in Wave 1 — serde_json::to_string of sorted+deduped Vec<String>")
+    // Phase 23: sorted-canonical JSON form per Phase 22 D-09. Sort + dedup at
+    // the helper boundary so callers can pass tags in any order — the upsert
+    // path's row produces the same canonical column value regardless of input
+    // order, matching what production validators emit at config-load.
+    let mut sorted: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
+    sorted.sort();
+    sorted.dedup();
+    let tags_json = serde_json::to_string(&sorted).expect("serialize tags");
+    queries::upsert_job(
+        pool, name, schedule, schedule, "command", "{}", "deadbeef", 300, &tags_json,
+    )
+    .await
+    .expect("upsert job")
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -117,36 +124,112 @@ async fn direct_url_renders_chips_active() {
 // V-01: AND-tag SQL filters correctly
 #[tokio::test]
 async fn and_filter_two_tags() {
-    todo!(
-        "Wave 1: seed A=[\"backup\",\"weekly\"], B=[\"backup\"], C=[\"weekly\"] → \
-         GET /?tag=backup&tag=weekly → body contains A, NOT B, NOT C"
-    )
+    let (_app, pool) = build_test_app().await;
+    let _a = seed_job_with_tags(&pool, "alpha-A", "*/5 * * * *", &["backup", "weekly"]).await;
+    let _b = seed_job_with_tags(&pool, "beta-B", "*/5 * * * *", &["backup"]).await;
+    let _c = seed_job_with_tags(&pool, "gamma-C", "*/5 * * * *", &["weekly"]).await;
+
+    let active = vec!["backup".to_string(), "weekly".to_string()];
+    let rows = queries::get_dashboard_jobs(&pool, None, "name", "asc", &active)
+        .await
+        .expect("get_dashboard_jobs");
+
+    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    assert!(
+        names.contains(&"alpha-A"),
+        "must contain alpha-A (has both backup + weekly); got {:?}",
+        names
+    );
+    assert!(
+        !names.contains(&"beta-B"),
+        "must NOT contain beta-B (missing weekly); got {:?}",
+        names
+    );
+    assert!(
+        !names.contains(&"gamma-C"),
+        "must NOT contain gamma-C (missing backup); got {:?}",
+        names
+    );
 }
 
 // V-02: Untagged jobs hidden when active set non-empty
 #[tokio::test]
 async fn untagged_hidden_when_filter_active() {
-    todo!(
-        "Wave 1: seed A=[\"backup\"], B=[] → GET /?tag=backup → body contains A, NOT B"
-    )
+    let (_app, pool) = build_test_app().await;
+    let _a = seed_job_with_tags(&pool, "alpha-A", "*/5 * * * *", &["backup"]).await;
+    let _b = seed_job_with_tags(&pool, "beta-B", "*/5 * * * *", &[]).await;
+
+    let active = vec!["backup".to_string()];
+    let rows = queries::get_dashboard_jobs(&pool, None, "name", "asc", &active)
+        .await
+        .expect("get_dashboard_jobs");
+
+    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    assert!(
+        names.contains(&"alpha-A"),
+        "must contain alpha-A (matches backup); got {:?}",
+        names
+    );
+    assert!(
+        !names.contains(&"beta-B"),
+        "must NOT contain beta-B (untagged hidden when active set non-empty); got {:?}",
+        names
+    );
 }
 
 // V-03: No filter → all jobs (tagged + untagged) shown (no regression on default load)
 #[tokio::test]
 async fn no_filter_shows_all_jobs() {
-    todo!(
-        "Wave 1: seed A=[\"backup\"], B=[] → GET / → body contains BOTH A AND B"
-    )
+    let (_app, pool) = build_test_app().await;
+    let _a = seed_job_with_tags(&pool, "alpha-A", "*/5 * * * *", &["backup"]).await;
+    let _b = seed_job_with_tags(&pool, "beta-B", "*/5 * * * *", &[]).await;
+
+    let rows = queries::get_dashboard_jobs(&pool, None, "name", "asc", &[])
+        .await
+        .expect("get_dashboard_jobs");
+
+    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    assert!(
+        names.contains(&"alpha-A"),
+        "must contain alpha-A (default load shows all); got {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"beta-B"),
+        "must contain beta-B (default load shows untagged); got {:?}",
+        names
+    );
 }
 
 // V-04: Tag filter composes with name filter via AND
 #[tokio::test]
 async fn and_with_name_filter() {
-    todo!(
-        "Wave 1: seed prod-backup=[\"backup\"], dev-backup=[\"backup\"], \
-         prod-cleanup=[\"backup\"] → GET /?filter=prod&tag=backup → \
-         body contains prod-backup + prod-cleanup, NOT dev-backup"
-    )
+    let (_app, pool) = build_test_app().await;
+    let _a = seed_job_with_tags(&pool, "prod-backup", "*/5 * * * *", &["backup"]).await;
+    let _b = seed_job_with_tags(&pool, "dev-backup", "*/5 * * * *", &["backup"]).await;
+    let _c = seed_job_with_tags(&pool, "prod-cleanup", "*/5 * * * *", &["backup"]).await;
+
+    let active = vec!["backup".to_string()];
+    let rows = queries::get_dashboard_jobs(&pool, Some("prod"), "name", "asc", &active)
+        .await
+        .expect("get_dashboard_jobs");
+
+    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    assert!(
+        names.contains(&"prod-backup"),
+        "must contain prod-backup (matches both prod and backup); got {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"prod-cleanup"),
+        "must contain prod-cleanup (matches both prod and backup); got {:?}",
+        names
+    );
+    assert!(
+        !names.contains(&"dev-backup"),
+        "must NOT contain dev-backup (matches backup but not prod name filter); got {:?}",
+        names
+    );
 }
 
 // V-06: Stale tag (not in fleet_tags) silent-dropped at handler

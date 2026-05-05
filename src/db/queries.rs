@@ -827,6 +827,7 @@ pub async fn get_dashboard_jobs(
     filter: Option<&str>,
     sort: &str,
     order: &str,
+    active_tags: &[String],
 ) -> anyhow::Result<Vec<DashboardJob>> {
     // Build ORDER BY from whitelist — never interpolate user input into SQL.
     let order_clause = match (sort, order) {
@@ -842,6 +843,30 @@ pub async fn get_dashboard_jobs(
     };
 
     let has_filter = filter.is_some_and(|f| !f.is_empty());
+    let tag_bind_start = if has_filter { 2 } else { 1 };
+
+    // Phase 23 D-09: variadic AND-chain. The COUNT comes from
+    // active_tags.len() — server-controlled (handler intersects against
+    // fleet_tags before passing). Bind values flow through `bind()` (never
+    // string-interpolated). P22 TAG-05 substring-collision validator at
+    // config-load prevents `back`/`backup` LIKE ambiguity.
+    let tag_predicates_sqlite: String = (0..active_tags.len())
+        .map(|i| format!("AND tags LIKE ?{}", tag_bind_start + i))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let tag_predicates_postgres: String = (0..active_tags.len())
+        .map(|i| format!("AND tags LIKE ${}", tag_bind_start + i))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Phase 23 D-09 / TAG-07: untagged-hidden ONLY when active set is
+    // non-empty. RESEARCH § Pitfall 7: making this clause unconditional
+    // would silently hide all untagged jobs on the default load.
+    let untagged_clause = if !active_tags.is_empty() {
+        "AND tags != '[]'"
+    } else {
+        ""
+    };
 
     let base_sql = if has_filter {
         format!(
@@ -853,7 +878,7 @@ pub async fn get_dashboard_jobs(
                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                    FROM job_runs
                ) lr ON lr.job_id = j.id AND lr.rn = 1
-               WHERE j.enabled = 1 AND LOWER(j.name) LIKE ?1
+               WHERE j.enabled = 1 AND LOWER(j.name) LIKE ?1 {tag_predicates_sqlite} {untagged_clause}
                {order_clause}"#
         )
     } else {
@@ -866,18 +891,28 @@ pub async fn get_dashboard_jobs(
                           ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                    FROM job_runs
                ) lr ON lr.job_id = j.id AND lr.rn = 1
-               WHERE j.enabled = 1
+               WHERE j.enabled = 1 {tag_predicates_sqlite} {untagged_clause}
                {order_clause}"#
         )
     };
 
     match pool.reader() {
         PoolRef::Sqlite(p) => {
-            let rows = if has_filter {
-                let pattern = format!("%{}%", filter.unwrap().to_lowercase());
-                sqlx::query(&base_sql).bind(pattern).fetch_all(p).await?
-            } else {
-                sqlx::query(&base_sql).fetch_all(p).await?
+            let rows = {
+                let mut q = sqlx::query(&base_sql);
+                if has_filter {
+                    let pattern = format!("%{}%", filter.unwrap().to_lowercase());
+                    q = q.bind(pattern);
+                }
+                for t in active_tags {
+                    // Phase 23 D-09: wrap in JSON-quote anchors so LIKE matches the
+                    // JSON-array element exactly. P22 TAG-05 substring-collision
+                    // validator at config-load prevents `back`/`backup` ambiguity, so
+                    // this LIKE is structurally safe (RESEARCH Pattern 1; never use
+                    // bare `tags LIKE '%backup%'` — substring false-positive risk).
+                    q = q.bind(format!(r#"%"{}"%"#, t));
+                }
+                q.fetch_all(p).await?
             };
             Ok(rows
                 .into_iter()
@@ -915,7 +950,7 @@ pub async fn get_dashboard_jobs(
                                   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                            FROM job_runs
                        ) lr ON lr.job_id = j.id AND lr.rn = 1
-                       WHERE j.enabled = 1 AND LOWER(j.name) LIKE $1
+                       WHERE j.enabled = 1 AND LOWER(j.name) LIKE $1 {tag_predicates_postgres} {untagged_clause}
                        {order_clause}"#
                 )
             } else {
@@ -928,15 +963,23 @@ pub async fn get_dashboard_jobs(
                                   ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY start_time DESC) AS rn
                            FROM job_runs
                        ) lr ON lr.job_id = j.id AND lr.rn = 1
-                       WHERE j.enabled = 1
+                       WHERE j.enabled = 1 {tag_predicates_postgres} {untagged_clause}
                        {order_clause}"#
                 )
             };
-            let rows = if has_filter {
-                let pattern = format!("%{}%", filter.unwrap().to_lowercase());
-                sqlx::query(&pg_sql).bind(pattern).fetch_all(p).await?
-            } else {
-                sqlx::query(&pg_sql).fetch_all(p).await?
+            let rows = {
+                let mut q = sqlx::query(&pg_sql);
+                if has_filter {
+                    let pattern = format!("%{}%", filter.unwrap().to_lowercase());
+                    q = q.bind(pattern);
+                }
+                for t in active_tags {
+                    // Phase 23 D-09: JSON-quote anchored bind value (parity with
+                    // sqlite arm). Substring-collision is structurally prevented by
+                    // P22 TAG-05 validator at config-load.
+                    q = q.bind(format!(r#"%"{}"%"#, t));
+                }
+                q.fetch_all(p).await?
             };
             Ok(rows
                 .into_iter()
@@ -2485,7 +2528,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         insert_run(&pool, job_id, "failed", "manual").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "asc")
+        let jobs = get_dashboard_jobs(&pool, None, "name", "asc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 1);
@@ -2501,7 +2544,7 @@ mod tests {
         let pool = setup_pool().await;
         create_job_with_runs(&pool, "no-runs-job", "*/5 * * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "asc")
+        let jobs = get_dashboard_jobs(&pool, None, "name", "asc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 1);
@@ -2518,7 +2561,7 @@ mod tests {
         create_job_with_runs(&pool, "test-sync", "*/10 * * * *").await;
         create_job_with_runs(&pool, "deploy-app", "0 0 * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, Some("test"), "name", "asc")
+        let jobs = get_dashboard_jobs(&pool, Some("test"), "name", "asc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 2);
@@ -2535,7 +2578,7 @@ mod tests {
         create_job_with_runs(&pool, "TestJob", "*/5 * * * *").await;
         create_job_with_runs(&pool, "other", "*/10 * * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, Some("TESTJOB"), "name", "asc")
+        let jobs = get_dashboard_jobs(&pool, Some("TESTJOB"), "name", "asc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 1);
@@ -2550,7 +2593,7 @@ mod tests {
         create_job_with_runs(&pool, "zulu", "*/10 * * * *").await;
         create_job_with_runs(&pool, "mike", "0 0 * * *").await;
 
-        let jobs = get_dashboard_jobs(&pool, None, "name", "desc")
+        let jobs = get_dashboard_jobs(&pool, None, "name", "desc", &[])
             .await
             .unwrap();
         assert_eq!(jobs.len(), 3);

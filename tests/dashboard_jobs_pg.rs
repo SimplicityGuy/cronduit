@@ -46,7 +46,7 @@ async fn get_dashboard_jobs_postgres_smoke() {
     .expect("upsert job");
 
     // Unfiltered path — exercises the buggy line 628 (pre-fix: errors).
-    let result = queries::get_dashboard_jobs(&pool, None, "name", "asc").await;
+    let result = queries::get_dashboard_jobs(&pool, None, "name", "asc", &[]).await;
     assert!(
         result.is_ok(),
         "get_dashboard_jobs (unfiltered) must succeed on Postgres; got: {:?}",
@@ -54,7 +54,7 @@ async fn get_dashboard_jobs_postgres_smoke() {
     );
 
     // Filtered path — exercises the buggy line 615 (pre-fix: errors).
-    let result_filtered = queries::get_dashboard_jobs(&pool, Some("dash"), "name", "asc").await;
+    let result_filtered = queries::get_dashboard_jobs(&pool, Some("dash"), "name", "asc", &[]).await;
     assert!(
         result_filtered.is_ok(),
         "get_dashboard_jobs (filtered) must succeed on Postgres; got: {:?}",

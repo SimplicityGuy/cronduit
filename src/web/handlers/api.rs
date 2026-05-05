@@ -363,7 +363,7 @@ pub async fn reroll(
 /// unblock the compose-smoke CI matrix (08-04) which needs deterministic
 /// name → id resolution to trigger Run Now on each example job.
 pub async fn list_jobs(State(state): State<AppState>) -> impl IntoResponse {
-    match queries::get_dashboard_jobs(&state.pool, None, "name", "asc").await {
+    match queries::get_dashboard_jobs(&state.pool, None, "name", "asc", &[]).await {
         Ok(jobs) => {
             let body: Vec<_> = jobs
                 .iter()

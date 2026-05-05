@@ -247,7 +247,11 @@ pub async fn dashboard(
     } else {
         Some(params.filter.as_str())
     };
-    let jobs = queries::get_dashboard_jobs(&state.pool, filter, &params.sort, &params.order)
+    // Phase 23 D-09: pass `&[]` placeholder for active_tags. Plan 23-03 wires
+    // the real fleet-intersected active set from `params.tags` here; until then
+    // the dashboard query behaves exactly as it did pre-P23 (no tag filter
+    // applied, no `tags != '[]'` clause appended).
+    let jobs = queries::get_dashboard_jobs(&state.pool, filter, &params.sort, &params.order, &[])
         .await
         .unwrap_or_default();
 
