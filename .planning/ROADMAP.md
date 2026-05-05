@@ -360,7 +360,7 @@ Plans:
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 10/11 | In Progress|  |
 | 22. Job Tagging Schema + Validators | 4/6 | In Progress|  |
-| 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete   | 2026-05-05 |
+| 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete    | 2026-05-05 |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
 
 ## v1.2 Build Order
