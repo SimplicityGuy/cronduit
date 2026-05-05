@@ -190,7 +190,16 @@ fn build_chip_views(
             let mut href = String::new();
             {
                 let mut ser = url::form_urlencoded::Serializer::new(&mut href);
-                ser.append_pair("filter", filter);
+                // Phase 23 WR-04: skip `filter=` when the value is empty so
+                // bookmarkable URLs don't carry a noisy default-empty pair
+                // (`/?filter=&sort=name&order=asc&tag=backup` →
+                // `/?sort=name&order=asc&tag=backup`). Functionally equivalent
+                // — `axum_extra::Query` defaults `filter` to `""` either way —
+                // and the sort-header anchors gate on `filter` for the same
+                // reason so the chip-strip and sort-header forms stay aligned.
+                if !filter.is_empty() {
+                    ser.append_pair("filter", filter);
+                }
                 ser.append_pair("sort", sort);
                 ser.append_pair("order", order);
                 for t in &next {

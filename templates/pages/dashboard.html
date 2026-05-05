@@ -120,9 +120,9 @@
         </th>
         <!-- Name (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "name" %};color:var(--cd-text-accent){% endif %}">
-          <a href="?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
+          <a href="?{% if !filter.is_empty() %}filter={{ filter }}&{% endif %}sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              class="no-underline hover:text-(--cd-text-accent){% if sort == "name" %} text-(--cd-text-accent){% else %} text-(--cd-text-secondary){% endif %}"
-             hx-get="/partials/job-table?filter={{ filter }}&sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
+             hx-get="/partials/job-table?{% if !filter.is_empty() %}filter={{ filter }}&{% endif %}sort=name&order={% if sort == "name" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              hx-target="#job-table-body"
              hx-push-url="true">
             Name{% if sort == "name" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
@@ -132,9 +132,9 @@
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--cd-text-secondary)">Schedule</th>
         <!-- Next Fire (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "next_run" %};color:var(--cd-text-accent){% endif %}">
-          <a href="?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
+          <a href="?{% if !filter.is_empty() %}filter={{ filter }}&{% endif %}sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              class="no-underline hover:text-(--cd-text-accent){% if sort == "next_run" %} text-(--cd-text-accent){% else %} text-(--cd-text-secondary){% endif %}"
-             hx-get="/partials/job-table?filter={{ filter }}&sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
+             hx-get="/partials/job-table?{% if !filter.is_empty() %}filter={{ filter }}&{% endif %}sort=next_run&order={% if sort == "next_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              hx-target="#job-table-body"
              hx-push-url="true">
             Next Fire{% if sort == "next_run" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
@@ -142,9 +142,9 @@
         </th>
         <!-- Status (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "status" %};color:var(--cd-text-accent){% endif %}">
-          <a href="?filter={{ filter }}&sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
+          <a href="?{% if !filter.is_empty() %}filter={{ filter }}&{% endif %}sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              class="no-underline hover:text-(--cd-text-accent){% if sort == "status" %} text-(--cd-text-accent){% else %} text-(--cd-text-secondary){% endif %}"
-             hx-get="/partials/job-table?filter={{ filter }}&sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
+             hx-get="/partials/job-table?{% if !filter.is_empty() %}filter={{ filter }}&{% endif %}sort=status&order={% if sort == "status" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              hx-target="#job-table-body"
              hx-push-url="true">
             Status{% if sort == "status" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
@@ -152,9 +152,9 @@
         </th>
         <!-- Last Run (sortable) -->
         <th class="text-left py-2 px-4" style="font-size:var(--cd-text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.1em{% if sort == "last_run" %};color:var(--cd-text-accent){% endif %}">
-          <a href="?filter={{ filter }}&sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
+          <a href="?{% if !filter.is_empty() %}filter={{ filter }}&{% endif %}sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              class="no-underline hover:text-(--cd-text-accent){% if sort == "last_run" %} text-(--cd-text-accent){% else %} text-(--cd-text-secondary){% endif %}"
-             hx-get="/partials/job-table?filter={{ filter }}&sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
+             hx-get="/partials/job-table?{% if !filter.is_empty() %}filter={{ filter }}&{% endif %}sort=last_run&order={% if sort == "last_run" && order == "asc" %}desc{% else %}asc{% endif %}{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}"
              hx-target="#job-table-body"
              hx-push-url="true">
             Last Run{% if sort == "last_run" %}{% if order == "asc" %} &#9650;{% else %} &#9660;{% endif %}{% endif %}
