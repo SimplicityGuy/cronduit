@@ -897,27 +897,27 @@ active_tags.retain(|t| fleet_tags.contains(t));
 
 **Note:** Only one assumption. Every other claim is verified against in-tree code, locked CONTEXT.md decisions, locked UI-SPEC.md decisions, or official documentation.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the planner extract a `chip_strip.html` partial?**
    - What we know: CONTEXT § Claude's Discretion permits either inline-in-dashboard.html or separate partial; OOB swap response composes both shapes cleanly.
    - What's unclear: Aesthetic preference vs. file-count vs. test-target granularity.
-   - Recommendation: Inline at first. Extract only if the chip strip's askama logic exceeds ~30 lines or if the OOB response handler benefits from a dedicated render call. The OOB response can render a tiny inline `<div id="cd-tag-chip-strip" hx-swap-oob="true">…</div>` followed by `{% include "partials/job_table.html" %}` — no need for a third partial file.
+   - **RESOLVED:** Inline in `templates/pages/dashboard.html`; the OOB response composes a tiny inline `<div id="cd-tag-chip-strip" hx-swap-oob="true">…</div>` followed by `{% include "partials/job_table.html" %}` — no third partial file. Implemented in plan `23-05-PLAN.md` (chip strip insert + OOB partial wiring).
 
 2. **Should the planner extract an askama macro / filter for the active-tag URL suffix?**
    - What we know: D-13 mandates `&tag=...` in BOTH `href` and `hx-get` on FOUR sortable column anchors. Inline iteration is mechanical but bloats markup ×4.
    - What's unclear: Macro adds a new `templates/macros.html` file (zero in-tree precedent). Filter requires Rust-side custom-filter registration in askama config (also zero in-tree precedent).
-   - Recommendation: Option A (precompute in handler — pass each anchor a precomputed `Vec<{href: String, hx_get: String}>` of size 4) sidesteps both. If not feasible, inline iteration with `{% for t in active_tags %}&tag={{ t|urlencode }}{% endfor %}` is straightforward and self-documenting. Macros / filters are a v1.3 readability cleanup at most.
+   - **RESOLVED:** Option A — precompute in handler. Plan `23-05-PLAN.md` introduces a `ChipView`-style precomputed `Vec<{href, hx_get}>` of size 4 (one per sortable column anchor) so the template iterates concrete strings, not active-tag tuples. No `templates/macros.html` introduced; no custom askama filter registered. Macros / filters remain a v1.3 readability cleanup if ever needed.
 
 3. **Should `JobTablePartial` carry the chip strip data or should there be a `DashboardPartial` view-model wrapping both?**
    - What we know: CONTEXT canonical_refs L222 says "widen `JobTablePartial`." UI-SPEC § Component Inventory locks the OOB swap contract to a single response.
    - What's unclear: Whether the planner introduces a new `DashboardPartial` template + struct that includes both the chip strip OOB div AND the table-body markup, vs. widening `JobTablePartial` to carry both responsibilities.
-   - Recommendation: Widen `JobTablePartial` per CONTEXT — minimal-change path. Or rename to `DashboardPartial` if planner finds the name misleading once it carries chip strip data.
+   - **RESOLVED:** Widen `JobTablePartial` per CONTEXT — minimal-change path. Plan `23-05-PLAN.md` adds `include_oob_chip_strip: bool` (gated to the HTMX-swap branch) and the chip-strip view fields directly on `JobTablePartial`. No new `DashboardPartial` template introduced.
 
 4. **Should the README addition land in this phase or defer to Phase 24?**
    - What we know: P22 deferred-ideas list noted Phase 23 was the natural place for a README configuration subsection on tag filtering.
    - What's unclear: Maintainer preference + phase-budget cost (a README addition is ~15-30 lines of prose + 1 mermaid diagram).
-   - Recommendation: Land in Phase 23 if the planner's plan-budget allows. Phase 24 close-out can pick it up otherwise. UI-SPEC § Decisions Rationale notes "Recommend land in this phase per CONTEXT.md 'Claude's Discretion'."
+   - **RESOLVED:** Land in Phase 23. Plan `23-06-PLAN.md` adds the README "Tag Filter Chips" subsection alongside the `just uat-chips-*` recipes. Phase 24 close-out is freed of this carry-over.
 
 ## Metadata
 

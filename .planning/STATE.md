@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: "Phase 22 shipped — PR #58 (pending maintainer UAT)"
-stopped_at: Phase 23 context gathered
-last_updated: "2026-05-04T22:48:29.286Z"
-last_activity: 2026-05-04
+status: executing
+stopped_at: Phase 23 UI-SPEC approved
+last_updated: "2026-05-05T01:21:04.981Z"
+last_activity: 2026-05-05 -- Phase 23 planning complete
 progress:
   total_phases: 10
   completed_phases: 8
-  total_plans: 62
+  total_plans: 70
   completed_plans: 62
-  percent: 100
+  percent: 89
 ---
 
 # Project State
@@ -29,8 +29,8 @@ Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 21 (failure-context-ui-panel-exit-code-histogram-card-rc-2) — EXECUTING
 Plan: 8 of 11
-Status: Phase 22 shipped — PR #58 (pending maintainer UAT)
-Last activity: 2026-05-04
+Status: Ready to execute
+Last activity: 2026-05-05 -- Phase 23 planning complete
 
 Progress: [██████████] 97%
 
@@ -179,8 +179,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-04T22:48:29.278Z
-Stopped at: Phase 23 context gathered
+Last session: 2026-05-04T22:58:56.124Z
+Stopped at: Phase 23 UI-SPEC approved
 Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
 
 **Planned Phase:** 20 — Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1 (HTTPS-required for non-loopback/non-RFC1918, SSRF guards, retry schedule t=0/30s/300s with full-jitter, 30s drain on shutdown, Prometheus metrics)

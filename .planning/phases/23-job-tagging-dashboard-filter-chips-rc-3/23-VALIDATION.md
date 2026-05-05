@@ -1,8 +1,8 @@
 ---
 phase: 23
 slug: job-tagging-dashboard-filter-chips-rc-3
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-05-04
 ---
@@ -96,6 +96,6 @@ created: 2026-05-04
 - [ ] Wave 0 covers all MISSING references (5 items above)
 - [ ] No watch-mode flags
 - [ ] Feedback latency < 30s for compile gate; < 3 min for full suite
-- [ ] `nyquist_compliant: true` set in frontmatter (after planner wires every task to a row in this matrix)
+- [x] `nyquist_compliant: true` set in frontmatter (planner wired every code-touching task to V-01..V-17; Wave 0 stubs cover all V-W0 gaps)
 
-**Approval:** pending
+**Approval:** approved 2026-05-04 (after gsd-plan-checker confirmed all 14 PLAN tasks cite a V-NN row; B-1 RESEARCH RESOLVED markers added; W-3 frontmatter flipped)
