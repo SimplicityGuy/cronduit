@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
-stopped_at: Completed 23-06-PLAN.md (Wave 4 — UAT recipes + README addition)
-last_updated: "2026-05-05T03:10:03.487Z"
+stopped_at: Completed 23-08-PLAN.md (Wave 7 — rc.3 PREFLIGHT runbook authored; maintainer EXECUTES post-PR-merge)
+last_updated: "2026-05-05T03:17:09.309Z"
 last_activity: 2026-05-05
 progress:
   total_phases: 10
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 70
-  completed_plans: 69
-  percent: 99
+  completed_plans: 70
+  percent: 100
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 23 (job-tagging-dashboard-filter-chips-rc-3) — EXECUTING
-Plan: 7 of 8
+Plan: 8 of 8
 Status: Ready to execute
 Last activity: 2026-05-05
 
-Progress: [██████████] 99%
+Progress: [██████████] 100%
 
 ## v1.2 Roadmap Summary
 
@@ -150,6 +150,7 @@ All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 - [Phase ?]: Plan 23-05: OOB block lives in templates/partials/job_table.html (Option A from PATTERNS) gated on include_oob_chip_strip — single template carries three behaviors (full-page include with flag false, HTMX response body with flag true). Avoids dual-Template-derive or response-composer complexity.
 - [Phase ?]: Plan 23-06: three uat-chips-* just recipes mirror P22 uat-tags-* recipe-calls-recipe pattern verbatim (each writes synthetic-tag TOML to .tmp/uat-chips-*.toml, chains build/db-reset/check-config, gates with read prompts, ends with maintainer-validates ritual); README ### Tag Filter Chips subsection slots between ### Labels (P17) and ### Job Types under ## Configuration — text-only, zero mermaid (UI-SPEC § Decisions Rationale recommends short subsection).
 - [Phase ?]: [Phase 23-07]: 23-HUMAN-UAT.md autonomous=false maintainer runbook landed with 6 scenarios per CONTEXT D-17 — three recipe-driven (uat-chips-render / uat-chips-and-filter / uat-chips-share-url) + three eyeball-only (mobile / light / a11y); Scenario 6 covers WCAG 2.2 AAA touch target >= 44px, :focus-visible ring, aria-pressed true/false, three-channel active state encoding (border + label color + bold weight); maintainer EXECUTES runbook in separate /gsd-verify-work session before Phase 23 PR merge per project memory feedback_uat_user_validates.md
+- [Phase ?]: [Phase 23-08]: 23-RC3-PREFLIGHT.md authored as verbatim mirror of 21-RC2-PREFLIGHT.md per CONTEXT D-15 — rc.2->rc.3 / P21->P23 / FCTX->tag-chips / EXIT-06->tags-as-Prometheus-out-of-scope / plan-list 01-10->01-07 substitutions; autonomous=false maintainer-EXECUTES; Cargo.toml unchanged at 1.2.0 (-rc.3 tag-only); NO release.yml/cliff.toml/docs/release-rc.md edits per D-16; :latest stays at v1.1.0 via P12 D-10 hyphen-gate; Phase 23 plans 8/8 complete.
 
 ### Open questions
 
@@ -188,8 +189,8 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-05T03:09:57.422Z
-Stopped at: Completed 23-06-PLAN.md (Wave 4 — UAT recipes + README addition)
+Last session: 2026-05-05T03:17:09.304Z
+Stopped at: Completed 23-08-PLAN.md (Wave 7 — rc.3 PREFLIGHT runbook authored; maintainer EXECUTES post-PR-merge)
 Resume command: `/gsd-execute-phase 23` to launch Plan 23-07 (HUMAN-UAT runbook, autonomous=false)
 
 **Planned Plan:** 23-07 — HUMAN-UAT runbook (autonomous=false maintainer plan with 6 scenarios covering the three uat-chips-* recipes plus mobile viewport / light-mode / keyboard nav / screen-reader narration / name-filter compose; TAG-06, TAG-07, TAG-08)
