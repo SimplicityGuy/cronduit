@@ -393,4 +393,34 @@ mod tests {
         let result = format_relative_past(now, now);
         assert_eq!(result, "just now");
     }
+
+    // V-05 (unit / handler): `?tag=backup&tag=weekly` deserializes to Vec<String> length 2
+    // via axum_extra::Query. axum::Query would silently collapse duplicates to one — this
+    // is the EXACT failure mode TAG-06 forbids (RESEARCH § Pitfall 1).
+    //
+    // Wave-0 scaffold: body is `todo!()` until Wave 1 lands the
+    // `axum_extra::extract::Query<DashboardParams>` swap and the
+    // `#[serde(default, rename = "tag")] pub tags: Vec<String>` field.
+    #[tokio::test]
+    async fn active_tags_parsed_from_repeated_query() {
+        todo!(
+            "Wave 1: build a test request `?tag=backup&tag=weekly`, run it through \
+             axum_extra::extract::Query<DashboardParams>, assert params.tags == \
+             vec![\"backup\".into(), \"weekly\".into()]"
+        )
+    }
+
+    // V-07 (unit / handler): distinct-tag fold from Vec<DashboardJob> produces
+    // sorted alphabetical Vec<String> for chip strip (CONTEXT D-08, RESEARCH Pattern 3).
+    //
+    // Wave-0 scaffold: body is `todo!()` until Wave 2 lands the fleet-tag
+    // fold helper in the dashboard handler.
+    #[tokio::test]
+    async fn distinct_tag_fold_alphabetical() {
+        todo!(
+            "Wave 2: build Vec<DashboardJob> with tags [[\"weekly\",\"backup\"], \
+             [\"backup\",\"prod\"], []], call the fleet_tags fold helper, assert \
+             result == vec![\"backup\", \"prod\", \"weekly\"]"
+        )
+    }
 }
