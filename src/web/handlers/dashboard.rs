@@ -14,7 +14,7 @@ use axum_htmx::HxRequest;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
 
 use crate::db::queries::{self, DashboardJob, DashboardSparkRow};
@@ -70,6 +70,21 @@ struct DashboardPage {
     order: String,
     config_path: String,
     csrf_token: String,
+    /// Phase 23 TAG-06: distinct fleet tag set, alphabetical, used to
+    /// render one chip per tag in the chip strip. Empty when no job has
+    /// any tags — chip strip is hidden via HTML5 `hidden` attribute (D-02).
+    /// Plan 23-05 wires the template; until that plan lands the field is
+    /// unread by the template (allowed because Phase 23 view-model widening
+    /// must be visible to Wave 2 plans before the templates change).
+    #[allow(dead_code)]
+    fleet_tags: Vec<String>,
+    /// Phase 23 TAG-06: post-toggle canonicalized active tag set
+    /// (sorted, deduped, fleet-intersected). Drives chip active state +
+    /// hidden `<input name="tag">` siblings + sort-header href tag suffix.
+    /// Plan 23-05 wires the template (see `#[allow(dead_code)]` rationale
+    /// on `fleet_tags`).
+    #[allow(dead_code)]
+    active_tags: Vec<String>,
 }
 
 #[derive(Template)]
@@ -77,6 +92,14 @@ struct DashboardPage {
 struct JobTablePartial {
     jobs: Vec<DashboardJobView>,
     csrf_token: String,
+    /// Phase 23 D-11: HTMX OOB swap — the partial response renders BOTH
+    /// the chip strip (OOB-swapped into `#cd-tag-chip-strip` on the live
+    /// page) AND the table body (target swap). Plan 23-05 wires the
+    /// template; this struct carries the data both consumers need.
+    #[allow(dead_code)]
+    fleet_tags: Vec<String>,
+    #[allow(dead_code)]
+    active_tags: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -267,13 +290,61 @@ pub async fn dashboard(
     } else {
         Some(params.filter.as_str())
     };
-    // Phase 23 D-09: pass `&[]` placeholder for active_tags. Plan 23-03 wires
-    // the real fleet-intersected active set from `params.tags` here; until then
-    // the dashboard query behaves exactly as it did pre-P23 (no tag filter
-    // applied, no `tags != '[]'` clause appended).
-    let jobs = queries::get_dashboard_jobs(&state.pool, filter, &params.sort, &params.order, &[])
-        .await
-        .unwrap_or_default();
+    // Phase 23 D-08 / RESEARCH § Pattern 3: TWO-fetch sequence so the fleet-tag
+    // fold reflects the UNFILTERED fleet (chips render every tag in the fleet,
+    // not only tags surviving the active AND-filter). The first fetch is
+    // unfiltered (active_tags=&[]); we fold its `Vec<DashboardJob>` into
+    // `fleet_tags`. The second fetch applies the active-tag intersection for
+    // the table body. Both reads are cheap at homelab scale (sub-millisecond
+    // over a few hundred jobs); RESEARCH Open Question 1 + PATTERNS.md L296-318
+    // document the deliberate trade-off vs. the single-fetch alternative
+    // (which would hide chips for tags whose only job is filtered out by
+    // another active chip).
+    let unfiltered_jobs = queries::get_dashboard_jobs(
+        &state.pool,
+        None, // no name-filter for fleet-tag fold
+        &params.sort,
+        &params.order,
+        &[], // no tag-filter — fold over the WHOLE fleet
+    )
+    .await
+    .unwrap_or_default();
+
+    // Phase 23 D-08 / D-07: fleet-tag fold. `BTreeSet<String>` -> `Vec<String>`
+    // preserves alphabetical sort and dedupes. Disabled jobs are excluded by
+    // `WHERE j.enabled = 1` upstream — `fleet_tags` is "tags from the rendered
+    // row set" (CONTEXT § Claude's Discretion default).
+    let fleet_tags: Vec<String> = unfiltered_jobs
+        .iter()
+        .flat_map(|j| j.tags.iter().cloned())
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
+
+    // Phase 23 / UI-SPEC § URL canonicalization + § Stale-tag URL handling:
+    // dedup + canonicalize alphabetical (so `/?tag=zebra&tag=alpha` and
+    // `/?tag=alpha&tag=zebra` produce the same shareable URL) + intersect
+    // with fleet so stale URL tags are silently dropped (RESEARCH § Pitfall 4
+    // / threat T-23-03-01). The retain step is the security boundary: any
+    // operator-supplied tag NOT in the fleet is dropped BEFORE reaching SQL.
+    let mut active_tags: Vec<String> = params.tags.clone();
+    active_tags.sort();
+    active_tags.dedup();
+    active_tags.retain(|t| fleet_tags.contains(t));
+
+    // Now apply the active-tag filter to the actual rendered fleet. The
+    // `unfiltered_jobs` binding is consumed by the fold and goes out of scope
+    // here; the new `jobs` shadows it and keeps the existing role downstream
+    // (sparkline hydration + view-model construction).
+    let jobs = queries::get_dashboard_jobs(
+        &state.pool,
+        filter,
+        &params.sort,
+        &params.order,
+        &active_tags,
+    )
+    .await
+    .unwrap_or_default();
 
     let tz: Tz = state.tz;
     let mut job_views: Vec<DashboardJobView> = jobs.into_iter().map(|j| to_view(j, tz)).collect();
@@ -366,6 +437,8 @@ pub async fn dashboard(
         JobTablePartial {
             jobs: job_views,
             csrf_token,
+            fleet_tags,
+            active_tags,
         }
         .into_web_template()
         .into_response()
@@ -377,6 +450,8 @@ pub async fn dashboard(
             order: params.order,
             config_path: state.config_path.display().to_string(),
             csrf_token,
+            fleet_tags,
+            active_tags,
         }
         .into_web_template()
         .into_response()
@@ -452,16 +527,57 @@ mod tests {
     }
 
     // V-07 (unit / handler): distinct-tag fold from Vec<DashboardJob> produces
-    // sorted alphabetical Vec<String> for chip strip (CONTEXT D-08, RESEARCH Pattern 3).
+    // sorted alphabetical Vec<String> for chip strip (CONTEXT D-08, RESEARCH § Pattern 3).
     //
-    // Wave-0 scaffold: body is `todo!()` until Wave 2 lands the fleet-tag
-    // fold helper in the dashboard handler.
+    // The fold lives inline in the `dashboard()` handler (BTreeSet<String> ->
+    // Vec<String> via flat_map + collect chain). This unit test exercises the
+    // exact same pattern against a hand-built `Vec<DashboardJob>` so we can
+    // assert the load-bearing property (alphabetical-distinct) without
+    // standing up a database or routing layer.
     #[tokio::test]
     async fn distinct_tag_fold_alphabetical() {
-        todo!(
-            "Wave 2: build Vec<DashboardJob> with tags [[\"weekly\",\"backup\"], \
-             [\"backup\",\"prod\"], []], call the fleet_tags fold helper, assert \
-             result == vec![\"backup\", \"prod\", \"weekly\"]"
-        )
+        use crate::db::queries::DashboardJob;
+        use std::collections::BTreeSet;
+
+        fn mk_job(name: &str, tags: Vec<&str>) -> DashboardJob {
+            DashboardJob {
+                id: 0,
+                name: name.to_string(),
+                schedule: "*/5 * * * *".to_string(),
+                resolved_schedule: "*/5 * * * *".to_string(),
+                job_type: "command".to_string(),
+                timeout_secs: 300,
+                last_status: None,
+                last_run_time: None,
+                last_trigger: None,
+                enabled_override: None,
+                tags: tags.into_iter().map(String::from).collect(),
+            }
+        }
+
+        let jobs = [
+            mk_job("a", vec!["weekly", "backup"]),
+            mk_job("b", vec!["backup", "prod"]),
+            mk_job("c", vec![]),
+        ];
+
+        let fleet_tags: Vec<String> = jobs
+            .iter()
+            .flat_map(|j| j.tags.iter().cloned())
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            fleet_tags,
+            vec![
+                "backup".to_string(),
+                "prod".to_string(),
+                "weekly".to_string()
+            ],
+            "BTreeSet -> Vec MUST yield distinct alphabetical fleet tags. Duplicates \
+             across jobs (`backup` in jobs 'a' and 'b') MUST collapse to one chip; \
+             empty-tag jobs MUST contribute nothing; output MUST be alphabetical."
+        );
     }
 }
