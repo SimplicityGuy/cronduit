@@ -431,6 +431,7 @@
   @media (prefers-reduced-motion: reduce) {
     .cd-timeline-bar--pulsing { animation: none; opacity: 1; }
     .cd-fctx-summary-caret { transition: none; }
+    .cd-tag-chip { transition: none; } /* Phase 23 */
   }
 
   /* === Phase 13 Rich tooltip (D-09) === */
@@ -604,8 +605,21 @@
   .cd-exit-empty { display: flex; align-items: baseline; gap: var(--cd-space-3); padding: var(--cd-space-8); font-size: var(--cd-text-xl); color: var(--cd-text-secondary); text-align: center; justify-content: center; }
   .cd-exit-empty-meta { font-size: var(--cd-text-sm); font-weight: 400; }
 
+  /* === Phase 23 tag filter chip strip (UI-SPEC § Component Inventory) === */
+  /* Phase 23 — tokens --cd-space-10 and --cd-radius-full absent from :root; literal 40px (on 4px grid) and 9999px used inline awaiting token addition. ZERO new token declarations introduced; values match UI-SPEC § Tokens locked vocabulary. */
+  .cd-tag-chip-strip { display: flex; flex-wrap: wrap; gap: var(--cd-space-2); align-items: center; margin-bottom: var(--cd-space-4); }
+  .cd-tag-chip-strip[hidden] { display: none; }
+  .cd-tag-chip { display: inline-flex; align-items: center; min-height: 40px; padding: var(--cd-space-2) var(--cd-space-3); border-radius: 9999px; font-size: var(--cd-text-sm); font-family: var(--font-mono); letter-spacing: 0; text-decoration: none; cursor: pointer; transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease; user-select: none; }
+  .cd-tag-chip--inactive { background: var(--cd-bg-surface-raised); border: 1px solid var(--cd-border-subtle); color: var(--cd-text-secondary); font-weight: 400; }
+  .cd-tag-chip--inactive:hover { background: var(--cd-bg-hover); border-color: var(--cd-border); color: var(--cd-text-primary); }
+  .cd-tag-chip--inactive:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cd-green-dim); background: var(--cd-bg-hover); border-color: var(--cd-border); color: var(--cd-text-primary); }
+  .cd-tag-chip--active { background: var(--cd-green-dim); border: 1px solid var(--cd-text-accent); color: var(--cd-text-accent); font-weight: 700; }
+  .cd-tag-chip--active:hover { filter: brightness(1.1); }
+  .cd-tag-chip--active:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--cd-green-dim); border-color: var(--cd-text-accent); }
+
   /* === Phase 21 print mode (UI-SPEC § Interaction Contract) === */
   @media print {
     details.cd-fctx-panel { open: open; }
+    .cd-tag-chip-strip { display: none; } /* Phase 23 */
   }
 }
