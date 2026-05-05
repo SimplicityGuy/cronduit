@@ -73,18 +73,33 @@ struct DashboardPage {
     /// Phase 23 TAG-06: distinct fleet tag set, alphabetical, used to
     /// render one chip per tag in the chip strip. Empty when no job has
     /// any tags — chip strip is hidden via HTML5 `hidden` attribute (D-02).
-    /// Plan 23-05 wires the template; until that plan lands the field is
-    /// unread by the template (allowed because Phase 23 view-model widening
-    /// must be visible to Wave 2 plans before the templates change).
+    /// `#[allow(dead_code)]` while Task 1 lands the struct in isolation;
+    /// Task 2 wires the template inserts and removes the per-field allow.
     #[allow(dead_code)]
     fleet_tags: Vec<String>,
     /// Phase 23 TAG-06: post-toggle canonicalized active tag set
     /// (sorted, deduped, fleet-intersected). Drives chip active state +
     /// hidden `<input name="tag">` siblings + sort-header href tag suffix.
-    /// Plan 23-05 wires the template (see `#[allow(dead_code)]` rationale
-    /// on `fleet_tags`).
     #[allow(dead_code)]
     active_tags: Vec<String>,
+    /// Phase 23 D-11 / RESEARCH § Pattern 5 Option A: precomputed per-chip
+    /// view models (one per fleet tag). Each `ChipView` carries `tag`,
+    /// `is_active`, `href` (post-toggle URL query string, URL-encoded),
+    /// and `aria_label`. Single source of truth for chip `href` + `hx-get`
+    /// (DRY between the two attributes).
+    #[allow(dead_code)]
+    chips: Vec<ChipView>,
+    /// Phase 23 D-11: full-page render NEVER uses OOB swap. The field
+    /// MUST exist on this struct (set to `false`) so that
+    /// `templates/partials/job_table.html`, included from
+    /// `templates/pages/dashboard.html`, can reference
+    /// `{% if include_oob_chip_strip %}` without an askama compile-time
+    /// error. Askama 0.15 included templates have full access to the
+    /// parent context — and ahead-of-time compilation REQUIRES every
+    /// variable referenced in the included template to be reachable from
+    /// the parent struct.
+    #[allow(dead_code)]
+    include_oob_chip_strip: bool,
 }
 
 #[derive(Template)]
@@ -94,12 +109,120 @@ struct JobTablePartial {
     csrf_token: String,
     /// Phase 23 D-11: HTMX OOB swap — the partial response renders BOTH
     /// the chip strip (OOB-swapped into `#cd-tag-chip-strip` on the live
-    /// page) AND the table body (target swap). Plan 23-05 wires the
-    /// template; this struct carries the data both consumers need.
+    /// page) AND the table body (target swap).
     #[allow(dead_code)]
     fleet_tags: Vec<String>,
     #[allow(dead_code)]
     active_tags: Vec<String>,
+    /// Phase 23: precomputed chip views (one per fleet tag).
+    #[allow(dead_code)]
+    chips: Vec<ChipView>,
+    /// Phase 23 D-11: when `true`, the partial template renders the
+    /// chip strip with `hx-swap-oob="true"` on the OUTER wrapper FIRST,
+    /// followed by the table body. The OOB element targets the live
+    /// `#cd-tag-chip-strip` on the page for in-place state replacement.
+    /// HTMX path sets this to `true`; full-page path sets to `false`.
+    #[allow(dead_code)]
+    include_oob_chip_strip: bool,
+}
+
+/// Phase 23 D-11 / RESEARCH § Pattern 5 Option A: precomputed per-chip
+/// view model. The handler computes the post-toggle URL once per chip;
+/// the template renders it via `<a href="?{{ chip.href }}" hx-get="?{{ chip.href }}">`.
+/// Single source of truth for href + hx-get (DRY); avoids inline askama
+/// iteration over `active_tags` inside chip markup.
+#[derive(Debug)]
+pub struct ChipView {
+    /// The tag name itself (e.g., "backup"). Rendered by askama with the
+    /// default auto-escape; never use the `|safe` filter on this field.
+    pub tag: String,
+    /// Whether this chip is in the current `active_tags` set. Drives the
+    /// `cd-tag-chip--active` vs `cd-tag-chip--inactive` class, the
+    /// `aria-pressed` value, and the active-vs-inactive `aria_label` suffix.
+    pub is_active: bool,
+    /// Post-toggle URL query string (without leading `?`), e.g.,
+    /// `filter=&sort=name&order=asc&tag=backup&tag=weekly`. Active tags
+    /// in the URL are sorted alphabetical (canonicalized per UI-SPEC §
+    /// URL canonicalization). Tag values are URL-encoded via
+    /// `url::form_urlencoded::Serializer` (defense-in-depth; the P22
+    /// charset regex already prevents structural escape).
+    pub href: String,
+    /// Operator-visible aria-label for the chip — "Tag filter: backup
+    /// (active — click to remove)" or "Tag filter: weekly (inactive —
+    /// click to add)". Encapsulated in the view-model so the template
+    /// renders a single field rather than branching inline.
+    pub aria_label: String,
+}
+
+/// Phase 23: build a `Vec<ChipView>` from the fleet-tag set + active set
+/// + current request params.
+///
+/// Each chip's `href` is the post-toggle URL: active chips emit URLs that
+/// REMOVE their tag; inactive chips emit URLs that ADD their tag. The
+/// post-toggle active set is canonicalized alphabetical before
+/// serialization so all chip URLs (and bookmarks) share the same canonical
+/// form.
+///
+/// Tag values are URL-encoded via `url::form_urlencoded::Serializer`
+/// (the `url` crate is a direct dep at v2.5.8). The P22 charset regex
+/// already prevents structural escape upstream; this is defense-in-depth.
+fn build_chip_views(
+    fleet_tags: &[String],
+    active_tags: &[String],
+    filter: &str,
+    sort: &str,
+    order: &str,
+) -> Vec<ChipView> {
+    fleet_tags
+        .iter()
+        .map(|tag| {
+            let is_active = active_tags.iter().any(|t| t == tag);
+
+            // Compute the post-toggle active set:
+            //  - if currently active   → REMOVE this tag (toggle off)
+            //  - if currently inactive → ADD this tag (toggle on),
+            //    re-canonicalize (sort + dedup)
+            let mut next: Vec<String> = active_tags.to_vec();
+            if is_active {
+                next.retain(|t| t != tag);
+            } else {
+                next.push(tag.clone());
+                next.sort();
+                next.dedup();
+            }
+
+            // Build the post-toggle query string. Use
+            // `url::form_urlencoded::Serializer` (the `url` crate at
+            // v2.5.8 is already a direct dep — see Cargo.toml). It emits
+            // `application/x-www-form-urlencoded` form-encoded pairs,
+            // which is exactly what `axum_extra::extract::Query`
+            // (backed by `serde_html_form`) round-trips on the way in.
+            let mut href = String::new();
+            {
+                let mut ser = url::form_urlencoded::Serializer::new(&mut href);
+                ser.append_pair("filter", filter);
+                ser.append_pair("sort", sort);
+                ser.append_pair("order", order);
+                for t in &next {
+                    ser.append_pair("tag", t);
+                }
+                ser.finish();
+            }
+
+            let aria_label = if is_active {
+                format!("Tag filter: {tag} (active — click to remove)")
+            } else {
+                format!("Tag filter: {tag} (inactive — click to add)")
+            };
+
+            ChipView {
+                tag: tag.clone(),
+                is_active,
+                href,
+                aria_label,
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +455,20 @@ pub async fn dashboard(
     active_tags.dedup();
     active_tags.retain(|t| fleet_tags.contains(t));
 
+    // Phase 23 D-11 / RESEARCH § Pattern 5 Option A: precompute chip view
+    // models ONCE per request, before the view-model construction. Both the
+    // full-page (DashboardPage) and HTMX-partial (JobTablePartial) renders
+    // receive the same `chips` vector; the OOB partial response renders the
+    // exact same chip data the full-page response would, guaranteeing the
+    // live DOM state matches the canonical URL state.
+    let chips = build_chip_views(
+        &fleet_tags,
+        &active_tags,
+        &params.filter,
+        &params.sort,
+        &params.order,
+    );
+
     // Now apply the active-tag filter to the actual rendered fleet. The
     // `unfiltered_jobs` binding is consumed by the fold and goes out of scope
     // here; the new `jobs` shadows it and keeps the existing role downstream
@@ -434,15 +571,25 @@ pub async fn dashboard(
     let csrf_token = csrf::get_token_from_cookies(&cookies);
 
     if is_htmx {
+        // Phase 23 D-11: HTMX path emits the OOB chip strip prefix
+        // (rendered by `templates/partials/job_table.html` when
+        // `include_oob_chip_strip == true`) followed by the table body.
         JobTablePartial {
             jobs: job_views,
             csrf_token,
             fleet_tags,
             active_tags,
+            chips,
+            include_oob_chip_strip: true,
         }
         .into_web_template()
         .into_response()
     } else {
+        // Phase 23 D-11: full-page path renders the chip strip in its
+        // natural body position via `templates/pages/dashboard.html`. The
+        // OOB block in the partial template is gated `false` here, so
+        // `{% include %}`-ing the partial inside `<tbody>` does NOT emit
+        // a duplicate chip strip.
         DashboardPage {
             jobs: job_views,
             filter: params.filter,
@@ -452,6 +599,8 @@ pub async fn dashboard(
             csrf_token,
             fleet_tags,
             active_tags,
+            chips,
+            include_oob_chip_strip: false,
         }
         .into_web_template()
         .into_response()
