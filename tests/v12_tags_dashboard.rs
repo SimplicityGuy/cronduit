@@ -655,6 +655,47 @@ async fn oob_response_shape() {
          Putting it on each chip <a> is the silent-failure mode in RESEARCH § Pitfall 2. Got: \
          {oob_count} occurrences."
     );
+
+    // 23-RC3 UAT regression lock: OOB chip strip MUST be wrapped in <template>.
+    //
+    // Both the 3s table-body poll and the chip-toggle action use
+    // `hx-target="#job-table-body"` + `hx-swap="innerHTML"` — the swap
+    // target is a `<tbody>`. The HTML5 parser's "in table body" insertion
+    // mode rejects non-`<tr>` children. When HTMX innerHTMLs a response
+    // containing `<div>` (the OOB chip strip) followed by `<tr>`s into a
+    // `<tbody>`, the parser foster-parents the `<div>` AND strands the
+    // `<tr>` cell contents outside their row wrappers — every row becomes
+    // a flat sequence of <input>, <a>, <span>, <div>, <span>, <form>
+    // children of the tbody, garbling the entire table.
+    //
+    // `<template>` is parser-permissive in any context; HTMX 1.9+ unwraps
+    // `<template>`-wrapped OOB elements before the foster-parenting parser
+    // sees them. See https://htmx.org/docs/#oob_swaps "Troublesome Tables".
+    //
+    // This regression was discovered during 23-RC3 UAT — the integration
+    // tests above pass on raw HTML byte content, but the BROWSER PARSER
+    // behavior was never exercised. Verified manually via Playwright.
+    let template_count = body.matches("<template>").count();
+    assert_eq!(
+        template_count, 1,
+        "OOB chip strip MUST be wrapped in <template>...</template> to bypass HTML5 \
+         foster-parenting in tbody swap context. Without the <template> wrap, the chip-toggle \
+         and 3s poll responses garble the entire table body. Got: {template_count} <template> \
+         tags in HTMX response (expected: 1)."
+    );
+    // Belt-and-braces: the <template> opens BEFORE the chip strip and closes AFTER it.
+    let template_open = body.find("<template>").expect("<template> open in HTMX response");
+    let template_close = body
+        .find("</template>")
+        .expect("</template> close in HTMX response");
+    let chip_strip_pos = body
+        .find("id=\"cd-tag-chip-strip\"")
+        .expect("chip strip id in response");
+    assert!(
+        template_open < chip_strip_pos && chip_strip_pos < template_close,
+        "<template> wrap MUST enclose the OOB chip strip (template_open={template_open}, \
+         chip_strip_pos={chip_strip_pos}, template_close={template_close})"
+    );
 }
 
 // V-13: Sort-header href + hx-get both contain &tag=... for every active tag
