@@ -718,6 +718,71 @@ async fn sort_header_carries_active_tags() {
     }
 }
 
+// WR-03 regression: chip `<a>` carries BOTH `href` and `hx-get`, both
+// referencing the same `chip.href` post-toggle URL. Askama HTML-escapes
+// `&` separators (`&` -> `&amp;`) on render; the browser + HTMX decode
+// the entity transparently when reading the attribute value at click
+// time. This test asserts the chip strip's own `hx-get` survives the
+// escape round-trip and contains the canonical post-toggle URL form
+// (`tag=backup&tag=weekly` after entity-decode).
+//
+// Builder-level invariants for `chip.href` (filter omission, active-tag
+// drop / inactive-tag add) live in
+// `src/web/handlers/dashboard.rs::tests::build_chip_views_*`. This test
+// closes the gap from the rendered-HTML side.
+#[tokio::test]
+async fn chip_hx_get_round_trips_active_tag_through_html_escape() {
+    let (app, pool) = build_test_app().await;
+    seed_job_with_tags(&pool, "alpha", "*/5 * * * *", &["backup", "weekly"]).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/?tag=backup")
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let body = std::str::from_utf8(&bytes).expect("utf-8");
+
+    // Locate the inactive `weekly` chip's anchor — it's the chip whose
+    // post-toggle URL ADDS `weekly` to the active set, so its hx-get
+    // should carry `tag=backup&tag=weekly` (entity-encoded as
+    // `tag=backup&amp;tag=weekly` in the rendered HTML).
+    let weekly_anchor = ">\n    weekly\n  </a>";
+    let weekly_idx = body
+        .find(weekly_anchor)
+        .or_else(|| body.find("> weekly <"))
+        .expect("weekly chip anchor present");
+    let scan_start = weekly_idx.saturating_sub(800);
+    let weekly_block = &body[scan_start..weekly_idx];
+
+    assert!(
+        weekly_block.contains("hx-get=\"?"),
+        "weekly chip <a> MUST carry hx-get=\"?...\"; window: {weekly_block}"
+    );
+    // Askama 0.15 emits `&#38;` (numeric entity) for `&` in attribute
+    // values; the browser + HTMX decode that to `&` at click time.
+    // Accept any of the equivalent encodings — the load-bearing
+    // property is that the post-toggle active set `[backup, weekly]`
+    // appears in alphabetical order, regardless of entity form.
+    assert!(
+        weekly_block.contains("tag=backup&#38;tag=weekly")
+            || weekly_block.contains("tag=backup&amp;tag=weekly")
+            || weekly_block.contains("tag=backup&tag=weekly"),
+        "inactive weekly chip's hx-get MUST round-trip the canonical \
+         post-toggle active set `tag=backup&tag=weekly` (alphabetical, \
+         deduped). Any equivalent `&` encoding (raw, `&amp;`, `&#38;`) \
+         is acceptable. window: {weekly_block}"
+    );
+}
+
 // V-14: Hidden <input name="tag"> rendered for each active tag; poll hx-include lists [name='tag']
 #[tokio::test]
 async fn poll_hx_include_widened() {

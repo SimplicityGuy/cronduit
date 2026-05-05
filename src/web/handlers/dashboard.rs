@@ -121,6 +121,10 @@ struct JobTablePartial {
 /// the template renders it via `<a href="?{{ chip.href }}" hx-get="?{{ chip.href }}">`.
 /// Single source of truth for href + hx-get (DRY); avoids inline askama
 /// iteration over `active_tags` inside chip markup.
+///
+/// `pub(crate)` so the dashboard tests can assert the post-toggle URL
+/// shape directly (WR-03), sidestepping askama's HTML auto-escape
+/// (which renders `&` as `&amp;` in the rendered attribute value).
 #[derive(Debug)]
 pub struct ChipView {
     /// The tag name itself (e.g., "backup"). Rendered by askama with the
@@ -156,7 +160,12 @@ pub struct ChipView {
 /// Tag values are URL-encoded via `url::form_urlencoded::Serializer`
 /// (the `url` crate is a direct dep at v2.5.8). The P22 charset regex
 /// already prevents structural escape upstream; this is defense-in-depth.
-fn build_chip_views(
+///
+/// `pub(crate)` so dashboard integration tests can assert chip URL
+/// shape directly (WR-03 regression — askama's auto-escape mangles the
+/// rendered `hx-get` attribute, so per-chip URL assertions live at the
+/// builder boundary).
+pub(crate) fn build_chip_views(
     fleet_tags: &[String],
     active_tags: &[String],
     filter: &str,
@@ -734,6 +743,86 @@ mod tests {
             "BTreeSet -> Vec MUST yield distinct alphabetical fleet tags. Duplicates \
              across jobs (`backup` in jobs 'a' and 'b') MUST collapse to one chip; \
              empty-tag jobs MUST contribute nothing; output MUST be alphabetical."
+        );
+    }
+
+    // WR-03 regression: `chip.href` is the SINGLE SOURCE OF TRUTH for the
+    // chip's `<a href>` AND `hx-get` attributes. Askama HTML-escapes `&`
+    // separators on render (`&` -> `&amp;`) and the browser+HTMX decode
+    // them transparently, so this test asserts on the BUILDER OUTPUT
+    // (pre-escape) — that is the surface we control. A future change that
+    // accidentally diverges `href` from `hx-get` (e.g., adds an inline
+    // form-encode in the template for one attribute but not the other)
+    // would be caught by template review; a future change that emits the
+    // wrong post-toggle URL from the BUILDER is what this test catches.
+    #[test]
+    fn build_chip_views_post_toggle_active_remove_inactive_add() {
+        let fleet = ["backup".to_string(), "weekly".to_string()];
+        let active = ["backup".to_string()];
+        let chips = build_chip_views(&fleet, &active, "", "name", "asc");
+
+        let backup = chips
+            .iter()
+            .find(|c| c.tag == "backup")
+            .expect("backup chip in output");
+        assert!(
+            backup.is_active,
+            "backup is in active set; chip MUST render is_active=true"
+        );
+        // Active chip's post-toggle URL DROPS its own tag (toggle off).
+        // Empty filter is omitted by WR-04 — the URL contains only
+        // `sort` + `order` and no tags.
+        assert_eq!(
+            backup.href, "sort=name&order=asc",
+            "active backup chip's post-toggle URL MUST drop its own tag (toggle off) \
+             AND omit the empty filter pair (WR-04). got: {}",
+            backup.href
+        );
+
+        let weekly = chips
+            .iter()
+            .find(|c| c.tag == "weekly")
+            .expect("weekly chip in output");
+        assert!(
+            !weekly.is_active,
+            "weekly is NOT in active set; chip MUST render is_active=false"
+        );
+        // Inactive chip's post-toggle URL ADDS itself to the canonical
+        // (sorted, deduped) active set: `[backup, weekly]`. The two `&`
+        // separators here are literal in the builder output; askama
+        // escapes them to `&amp;` at render time, but builder-level
+        // assertions sidestep the escape (review note WR-03).
+        assert_eq!(
+            weekly.href, "sort=name&order=asc&tag=backup&tag=weekly",
+            "inactive weekly chip's post-toggle URL MUST add itself to the canonical \
+             active set in alphabetical order. got: {}",
+            weekly.href
+        );
+    }
+
+    // WR-03 regression: the `filter` value flows through the builder
+    // verbatim when present, and the URL form-encodes through
+    // `url::form_urlencoded::Serializer`. Confirms the WR-04 gate emits
+    // `filter=...` only when non-empty.
+    #[test]
+    fn build_chip_views_emits_filter_only_when_non_empty() {
+        let fleet = ["backup".to_string()];
+        let active: [String; 0] = [];
+
+        let chips_empty = build_chip_views(&fleet, &active, "", "name", "asc");
+        let backup_empty = chips_empty.iter().find(|c| c.tag == "backup").unwrap();
+        assert!(
+            !backup_empty.href.starts_with("filter="),
+            "empty filter MUST NOT emit `filter=` (WR-04); got: {}",
+            backup_empty.href
+        );
+
+        let chips_with = build_chip_views(&fleet, &active, "alpha", "name", "asc");
+        let backup_with = chips_with.iter().find(|c| c.tag == "backup").unwrap();
+        assert!(
+            backup_with.href.starts_with("filter=alpha&"),
+            "non-empty filter MUST emit `filter=alpha&` as the leading pair; got: {}",
+            backup_with.href
         );
     }
 }
