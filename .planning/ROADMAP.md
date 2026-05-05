@@ -291,7 +291,7 @@ Plans:
   4. An operator can share a filtered dashboard URL like `/?tag=backup&tag=weekly` (repeated `?tag=` params); the chips render in the active state on page load — bookmarkable.
   5. An operator pushing the `v1.2.0-rc.3` tag sees the GHCR image published at `ghcr.io/SimplicityGuy/cronduit:v1.2.0-rc.3` on both architectures.
 
-**Plans:** 4/8 plans executed
+**Plans:** 5/8 plans executed
 
 Plans:
 **Wave 0**
@@ -305,7 +305,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [x] 23-04-PLAN.md — CSS: cd-tag-chip-* family in @layer components + reduced-motion + print extensions; zero new tokens (TAG-06, TAG-08)
-- [ ] 23-05-PLAN.md — Template: ChipView precompute + chip strip insert above filter row + sort-header href widening + poll hx-include widening + OOB swap composition (TAG-06, TAG-08; V-06, V-08..V-14)
+- [x] 23-05-PLAN.md — Template: ChipView precompute + chip strip insert above filter row + sort-header href widening + poll hx-include widening + OOB swap composition (TAG-06, TAG-08; V-06, V-08..V-14)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 23-06-PLAN.md — UAT: 3 just uat-chips-* recipes + README Tag Filter Chips subsection (TAG-06, TAG-07; V-15, V-16)
@@ -360,7 +360,7 @@ Plans:
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 10/11 | In Progress|  |
 | 22. Job Tagging Schema + Validators | 4/6 | In Progress|  |
-| 23. Job Tagging Dashboard Filter Chips — rc.3 | 4/8 | In Progress|  |
+| 23. Job Tagging Dashboard Filter Chips — rc.3 | 5/8 | In Progress|  |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
 
 ## v1.2 Build Order

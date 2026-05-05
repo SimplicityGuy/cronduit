@@ -4,14 +4,14 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 23 UI-SPEC approved
-last_updated: "2026-05-05T02:28:42.850Z"
+last_updated: "2026-05-05T02:54:50.958Z"
 last_activity: 2026-05-05
 progress:
   total_phases: 10
   completed_phases: 8
   total_plans: 70
-  completed_plans: 66
-  percent: 94
+  completed_plans: 67
+  percent: 96
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 23 (job-tagging-dashboard-filter-chips-rc-3) — EXECUTING
-Plan: 4 of 8
+Plan: 5 of 8
 Status: Ready to execute
 Last activity: 2026-05-05
 
-Progress: [█████████░] 94%
+Progress: [██████████] 96%
 
 ## v1.2 Roadmap Summary
 
@@ -144,6 +144,10 @@ All v1.0 and v1.1 decisions live in `.planning/PROJECT.md` § Key Decisions.
 - [Phase ?]: [Phase 23-01]: Wave-0 test scaffolding pattern landed — 12 named #[tokio::test] async functions in tests/v12_tags_dashboard.rs (V-01..V-04, V-06, V-08..V-14) + 2 named in src/web/handlers/dashboard.rs::tests (V-05, V-07), all in todo!() state. Wave 1-3 plans now have a stable, compiling test surface to land impls against.
 - [Phase 23]: Plan 23-02 — DB layer accepts active_tags: &[String]; both backend arms compose variadic AND-chain via parameterized binds; conditional tags != '[]' clause gates TAG-07 untagged-hidden semantics; V-01..V-04 GREEN
 - [Phase ?]: [Phase 23-04]: cd-tag-chip-* component family added to @layer components per UI-SPEC § Component Inventory § CSS contract — triple-channel a11y active state (border + color + font-weight 700); :focus-visible box-shadow 0 0 0 2px var(--cd-green-dim) matches Phase 13/14/21 pattern; @media (prefers-reduced-motion: reduce) and @media print extended single-line (NOT duplicated); ZERO new token declarations introduced. UI-SPEC-claimed tokens --cd-space-10 and --cd-radius-full ABSENT from :root — substituted literals 40px and 9999px inline with adjacent fallback comment per plan's pre-authorized procedure; gap surfaced in 23-04-SUMMARY § Known Stubs / Token Gaps. V-11 (css_only_chip_no_inline_js) goes GREEN after Plan 23-05.
+- [Phase ?]: Plan 23-05: ChipView precomputation pattern (RESEARCH § Pattern 5 Option A) — handler builds Vec<ChipView> once per request via url::form_urlencoded::Serializer; both view-model arms receive the same data; OOB partial response renders identical chip data to full-page response (DOM/URL state lockstep).
+- [Phase ?]: Plan 23-05: Dual-struct field placement of include_oob_chip_strip driven by askama 0.15 include-scope rule — DashboardPage carries the field set false (chip strip in natural body position); JobTablePartial carries it set true (OOB prefix renders in HTMX response). Single source of struct definitions for Phase 23.
+- [Phase ?]: Plan 23-05: url::form_urlencoded::Serializer for chip href encoding (NOT a new urlencoding/percent_encoding direct dep) — symmetric with axum_extra::Query (serde_html_form) on the way back; the url crate v2.5.8 is already a direct dep used by SSRF guard + DB URL parsing. Zero new external crates.
+- [Phase ?]: Plan 23-05: OOB block lives in templates/partials/job_table.html (Option A from PATTERNS) gated on include_oob_chip_strip — single template carries three behaviors (full-page include with flag false, HTMX response body with flag true). Avoids dual-Template-derive or response-composer complexity.
 
 ### Open questions
 
@@ -182,7 +186,7 @@ v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE
 
 ## Session Continuity
 
-Last session: 2026-05-05T02:28:35.800Z
+Last session: 2026-05-05T02:54:50.945Z
 Stopped at: Phase 23 UI-SPEC approved
 Resume command: `/gsd-discuss-phase 20` for Webhook SSRF/HTTPS posture + Retry/Drain + Metrics — rc.1
 
