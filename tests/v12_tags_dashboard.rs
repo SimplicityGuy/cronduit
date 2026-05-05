@@ -484,6 +484,57 @@ async fn stale_tag_silent_drop() {
     );
 }
 
+// WR-01 regression: case-insensitive URL parse for ?tag=. Fleet tags are
+// guaranteed lowercase by the P22 validator, but URL query parsing is
+// case-preserving — without canonicalization, a bookmarked ?tag=Backup
+// would case-mismatch the fleet entry `backup` and drop at the retain
+// step (silent, with no chip activated). Lowercasing before the retain
+// keeps the chip strip case-insensitive on input.
+#[tokio::test]
+async fn uppercase_url_tag_activates_lowercase_chip() {
+    let (app, pool) = build_test_app().await;
+    seed_job_with_tags(&pool, "alpha", "*/5 * * * *", &["backup", "weekly"]).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/?tag=BACKUP")
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let body = std::str::from_utf8(&bytes).expect("utf-8");
+
+    // The `backup` chip must be active even though the URL spelled it
+    // `BACKUP`. Locate the backup chip anchor and assert its class
+    // includes `cd-tag-chip--active`.
+    let backup_anchor_text = ">\n    backup\n  </a>";
+    let backup_idx = body
+        .find(backup_anchor_text)
+        .or_else(|| body.find("> backup <"))
+        .expect("backup chip anchor must be present");
+    let scan_start = backup_idx.saturating_sub(500);
+    let backup_block = &body[scan_start..backup_idx];
+    assert!(
+        backup_block.contains("cd-tag-chip--active"),
+        "?tag=BACKUP must activate the lowercase `backup` chip (WR-01 case-insensitive parse); \
+         backup chip block window: {backup_block}"
+    );
+
+    // Hidden input renders the canonical lowercase form so the 3s poll's
+    // hx-include picks up the same shape the validator persists.
+    assert!(
+        body.contains("<input type=\"hidden\" name=\"tag\" value=\"backup\">"),
+        "hidden input must carry the canonicalized lowercase `backup`, not `BACKUP`"
+    );
+}
+
 // V-11: Chip element has correct CSS classes; no inline JS introduced
 #[tokio::test]
 async fn css_only_chip_no_inline_js() {

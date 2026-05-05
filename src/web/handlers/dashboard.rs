@@ -444,12 +444,20 @@ pub async fn dashboard(
         .collect();
 
     // Phase 23 / UI-SPEC § URL canonicalization + § Stale-tag URL handling:
-    // dedup + canonicalize alphabetical (so `/?tag=zebra&tag=alpha` and
-    // `/?tag=alpha&tag=zebra` produce the same shareable URL) + intersect
-    // with fleet so stale URL tags are silently dropped (RESEARCH § Pitfall 4
-    // / threat T-23-03-01). The retain step is the security boundary: any
+    // canonicalize case → dedup → alphabetical → intersect with fleet so
+    // stale URL tags are silently dropped (RESEARCH § Pitfall 4 / threat
+    // T-23-03-01). The retain step is the security boundary: any
     // operator-supplied tag NOT in the fleet is dropped BEFORE reaching SQL.
-    let mut active_tags: Vec<String> = params.tags.clone();
+    //
+    // WR-01: lowercase BEFORE the retain. Fleet tags are guaranteed
+    // lowercase (validator normalizes via `to_lowercase()` at config-load),
+    // but URL query parsing does NOT lowercase `?tag=` values — so a
+    // bookmarked `?tag=Backup` would case-mismatch the fleet entry
+    // `backup` and silently drop. Canonicalizing case here matches the
+    // operator's intent (chip strip is case-insensitive on input,
+    // case-preserving lowercase on output).
+    let mut active_tags: Vec<String> =
+        params.tags.iter().map(|t| t.to_lowercase()).collect();
     active_tags.sort();
     active_tags.dedup();
     active_tags.retain(|t| fleet_tags.contains(t));
