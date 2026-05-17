@@ -16,6 +16,20 @@
 
 ---
 
+## What's New in v1.2
+
+Cronduit v1.2 — Operator Integration & Insight — adds five operator-observable features on top of the v1.1 codebase:
+
+- **Outbound webhooks** ([§Webhooks](#webhooks)) — Standard-Webhooks-v1 payload, HMAC-SHA256 signing, full-jitter retry, SSRF-aware HTTPS posture.
+- **Custom Docker labels** ([§Labels](#labels)) — `[defaults]` + per-job merge precedence with a `cronduit.*` reserved-namespace validator.
+- **Failure-context panel** on run-detail — five P1 signals (time, image, config hash, duration-vs-p50, scheduler-fire-skew) on every failed or timed-out run.
+- **Exit-code histogram card** on job-detail — 10-bucket last-100-runs view with a status-discriminator-wins classifier.
+- **Job tagging + dashboard filter chips** ([§Tag Filter Chips](#tag-filter-chips)) — tag your jobs, get auto-rendered AND-filter chips with bookmarkable URLs.
+
+See [MILESTONES.md](./MILESTONES.md) for the full v1.2 release log and audit. Threat model coverage for v1.2: [Webhook Outbound (SSRF)](./THREAT_MODEL.md#threat-model-5-webhook-outbound) and [Operator-supplied Docker labels](./THREAT_MODEL.md#threat-model-6-operator-supplied-docker-labels).
+
+---
+
 ## Security
 
 **Read this section before running Cronduit.**
@@ -314,6 +328,34 @@ Chip strip behavior:
 
 Tags are also delivered in webhook payloads (the `tags` field of the `run_finalized` event — see [docs/WEBHOOKS.md](./docs/WEBHOOKS.md)). Tags are NOT exposed as Prometheus labels (cardinality discipline; same posture as exit codes).
 
+### Webhooks
+
+Cronduit can POST a run-finalized event to any HTTPS URL when a job run reaches a terminal state. Useful for chat notifications, on-call escalation, audit pipelines, or any system that listens for "what just ran and how did it go."
+
+Configure webhooks per-job (or set defaults inherited by every job):
+
+```toml
+[defaults]
+webhook = { secret_env = "CRONDUIT_WEBHOOK_SECRET", states = ["failed", "timeout"] }
+
+[[jobs]]
+name = "nightly-postgres-backup"
+schedule = "0 2 * * *"
+image = "postgres:16-alpine"
+command = ["pg_dumpall"]
+webhook = { url = "https://hooks.example.com/cronduit" }
+```
+
+Webhook behavior:
+
+- **Standard-Webhooks-v1 payload.** `webhook-id` / `webhook-timestamp` / `webhook-signature` headers; body carries `payload_version: "v1"`, job name, run ID, status, exit code, duration, start/end timestamps, and tags.
+- **HMAC-SHA256 signing.** Secret is read from the env var named in `secret_env` (never plaintext-in-config). Receiver examples for Python / Go / Node ship in `docs/webhooks/receivers/`.
+- **State filter + coalescing.** `states = ["failed", "timeout", "stopped"]` controls which terminal states fire. Coalescing is edge-triggered: by default only the first run of a fail-streak fires (configurable per job via `fire_every`).
+- **HTTPS-required + SSRF posture.** Plain HTTP is rejected for non-loopback / non-RFC1918 destinations; `userinfo` credentials are stripped from URLs before delivery.
+- **Retry + drain.** Three attempts at t=0, t=30s, t=300s with full jitter. Unrecoverable failures land in the `webhook_deliveries` dead-letter table. Graceful 30s drain on shutdown.
+
+See [docs/WEBHOOKS.md](./docs/WEBHOOKS.md) for the full payload schema, receiver examples, threat model, and operational runbook.
+
 ### Job Types
 
 **Command job** -- runs a local shell command:
@@ -501,6 +543,13 @@ docker run --rm \
 4. All diagrams in PR descriptions, commits, and docs must be mermaid code blocks (no ASCII art)
 
 See `CLAUDE.md` for the full project constraints.
+
+---
+
+## Releases
+
+- [MILESTONES.md](./MILESTONES.md) — full v1.0 / v1.1 / v1.2 release log with shipped tags, phases, and audit pointers.
+- [GitHub Releases](https://github.com/SimplicityGuy/cronduit/releases) — published binaries, source tarballs, and `git-cliff`-authored release notes.
 
 ---
 
