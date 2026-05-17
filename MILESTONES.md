@@ -4,6 +4,17 @@ Release log for Cronduit. Each entry summarizes a shipped milestone and points a
 
 ---
 
+## v1.2 — Operator Integration & Insight — SHIPPED YYYY-MM-DD
+
+v1.2 is the operator-integration-and-insight milestone on top of the shipped v1.1.0 codebase. Ten phases (15–24) delivered five operator-observable features: outbound webhook notifications (Standard-Webhooks-v1 payload + HMAC-SHA256 signing + full-jitter retry + 30s drain + SSRF/HTTPS posture + per-job state filter + edge-triggered coalescing), custom Docker labels (`[defaults]` + per-job merge precedence + `cronduit.*` reserved-namespace validator + type-gated to `docker` jobs), a failure-context UI panel on run-detail (5 P1 signals: time + image + config + duration-vs-p50 + scheduler-fire-skew), an exit-code histogram card on job-detail (10-bucket strategy + last-100-runs window + status-discriminator-wins classifier), and job tagging with dashboard filter chips (lowercase+trim normalization + charset regex + AND filter semantics + URL-state via repeated `?tag=` + untagged-hidden when filter active). One new module (`src/webhooks/`), one new validator pair (`src/config/validate.rs::check_labels_*`), one new DB column (`job_runs.config_hash`), one new JSON-encoded TEXT column (`jobs.tags`), one new view-model module (`src/web/exit_bucket.rs`). Threat model gained Threat Model 5 (Webhook Outbound) and Threat Model 6 (Operator-supplied Docker labels) at milestone close. `cargo-deny` promoted from non-blocking (warn) to blocking (error) before final ship. Released iteratively as `v1.2.0-rc.1` through `v1.2.0-rc.4`, then promoted to `v1.2.0`. <!-- rc-tags: extend if iterated -->
+
+**Tags:** `v1.2.0-rc.1`, `v1.2.0-rc.2`, `v1.2.0-rc.3`, `v1.2.0-rc.4`, `v1.2.0`
+**Phases:** 15 (Foundation Preamble), 16 (Failure-Context Schema + run.rs Bug Fix), 17 (Custom Docker Labels), 18 (Webhook Payload + State-Filter + Coalescing), 19 (Webhook HMAC + Receiver Examples), 20 (Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1), 21 (Failure-Context UI + Exit-Code Histogram — rc.2), 22 (Job Tagging Schema + Validators), 23 (Job Tagging Dashboard Filter Chips — rc.3), 24 (Milestone Close-Out — rc.4 + final v1.2.0)
+**Requirements delivered:** 41 across 6 categories (FOUND-14..16, WH-01..11, LBL-01..06, FCTX-01..07, EXIT-01..06, TAG-01..08)
+**Audit:** see `.planning/milestones/v1.2-ROADMAP.md`, `.planning/milestones/v1.2-REQUIREMENTS.md`, `.planning/milestones/v1.2-MILESTONE-AUDIT.md` (archived by `/gsd-complete-milestone v1.2`)
+
+---
+
 ## v1.1 — Operator Quality of Life — SHIPPED 2026-04-23
 
 v1.1 is a polish-and-fix milestone on top of the shipped v1.0.1 codebase. Six phases (10, 11, 12, 12.1, 13, 14) delivered the "stop a running job" capability, per-job run numbers with fixed log UX, a Docker healthcheck that works out of the box, GHCR tag hygiene (`:latest` / `:main` semantics locked), observability polish (cross-job timeline + per-job sparklines + p50/p95 duration trends), and bulk enable/disable ergonomics with a settings-page override audit. No new external dependencies; one new nullable DB column (`jobs.enabled_override`); the scheduler core was not refactored. Released iteratively as `v1.1.0-rc.1` through `v1.1.0-rc.6`, then promoted to `v1.1.0`.
