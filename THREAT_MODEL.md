@@ -1,6 +1,6 @@
 # Cronduit Threat Model
 
-**Revision:** 2026-04-12 (Phase 6 -- complete)
+**Revision:** 2026-05-17 (Phase 24 — v1.2.0 close-out)
 **Scope:** Single-node, single-operator self-hosted deployments.
 
 ---
@@ -186,47 +186,75 @@ A malicious image has full container capabilities within its namespace. If the o
 
 ---
 
-## Threat Model 5: Webhook Outbound (SSRF Accepted Risk)
-
-> **Status:** Words-only stub for v1.2.0 (Phase 20). The canonical close-out — full STRIDE table, attack-vector enumeration, residual-risk wording for the v1.3 allowlist deferral — lands in [Phase 24 (Milestone Close-Out)](.planning/ROADMAP.md). This stub satisfies WH-08 by enumerating the threat, the v1.2 mitigations, and the accepted residual risk; it is intentionally lighter than TM1–TM4.
+## Threat Model 5: Webhook Outbound
 
 ### Threat
 
-An operator with access to the Cronduit configuration (config-file edit OR — in v1 — anyone reaching the unauthenticated web UI) can set a job's `webhook.url` to any HTTP/HTTPS endpoint. Cronduit will then issue an authenticated HMAC-signed POST to that endpoint when the job's matching state-filter fires.
-
-If the endpoint resolves to an internal-only service (cloud-metadata IMDS, an internal admin panel, an unauthenticated database HTTP API, etc.), the outbound POST is a Server-Side Request Forgery (SSRF) primitive: the operator-controllable URL becomes an authenticated request to a service the operator may not legitimately reach from outside the host's network.
+An operator with access to the Cronduit configuration (config-file edit) sets a job's `webhook.url` to any HTTP/HTTPS endpoint. Cronduit then issues an HMAC-signed POST to that endpoint when the job's matching state-filter fires. If the endpoint resolves to an internal-only service (cloud-metadata IMDS, an internal admin panel, an unauthenticated database HTTP API, etc.), the outbound POST is a Server-Side Request Forgery (SSRF) primitive: the operator-controllable URL becomes a Cronduit-originated request to a service the attacker may not legitimately reach from outside the host's network. The signed payload, the response body bleed-through (captured into `webhook_deliveries.last_error` on failure), and the implicit trust some internal services place in requests originating from the local Docker network all widen the blast radius.
 
 ### Attack Vector
 
-1. Attacker reaches the Cronduit UI on a non-loopback bind (or compromises the operator's session on a reverse-proxy-fronted instance).
-2. Attacker either creates a new webhook-configured job OR edits an existing job's webhook URL via the UI / config edit path.
-3. Cronduit, on the next state-filter match, issues a POST to the attacker-chosen URL with a valid `webhook-signature` header (HMAC-SHA256 over the payload using the operator's secret).
-4. Internal services receiving the request may treat it as authenticated (the HMAC is valid for the URL's payload regardless of the receiver's identity) or may simply expose data via the response body that flows back into Cronduit's `webhook_deliveries.last_error` for failure cases.
+1. Attacker gains write access to `cronduit.toml` (host shell compromise, Web UI compromise in a future release that exposes webhook write — v1.2 keeps webhook URLs config-file-only, narrowing this vector) and sets `[[jobs.webhook]] url = "http://169.254.169.254/latest/meta-data/iam/security-credentials/"` or any other internal target.
+2. The job's configured state filter fires (e.g., the next failed run for `states = ["failed"]`).
+3. The webhook worker (`src/webhooks/worker.rs`) consumes the queued event from the bounded `mpsc(1024)`, computes the HMAC-SHA256 signature over the Standard Webhooks v1 payload using the per-job secret from env, and POSTs to the attacker-chosen URL.
+4. The receiver either (a) treats the request as authenticated and returns sensitive data in the response body, (b) executes a side effect (internal admin action, queue enqueue, etc.), or (c) leaks information via the failure path — non-2xx responses persist the response body excerpt into `webhook_deliveries.last_error`, where it can be read back from the Web UI.
 
-### Mitigations (v1.2.0)
+### Mitigations
 
-The Phase 20 design ships **three layered mitigations** without a destination allow/block-list filter:
+- **Bounded-mpsc + isolated delivery worker (Phase 15).** `src/webhooks/{mod,worker}.rs` runs the HTTP delivery in a dedicated `tokio::task` reading from a bounded `tokio::sync::mpsc::channel(1024)`. The scheduler emits via `try_send` and NEVER awaits the channel, so a hostile or slow webhook receiver cannot stall the scheduler loop or back-pressure into job execution.
+- **Standard Webhooks v1 payload + state filter + edge-triggered coalescing (Phase 18).** Delivered payloads carry `payload_version: "v1"` and are state-filtered + coalesced (default fires only on `streak_position == 1`), reducing the per-incident POST volume an attacker-controlled URL receives and bounding the per-job rate.
+- **HMAC-SHA256 signing with env-sourced secrets (Phase 19).** Every body is signed with a per-job secret loaded from `${ENV_VAR}` (`SecretString`-wrapped — never written to logs, `Debug`, or the config file). The base64 signature header matches the Standard Webhooks v1 spec; receiver-side constant-time verification examples ship under `docs/webhooks/receivers/` for Python, Go, and Node so receivers can reject forged payloads.
+- **HTTPS-required validator + SSRF posture (Phase 20).** `src/config/validate.rs::check_webhook_url` rejects `http://` for hosts that are NOT loopback (`127.0.0.0/8`, `::1`, `localhost`) AND NOT RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fd00::/8`); plaintext HTTP can no longer reach a public destination. `strip_url_credentials` (Pitfall 38) scrubs any `userinfo` component before logging or persistence, so credentials accidentally embedded in `webhook.url` never appear in `webhook_deliveries.url`, `webhook_deliveries.last_error`, dashboard rows, or tracing spans.
+- **Full-jitter retry + graceful drain + dead-letter table + Prometheus visibility (Phase 20).** Retries fire at `t=0 / t=30s / t=300s` with a `rand 0.8-1.2×` full-jitter multiplier (caps the burst rate against any single receiver), a 30 s graceful drain blocks on shutdown so in-flight deliveries complete, the `webhook_deliveries` table dead-letters unrecoverable failures so operators see what was attempted, and `cronduit_webhook_{success,failed,retried,dropped}_total` Prometheus counters give the operator real-time visibility into webhook traffic — including a surge that would indicate hostile reconfiguration.
+- **Loopback-bound default + reverse-proxy fronting.** `[server].bind` defaults to `127.0.0.1:8080` and the v1 Web UI does not expose write access to webhook URLs (config-file-only — narrows the v1.2 surface compared with v1.3+ designs where the UI may gain webhook edit). Operators exposing Cronduit beyond loopback front it with a reverse proxy (Caddy/Traefik/nginx) plus an authentication layer. See [Threat Model 2: Untrusted Client](#threat-model-2-untrusted-client) for the canonical loopback-default rationale.
 
-1. **Loopback-bound default.** `[server].bind` defaults to `127.0.0.1:8080`. Non-loopback binds emit a loud `WARN` log at startup with `bind_warning: true` in the structured event. This makes the SSRF surface unreachable from the network by default. *(See [Threat Model 2: Untrusted Client](#threat-model-2-untrusted-client) for the canonical loopback-default rationale.)*
-2. **HTTPS-required validator.** `src/config/validate.rs::check_webhook_url` (called from `run_all_checks`) rejects `http://` URLs whose host is NOT loopback (`127.0.0.0/8`, `::1`, `localhost`) AND NOT RFC1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fd00::/8`). Plaintext HTTP can no longer reach a public destination — every public-destination webhook is HTTPS-encrypted to the receiver, narrowing the data-exfiltration vector. (WH-07 enforcement; see also `docs/WEBHOOKS.md` § HTTPS / SSRF posture.)
-3. **Reverse-proxy fronting + operator-side auth.** Operators exposing Cronduit beyond loopback are expected to front it with an existing reverse proxy (Caddy/Traefik/nginx) plus an authentication layer (basic auth / OIDC / mTLS). This is the documented v1 deployment pattern and is the *intended* authentication boundary for v1.x — Cronduit itself ships unauthenticated by design.
+### Residual Risk
 
-### Accepted Residual Risk
+**Any URL the cronduit container can reach is reachable from the webhook worker.** The operator is responsible for network controls (firewall, network namespaces, outbound deny-list at the gateway layer, or cloud-metadata egress blocking for `169.254.169.254`) to restrict what cronduit's egress can hit. No allow/block-list filter for webhook destination URLs ships in v1.2 — the deliberate position is that a half-built filter is worse than no filter (operators rely on a false sense of security; new bypasses ship faster than they are patched). The v1.2 stance is: operators with config write access are trusted; if that trust assumption breaks, the loopback-default + HTTPS-required + bounded-mpsc + reverse-proxy mitigations bound the blast radius. Operator-controlled response-body excerpts that surface in `webhook_deliveries.last_error` remain visible to anyone with Web UI access — the v1 unauthenticated UI posture from Threat Model 2 inherits here.
 
-**No allow/block-list filter** for webhook destination URLs ships in v1.2. The deliberate position is: a half-built filter is worse than no filter (operators rely on a false sense of security; new bypasses ship faster than they are patched). The v1.2 stance is: **operators with UI access are trusted**; if that trust assumption breaks, the loopback-default + reverse-proxy mitigations bound the blast radius.
+### Recommendations
 
-A destination filter (allow-list, block-list, DNS-pinning, IMDS-blocking) is a **v1.3 candidate** (`PROJECT.md` § Future Requirements). When that lands, this section is replaced by the canonical TM5 entry in Phase 24's close-out wave.
+- Front the Cronduit Web UI with a reverse proxy + auth layer; do not expose the unauthenticated v1 UI to hostile networks.
+- Deny cloud-metadata endpoints (`169.254.169.254`, IPv6 link-local equivalents) at the container's egress firewall when running on cloud-VM hosts where the IMDS surface matters.
+- Restrict outbound network access from the cronduit container to the set of receiver hostnames you actually use (per-host egress allow-list at the gateway or via Docker network policy).
+- Rotate webhook secrets when an operator with config-read access leaves; the secret lives in env, so rotation is an env update + Cronduit restart.
+- A **destination allow/block-list filter** for webhook URLs (allow-list, block-list, DNS-pinning, IMDS-blocking) is a **v1.3 candidate** per `.planning/PROJECT.md` § Future Requirements. When that lands, this section's Residual Risk narrows accordingly.
 
-### Phase 24 Close-Out
+See also: [Threat Model 6: Operator-supplied Docker Labels](#threat-model-6-operator-supplied-docker-labels) for the peer operator-data-into-Docker-daemon surface that Phase 24 also closes.
 
-Phase 24 (`Milestone Close-Out — final v1.2.0 ship`, see `.planning/ROADMAP.md`) replaces this stub with:
+---
 
-- Full STRIDE row coverage in `## STRIDE Summary` for `T-WH-OUT` (Tampering / Information Disclosure / Spoofing of internal services).
-- Concrete recommendation for v1.3's destination filter scope.
-- Cross-link to Threat Model 6 (Operator-supplied Docker labels) which Phase 24 also closes.
-- Revision bump on the document header.
+## Threat Model 6: Operator-supplied Docker labels
 
-Until that lands, this stub is the holding signal: **the threat is known, the mitigations are documented, the canonical close-out is in flight.**
+### Threat
+
+An operator (or attacker with config write access) supplies labels under `[defaults].labels` or per-job `[[jobs]].labels` that either (a) collide with Cronduit's own reserved `cronduit.*` namespace and corrupt orphan reconciliation, (b) confuse downstream Docker ecosystem tooling (Traefik routing rules, Watchtower update policies, log shippers that filter by label) by injecting attacker-chosen routing values, or (c) inflate per-container label cardinality enough to stress the Docker daemon's label store or any downstream observability tool that ingests labels as metrics dimensions.
+
+### Attack Vector
+
+1. Attacker gains write access to `cronduit.toml` (host shell compromise; config file is mounted read-only in the recommended Docker deployment, so this requires breaking the read-only mount or compromising the host before the file is mounted).
+2. Attacker adds `labels = { "cronduit.job" = "spoofed-name", "cronduit.run_id" = "00000000-0000-0000-0000-000000000000" }` to a job — attempting to break the orphan reconciliation loop that identifies Cronduit-spawned containers by these reserved labels.
+3. OR attacker adds `labels = { "traefik.http.routers.api.rule" = "Host(\`evil.example.com\`)" }` to a docker-type job, attempting to hijack a Traefik routing table at container-create time.
+4. Cronduit either rejects the config at load (reserved-namespace + type-gate validators fire) or, if the validators are bypassed, the malicious labels reach the Docker daemon on the next container spawn.
+
+### Mitigations
+
+- **Reserved-namespace validator at config-load (Phase 17).** `src/config/validate.rs::check_labels_reserved` rejects any user-supplied label key whose name lies under the `cronduit.*` reserved namespace. The validator runs in `run_all_checks`, so an invalid config is refused before the job ever schedules — protects orphan reconciliation (`cronduit.job` / `cronduit.run_id`) from operator clobber.
+- **Type-gated `docker`-only validator (Phase 17).** `src/config/validate.rs::check_labels_only_on_docker_jobs` rejects `[[jobs]].labels` on jobs whose `type` is not `docker`. Command-type and inline-script jobs cannot accidentally accept labels meant for Docker; the operator gets a config-load error instead of silent dead config.
+- **Per-key + per-value byte-size cap (Phase 17).** Size limits at config-load bound the per-container label footprint, capping the DoS surface from a hostile label set (millions of bytes, very long keys, etc.) and matching the practical limits Docker's label store enforces internally.
+- **Merge precedence is operator-explicit (Phase 17).** `use_defaults = false` replaces the `[defaults].labels` map entirely; the default merge mode is per-job-wins on collision. The operator cannot accidentally clobber a `[defaults]`-supplied label by re-declaring it — and cannot leak a `[defaults]`-supplied label past a job that explicitly opted out with `use_defaults = false`.
+- **Read-only config mount + standard Unix permissions.** The recommended Docker deployment mounts `cronduit.toml` as `:ro`; `chmod 640` with ownership by the service user keeps unprivileged accounts off the write path entirely. See [Threat Model 3: Config Tamper](#threat-model-3-config-tamper) for the canonical config-tamper mitigation stack that TM6 inherits.
+
+### Residual Risk
+
+Operator-controlled label keys and values flow into the Docker daemon and become visible to any downstream tooling that reads container labels (Traefik, Watchtower, log shippers, Prometheus container-discovery, etc.). Cronduit does not sanitize label values for those downstream surfaces — an attacker with config write access can still inject label values that confuse a particular ecosystem tool, leak into a downstream tool's log lines or Prometheus dimension labels (high-cardinality blow-up), or trip a routing rule whose value parser trusts label data. Filesystem integrity remains the operator's responsibility — TM3's residual risk applies here.
+
+### Recommendations
+
+- Mount `cronduit.toml` read-only (`:ro` in Docker) and set tight file permissions on the host so non-privileged users cannot edit the config.
+- Audit the label set in `[defaults].labels` and per-job `[[jobs]].labels` before applying config reloads; treat label changes with the same care as container image changes.
+- If you also run Traefik / Watchtower / similar label-routed tooling alongside Cronduit, scope their label-filter rules narrowly (e.g., a project-prefix filter) so a Cronduit-issued label cannot accidentally match a sensitive routing rule.
+- Per-label / total-bytes / cardinality refinements to the size-limit validator are a **v1.3 candidate**; the v1.2 limits are sufficient for the documented deployment patterns. Reserved-namespace clobber recovery is currently: operator removes the offending TOML key, restarts Cronduit (or sends `SIGHUP` for config reload), and re-checks orphan-reconciliation logs at startup.
 
 ---
 
@@ -240,6 +268,7 @@ The existing STRIDE analysis from Phase 1 remains valid. This section summarizes
 |----|--------|--------|
 | T-S1 | LAN attacker accesses unauthenticated web UI | Mitigated: loopback default + startup warning. Full auth deferred to v2. |
 | T-S2 | `@random` cron field influenced by malicious clock | Mitigated: uses system clock via `chrono::Utc::now()`. Clock integrity is an OS concern. |
+| T-S3 | Attacker forges webhook payload | Mitigated by HMAC signing; out-of-scope: receiver-side verification (operator's responsibility) |
 
 ### Tampering (T)
 
@@ -248,6 +277,7 @@ The existing STRIDE analysis from Phase 1 remains valid. This section summarizes
 | T-T1 | Host shell access modifies config to inject malicious jobs | Partially mitigated: read-only mount, validation-before-apply on reload. See Config Tamper model above. |
 | T-T2 | Transitive `openssl-sys` dependency breaks rustls-only invariant | Mitigated: `just openssl-check` CI gate. |
 | T-T3 | Schema drift between SQLite and Postgres migrations | Mitigated: `tests/schema_parity.rs` CI gate. |
+| T-T4 | Attacker injects label collision into `cronduit.*` namespace | Mitigated by validator |
 
 ### Repudiation (R)
 
@@ -262,6 +292,7 @@ The existing STRIDE analysis from Phase 1 remains valid. This section summarizes
 | T-I1 | Database credentials leak into logs | Mitigated: `strip_db_credentials` in `src/db/mod.rs`. |
 | T-I2 | Secret values from `${ENV_VAR}` appear in debug output | Mitigated: `SecretString` wrapping with `[REDACTED]` in `Debug`. |
 | T-I3 | Malicious container reads Cronduit process secrets via `/proc` | Mitigated: separate PID namespace by default. No shared PID space unless explicitly configured. |
+| T-I4 | Webhook URL embeds credentials in `userinfo` | Mitigated by `strip_url_credentials` (Pitfall 38) |
 
 ### Denial of Service (D)
 
@@ -270,6 +301,7 @@ The existing STRIDE analysis from Phase 1 remains valid. This section summarizes
 | T-D1 | SQLite writer contention under concurrent log writes | Mitigated: split read/write pools, WAL, `busy_timeout=5000`. |
 | T-D2 | Runaway job fills `job_logs` table | Mitigated: bounded-channel log pipeline (head-drop at 256 lines) + daily retention pruner. |
 | T-D3 | Graceful-shutdown bug leaves process hung | Mitigated: `CancellationToken` + axum `with_graceful_shutdown` + integration test. |
+| T-D4 | Webhook receiver outage stalls scheduler loop | Mitigated by bounded mpsc + delivery worker isolation (Pitfall 28) |
 
 ### Elevation of Privilege (E)
 
@@ -298,3 +330,4 @@ The existing STRIDE analysis from Phase 1 remains valid. This section summarizes
 | Phase 1 skeleton | 2026-04-10 | Initial STRIDE outline with Phase 1 mitigations. Phases 4-6 threats marked TBD. |
 | Phase 6 complete | 2026-04-12 | Expanded with four threat models (Docker socket, untrusted client, config tamper, malicious image). Updated all STRIDE entries with Phase 2-6 mitigations. Resolved all TBD items. |
 | Phase 20 stub | 2026-05-01 | Added Threat Model 5 (Webhook Outbound) as a words-only stub satisfying WH-08. Canonical close-out (full STRIDE rows + residual-risk language for v1.3 deferred allowlist) is Phase 24's milestone close-out per ROADMAP. |
+| Phase 24 close-out | 2026-05-17 | TM5 canonical rewrite (replaces v1.2 stub); new TM6 (Operator-supplied Docker Labels); STRIDE rows T-S3/T-T4/T-I4/T-D4 added; v1.2 milestone close. |
