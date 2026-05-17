@@ -394,7 +394,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 24-06-PLAN.md — 24-RC4-PREFLIGHT.md (autonomous=false maintainer runbook for v1.2.0-rc.4 tag cut)
+- [x] 24-06-PLAN.md — 24-RC4-PREFLIGHT.md (autonomous=false maintainer runbook for v1.2.0-rc.4 tag cut)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -425,7 +425,7 @@ Plans:
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 11/11 | Complete    | 2026-05-03 |
 | 22. Job Tagging Schema + Validators | 6/6 | Complete    | 2026-05-04 |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete    | 2026-05-05 |
-| 24. Milestone Close-Out — final v1.2.0 | 5/8 | In Progress|  |
+| 24. Milestone Close-Out — final v1.2.0 | 6/8 | In Progress|  |
 
 ## v1.2 Build Order
 
