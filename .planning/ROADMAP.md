@@ -50,7 +50,7 @@
 - [x] **Phase 21: Failure-Context UI Panel + Exit-Code Histogram Card — rc.2** — Inline collapsed-by-default panel on run-detail with 5 P1 signals (time deltas, image-digest delta, config-hash delta, duration-vs-p50, scheduler-fire-skew), 10-bucket exit-code histogram on job-detail with `stopped` as distinct bucket and exit `0` as separate stat; **cuts `v1.2.0-rc.2`** (completed 2026-05-03)
 - [x] **Phase 22: Job Tagging Schema + Validators** — `jobs.tags` JSON column, single-file additive migration, lowercase+trim normalization, charset regex `^[a-z0-9][a-z0-9_-]{0,30}$`, reserved-tag rejection, substring-collision check at config-load (completed 2026-05-04)
 - [x] **Phase 23: Job Tagging Dashboard Filter Chips — rc.3** — CSS-only chip components on dashboard, AND filter semantics, untagged-hidden when filter active, URL state via repeated `?tag=`, HTMX dashboard partial swap on chip toggle; **cuts `v1.2.0-rc.3`** (completed 2026-05-05)
-- [ ] **Phase 24: Milestone Close-Out — final `v1.2.0` ship** — UAT-driven rc loop completion, `THREAT_MODEL.md` Threat Model 5 (Webhook Outbound) + Threat Model 6 (Operator-supplied labels), REQUIREMENTS.md flips to Validated, `MILESTONES.md` v1.2 entry, README updates, `:latest` promoted to `:1.2.0` on both archs
+- [x] **Phase 24: Milestone Close-Out — final `v1.2.0` ship** — UAT-driven rc loop completion, `THREAT_MODEL.md` Threat Model 5 (Webhook Outbound) + Threat Model 6 (Operator-supplied labels), REQUIREMENTS.md flips to Validated, `MILESTONES.md` v1.2 entry, README updates, `:latest` promoted to `:1.2.0` on both archs (completed 2026-05-17)
 
 ## Phase Details
 
@@ -402,7 +402,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 24-08-PLAN.md — 24-FINAL-SHIP-PREFLIGHT.md (autonomous=false maintainer final-tag runbook: retag last-passing-UAT rc.N SHA as v1.2.0; verify four-tag equality + cargo-deny ERROR-gate; flip STATE.md SHIPPED)
+- [x] 24-08-PLAN.md — 24-FINAL-SHIP-PREFLIGHT.md (autonomous=false maintainer final-tag runbook: retag last-passing-UAT rc.N SHA as v1.2.0; verify four-tag equality + cargo-deny ERROR-gate; flip STATE.md SHIPPED)
 
 ## Progress
 
@@ -425,7 +425,7 @@ Plans:
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 11/11 | Complete    | 2026-05-03 |
 | 22. Job Tagging Schema + Validators | 6/6 | Complete    | 2026-05-04 |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete    | 2026-05-05 |
-| 24. Milestone Close-Out — final v1.2.0 | 7/8 | In Progress|  |
+| 24. Milestone Close-Out — final v1.2.0 | 8/8 | Complete   | 2026-05-17 |
 
 ## v1.2 Build Order
 
