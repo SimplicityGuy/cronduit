@@ -385,8 +385,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 24-01-PLAN.md — Threat model close-out: TM5 in-place canonical rewrite + new TM6 + STRIDE rows T-S3/T-T4/T-I4/T-D4 + Changelog + README §Security link-back to TM5/TM6 anchors
-- [ ] 24-03-PLAN.md — MILESTONES.md v1.2 release-log entry (additive at top, mirrors v1.1/v1.0 six-row shape)
+- [x] 24-01-PLAN.md — Threat model close-out: TM5 in-place canonical rewrite + new TM6 + STRIDE rows T-S3/T-T4/T-I4/T-D4 + Changelog + README §Security link-back to TM5/TM6 anchors
+- [x] 24-03-PLAN.md — MILESTONES.md v1.2 release-log entry (additive at top, mirrors v1.1/v1.0 six-row shape)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -425,7 +425,7 @@ Plans:
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 11/11 | Complete    | 2026-05-03 |
 | 22. Job Tagging Schema + Validators | 6/6 | Complete    | 2026-05-04 |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete    | 2026-05-05 |
-| 24. Milestone Close-Out — final v1.2.0 | 2/8 | In Progress|  |
+| 24. Milestone Close-Out — final v1.2.0 | 4/8 | In Progress|  |
 
 ## v1.2 Build Order
 
