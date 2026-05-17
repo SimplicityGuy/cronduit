@@ -118,12 +118,12 @@ Operational close-out for the v1.2 — Operator Integration & Insight milestone.
 
 > The decisions below are **[informational]** — repo-wide process constraints honored by absence. They are not phase-implementation tasks. Project-memory file references in parentheses.
 
-- **D-14:** [informational] All Phase 24 changes land via PR on a feature branch. No direct commits to `main`. (`feedback_no_direct_main_commits.md`.)
-- **D-15:** [informational] All diagrams in any Phase 24 artifact (PLAN, MILESTONE-AUDIT, MILESTONES entry, README, THREAT_MODEL, PR description, code comments) are mermaid code blocks. No ASCII art. (`feedback_diagrams_mermaid.md`.)
-- **D-16:** [informational] UAT recipes reference existing/new `just` commands per D-10 plan 24-07; no ad-hoc `cargo` / `docker` / curl-URL invocations. (`feedback_uat_use_just_commands.md`.)
-- **D-17:** [informational] Maintainer validates UAT — Claude does NOT mark UAT passed from its own runs. Plans 24-06, 24-07, 24-08 are `autonomous=false`. (`feedback_uat_user_validates.md`.)
-- **D-18:** [informational] Tag and version match — `Cargo.toml` stays at `1.2.0` through rc.4 cut and final tag (matches v1.2.0 prefix). The `-rc.N` is tag-only. (`feedback_tag_release_version_match.md`.)
-- **D-19:** [informational] `cargo tree -i openssl-sys` must remain empty. Phase 24 adds zero new external crates (cargo-deny promotion is a workflow-level change, not a Rust dependency add). No new TLS / cross-compile surface.
+- **D-14 [informational]:** All Phase 24 changes land via PR on a feature branch. No direct commits to `main`. (`feedback_no_direct_main_commits.md`.)
+- **D-15 [informational]:** All diagrams in any Phase 24 artifact (PLAN, MILESTONE-AUDIT, MILESTONES entry, README, THREAT_MODEL, PR description, code comments) are mermaid code blocks. No ASCII art. (`feedback_diagrams_mermaid.md`.)
+- **D-16 [informational]:** UAT recipes reference existing/new `just` commands per D-10 plan 24-07; no ad-hoc `cargo` / `docker` / curl-URL invocations. (`feedback_uat_use_just_commands.md`.)
+- **D-17 [informational]:** Maintainer validates UAT — Claude does NOT mark UAT passed from its own runs. Plans 24-06, 24-07, 24-08 are `autonomous=false`. (`feedback_uat_user_validates.md`.)
+- **D-18 [informational]:** Tag and version match — `Cargo.toml` stays at `1.2.0` through rc.4 cut and final tag (matches v1.2.0 prefix). The `-rc.N` is tag-only. (`feedback_tag_release_version_match.md`.)
+- **D-19 [informational]:** `cargo tree -i openssl-sys` must remain empty. Phase 24 adds zero new external crates (cargo-deny promotion is a workflow-level change, not a Rust dependency add). No new TLS / cross-compile surface.
 
 ### Claude's Discretion
 

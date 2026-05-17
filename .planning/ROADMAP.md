@@ -63,6 +63,7 @@
 **Requirements**: FOUND-15, FOUND-16, WH-02
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator running `cronduit --version` on the first v1.2 commit sees `1.2.0` (not `1.1.0`).
   2. An operator viewing the GitHub Actions PR check list sees a new `cargo-deny` job that runs advisories + licenses + duplicate-versions checks (failures non-blocking on first rc; status visible).
   3. An operator can fire a job whose webhook receiver is stalled for 60 seconds and the next scheduled jobs across the fleet still fire on time (no scheduler drift > 1 s) — the `try_send` non-blocking path holds.
@@ -71,6 +72,7 @@
 **Plans:** 5/5 plans complete
 
 Plans:
+
 - [x] 15-01-PLAN.md — Cargo.toml version bump 1.1.0 -> 1.2.0 (FOUND-15; the very first v1.2 commit per D-12)
 - [x] 15-02-PLAN.md — cargo-deny CI preamble: deny.toml + just deny + ci.yml lint-job step with continue-on-error: true (FOUND-16)
 - [x] 15-03-PLAN.md — Webhook module skeleton: src/webhooks/{mod,event,dispatcher,worker}.rs + async-trait promotion + cronduit_webhook_delivery_dropped_total telemetry registration (WH-02)
@@ -86,6 +88,7 @@ Plans:
 **Requirements**: FOUND-14, FCTX-04, FCTX-07
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator inspecting a v1.2 docker job run via the database sees `job_runs.container_id` populated with the real Docker container ID (not a `sha256:...` image digest); historical v1.1 rows age out via the Phase 6 retention pruner.
   2. An operator viewing two consecutive runs of the same job after a hot reload sees distinct `job_runs.config_hash` values when the underlying TOML actually changed (per-RUN column, not the per-JOB proxy).
   3. An operator inspecting the `EXPLAIN QUERY PLAN` for `get_failure_context(job_id)` on both SQLite and Postgres sees indexed access on `job_runs.job_id + start_time`; the function returns `streak_position`, `consecutive_failures`, `last_success_run_id`, `last_success_image_digest`, and `last_success_config_hash` from a single SQL query (not five separate round-trips).
@@ -93,6 +96,7 @@ Plans:
 **Plans:** 7/7 plans complete
 
 Plans:
+
 - [x] 16-01-PLAN.md — Migrations: image_digest add + config_hash add + config_hash backfill (6 files: 3 per backend) + tests/v12_fctx_config_hash_backfill.rs
 - [x] 16-02-PLAN.md — DockerExecResult.container_id field + 7 literal sites populated (struct widening)
 - [x] 16-03-PLAN.md — run.rs:301 bug fix + parallel image_digest_for_finalize local + tests/v12_run_rs_277_bug_fix.rs
@@ -110,6 +114,7 @@ Plans:
 **Requirements**: LBL-01, LBL-02, LBL-03, LBL-04, LBL-05, LBL-06
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator who adds `labels = { "com.centurylinklabs.watchtower.enable" = "false" }` to a `[[jobs]]` block sees that label on the spawned container via `docker inspect` (the cronduit-internal `cronduit.run_id` and `cronduit.job_name` labels remain intact).
   2. An operator who sets `use_defaults = false` on a per-job labels map gets ONLY the per-job labels (defaults replaced); without `use_defaults = false` the defaults map is merged and per-job keys win on collision.
   3. An operator who tries to set `cronduit.foo = "bar"` (or any `cronduit.*` key) gets a config-load error pointing at the offending key — the validator runs at LOAD time, not runtime.
@@ -119,6 +124,7 @@ Plans:
 **Plans:** 9 plans (6 core + 3 gap closure)
 
 Plans:
+
 - [x] 17-01-PLAN.md — schema + 5-layer parity + apply_defaults merge (LBL-01 + LBL-02)
 - [x] 17-02-PLAN.md — four LOAD-time validators (LBL-03, LBL-04, LBL-06, D-02 key chars)
 - [x] 17-03-PLAN.md — bollard plumb-through + 3 testcontainers integration tests (LBL-01, LBL-02, LBL-05)
@@ -140,6 +146,7 @@ Plans:
 **Requirements**: WH-01, WH-03, WH-06, WH-09
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator who configures `webhook = { url = "https://hook.example.com", states = ["failed", "timeout", "stopped"] }` per job (and/or in `[defaults]` with the `use_defaults = false` disable pattern) sees deliveries fire only on the listed terminal statuses — `success` runs do NOT fire.
   2. An operator running a `* * * * *` failing job sees ONE webhook delivery on the first failure of a new streak by default (not 30 deliveries over 30 minutes); setting `webhook.fire_every = 0` restores the legacy per-failure firing.
   3. An operator inspecting a delivered webhook payload sees the locked v1.2.0 schema fields: `payload_version: "v1"`, `event_type: "run_finalized"`, `run_id`, `job_id`, `job_name`, `status`, `exit_code`, `started_at`, `finished_at`, `duration_ms`, `streak_position`, `consecutive_failures`, `image_digest` (docker only), `config_hash`, `tags`, `cronduit_version`.
@@ -148,6 +155,7 @@ Plans:
 **Plans:** 6/6 plans complete
 
 Plans:
+
 - [x] 18-01-PLAN.md — Foundation: Cargo deps (reqwest 0.13 rustls / hmac / base64 / ulid + wiremock dev) + just test-unit recipe + 2 new webhook counters described+zero-baselined
 - [x] 18-02-PLAN.md — WH-01: WebhookConfig struct + apply_defaults webhook merge + check_webhook_url + check_webhook_block_completeness validators (incl. Pitfall H empty-secret)
 - [x] 18-03-PLAN.md — WH-06+WH-09: WebhookPayload encoder (15-field v1 schema) + coalesce::filter_position SQL helper + EXPLAIN PLAN regression test
@@ -164,6 +172,7 @@ Plans:
 **Requirements**: WH-04
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator who configures `webhook.secret = "..."` on a job sees the `webhook-signature` header value formatted as `v1,<base64-of-hmac>` where the HMAC is computed over `webhook-id.webhook-timestamp.payload` raw bytes using SHA-256.
   2. An operator running the shipped Python, Go, and Node receiver examples successfully verifies signatures from a real cronduit delivery; each example uses a constant-time compare primitive (Python `hmac.compare_digest`, Go `hmac.Equal`, Node `crypto.timingSafeEqual`) — NOT `==` on hex bytes.
   3. An operator reviewing the receiver-example docs sees an explicit note that v1.2 ships SHA-256 only (no algorithm-agility / multi-secret rotation cronduit-side; rotation is a receiver concern).
@@ -171,6 +180,7 @@ Plans:
 **Plans:** 6/6 plans complete
 
 Plans:
+
 - [x] 19-01-PLAN.md — Wave 1: tests/fixtures/webhook-v1/* fixture + in-module sign_v1_locks_interop_fixture Rust test (Pitfall 1: pub(crate))
 - [x] 19-02-PLAN.md — Wave 2: examples/webhook-receivers/python/ stdlib receiver + 2 just recipes (port 9991, hmac.compare_digest)
 - [x] 19-03-PLAN.md — Wave 2: examples/webhook-receivers/go/ stdlib receiver + 2 just recipes (port 9992, hmac.Equal)
@@ -187,6 +197,7 @@ Plans:
 **Requirements**: WH-05, WH-07, WH-08, WH-10, WH-11
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator who configures a webhook URL like `http://example.com` (non-loopback, non-RFC1918) sees a config-load error; `http://` is permitted only for `127.0.0.0/8`, `::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, and `fd00::/8`.
   2. An operator whose receiver returns 500 sees three delivery attempts at approximately t=0, t=30 s, t=300 s (each multiplied by `rand()*0.4 + 0.8` full-jitter); after the third attempt, the delivery is recorded in the `webhook_deliveries` dead-letter table and `cronduit_webhook_deliveries_total{status="failed"}` increments.
   3. An operator sending SIGTERM with deliveries in-flight sees the worker drain the queue for up to `webhook_drain_grace = "30s"` (configurable), then drop remaining queued deliveries with a counter increment; in-flight HTTP requests are NOT cancelled mid-flight.
@@ -197,29 +208,37 @@ Plans:
 
 Plans:
 **Wave 1**
+
 - [x] 20-01-PLAN.md — DLQ migration (sqlite + postgres) + WebhookDlqRow/insert/delete helpers + retention Phase 4 + 7 Wave 0 test stubs
 
 **Wave 2** *(blocked on Wave 1 completion)*
+
 - [x] 20-02-PLAN.md — RetryingDispatcher<D> in src/webhooks/retry.rs + classification + jitter + Retry-After + DLQ writes + 4 integration tests
 - [x] 20-03-PLAN.md — HTTPS-required validator extension in src/config/validate.rs + INFO log + integration tests
 
 **Wave 3** *(blocked on Wave 2 completion)*
+
 - [x] 20-05-PLAN.md — labeled metric family migration (deliveries_total{job,status} + delivery_duration_seconds + queue_depth); P15 dropped counter preserved
 
 **Wave 4** *(blocked on Wave 3 completion)*
+
 - [x] 20-04-PLAN.md — worker_loop drain budget (3rd select! arm) + queue_depth gauge + drain integration tests
 
 **Wave 5** *(blocked on Wave 4 completion)*
+
 - [x] 20-06-PLAN.md — webhook_drain_grace config field + RetryingDispatcher wiring + per-job metric pre-seed in src/cli/run.rs
 - [x] 20-07-PLAN.md — docs/WEBHOOKS.md 6-section extension + 2 mermaid diagrams + TM5 forward-pointer stub
 
 **Wave 6** *(blocked on Wave 5 completion)*
+
 - [x] 20-08-PLAN.md — UAT recipes (uat-webhook-retry/drain/dlq-query/https-required) + 20-HUMAN-UAT.md (autonomous=false)
 
 **Wave 7** *(blocked on Wave 6 completion)*
+
 - [x] 20-09-PLAN.md — rc.1 pre-flight checklist (autonomous=false; maintainer cuts v1.2.0-rc.1 tag locally; no release.yml/cliff.toml/release-rc.md edits per D-30)
 
 **Cross-cutting constraints:**
+
 - Per D-38: Cargo.toml unchanged; `cargo tree -i openssl-sys` empty.
 
 ### Phase 21: Failure-Context UI Panel + Exit-Code Histogram Card — rc.2
@@ -231,6 +250,7 @@ Plans:
 **Requirements**: FCTX-01, FCTX-02, FCTX-03, FCTX-05, FCTX-06, EXIT-01, EXIT-02, EXIT-03, EXIT-04, EXIT-05, EXIT-06
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator viewing a `failed` or `timeout` run-detail page sees a collapsed-by-default failure-context panel that expands to show 5 labeled rows: time-based deltas (first-failure timestamp, consecutive-failure streak, link to last successful run), image-digest delta (docker jobs only — non-docker hides the row), config-hash delta ("config changed since last success: Yes/No"), duration-vs-p50 deviation (suppressed below 5 sample threshold), and scheduler-fire-time vs run-start-time skew.
   2. An operator viewing a `success`, `cancelled`, `running`, or `stopped` run-detail page does NOT see the failure-context panel (gated to failed/timeout only).
   3. An operator viewing a job-detail page sees a new exit-code-distribution card (sibling to the v1.1 p50/p95 duration card) showing the last 100 ALL runs bucketed into 10 fixed buckets (0 / 1 / 2 / 3-9 / 10-126 / 127 / 128-143 / 144-254 / 255 / null); below `N=5` sample threshold the card renders "—".
@@ -249,6 +269,7 @@ Plans:
 **Requirements**: TAG-01, TAG-02, TAG-03, TAG-04, TAG-05 (plus closes WH-09 from Phase 18 — webhook payload backfill end-to-end)
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator who writes `tags = ["backup", "weekly"]` on a `[[jobs]]` block sees those tags persisted to the new `jobs.tags` JSON column; the field is per-job only (NOT supported in `[defaults]`).
   2. An operator who writes `tags = ["Backup", "backup ", "BACKUP"]` sees a config-load WARN that the entries collapse to `["backup"]` after lowercase + trim normalization (the WARN flags the deduplication so operators notice).
   3. An operator who writes a tag like `MyTag!` or `cronduit` (reserved) gets a config-load ERROR pointing at the offending tag — the validator never silently mutates; the charset regex `^[a-z0-9][a-z0-9_-]{0,30}$` is enforced.
@@ -258,22 +279,28 @@ Plans:
 
 Plans:
 **Wave 1**
+
 - [x] 22-01-PLAN.md — Schema + serde field + sqlite/postgres migration pair (TAG-01, TAG-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
+
 - [x] 22-02-PLAN.md — Four validators in `validate.rs`: charset+reserved, count cap (16), fleet-level substring-collision; D-04 order locked (TAG-03, TAG-04, TAG-05)
 - [x] 22-03-PLAN.md — DB plumbing: upsert_job widening + DbRunDetail.tags + get_run_by_id row-map + sync.rs callers + hash.rs D-01 comment + tags_excluded_from_hash regression test (TAG-02)
 
 **Wave 3** *(blocked on Wave 2 completion)*
+
 - [x] 22-04-PLAN.md — WH-09 webhook payload backfill: src/webhooks/payload.rs L88 vec![] → run.tags.clone(); test rename payload_tags_carries_real_values (WH-09)
 
 **Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 22-05-PLAN.md — Integration tests (tests/v12_tags_validators.rs) + examples/cronduit.toml demo line + three uat-tags-* just recipes (TAG-01..05)
 
 **Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 22-06-PLAN.md — 22-HUMAN-UAT.md maintainer runbook (autonomous=false; 4 scenarios per D-10) (TAG-01..05)
 
 **Cross-cutting constraints:**
+
 - No new external crates; `cargo tree -i openssl-sys` remains empty (D-17)
 
 ### Phase 23: Job Tagging Dashboard Filter Chips — rc.3
@@ -285,6 +312,7 @@ Plans:
 **Requirements**: TAG-06, TAG-07, TAG-08
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator viewing the dashboard sees filter chips for every distinct tag in the current fleet; clicking a chip toggles its filter state (active = teal-bordered + bold; inactive = grey).
   2. An operator with multiple active chips sees only jobs that have ALL active tags (AND semantics); the active filter composes with the existing v1.0 name-filter via AND (job must match BOTH).
   3. An operator with any active tag filter sees untagged jobs HIDDEN from the dashboard (least-surprise behavior).
@@ -295,28 +323,36 @@ Plans:
 
 Plans:
 **Wave 0**
+
 - [x] 23-01-PLAN.md — Wave-0 test scaffolding: tests/v12_tags_dashboard.rs + dashboard.rs::tests stubs (V-W0)
 
 **Wave 1** *(blocked on Wave 0 completion)*
+
 - [x] 23-02-PLAN.md — DB layer: DashboardJob.tags + get_dashboard_jobs SELECT/WHERE widening for AND-tag filter + caller passes &[] placeholder (TAG-07; V-01..V-04)
 
 **Wave 2** *(blocked on Wave 1 completion — file overlap on dashboard.rs)*
+
 - [x] 23-03-PLAN.md — Handler: axum_extra::Query swap + DashboardParams.tags + fleet-tag fold + active-set sort/dedup/intersect + view-models gain fleet_tags/active_tags (TAG-06; V-05, V-07)
 
 **Wave 3** *(blocked on Wave 2 completion)*
+
 - [x] 23-04-PLAN.md — CSS: cd-tag-chip-* family in @layer components + reduced-motion + print extensions; zero new tokens (TAG-06, TAG-08)
 - [x] 23-05-PLAN.md — Template: ChipView precompute + chip strip insert above filter row + sort-header href widening + poll hx-include widening + OOB swap composition (TAG-06, TAG-08; V-06, V-08..V-14)
 
 **Wave 4** *(blocked on Wave 3 completion)*
+
 - [x] 23-06-PLAN.md — UAT: 3 just uat-chips-* recipes + README Tag Filter Chips subsection (TAG-06, TAG-07; V-15, V-16)
 
 **Wave 5** *(blocked on Wave 4 completion)*
+
 - [x] 23-07-PLAN.md — HUMAN-UAT: 23-HUMAN-UAT.md autonomous=false maintainer plan with 6 scenarios (TAG-06, TAG-07, TAG-08)
 
 **Wave 6** *(blocked on Wave 5 completion)*
+
 - [x] 23-08-PLAN.md — RC3-PREFLIGHT: 23-RC3-PREFLIGHT.md autonomous=false rc.3 cut runbook (mirrors P21 RC2-PREFLIGHT verbatim modulo rc.2→rc.3 + P21→P23 substitutions; V-17)
 
 **Cross-cutting constraints:**
+
 - No new external crates; `axum_extra` already in tree; `cargo tree -i openssl-sys` remains empty (D-23)
 - NO modifications to `release.yml` / `cliff.toml` / `docs/release-rc.md` (D-15 / D-16)
 - `Cargo.toml` stays at `1.2.0`; `-rc.3` is tag-only (D-22)
@@ -332,13 +368,41 @@ Plans:
 **Requirements**: n/a — operational close-out (no v1.2 REQ-IDs; mirrors v1.0 Phase 9 pattern). All 41 v1.2 requirements covered by Phases 15–23.
 
 **Success Criteria** (what must be TRUE):
+
   1. An operator reading `THREAT_MODEL.md` sees Threat Model 5 (Webhook Outbound — operator-with-UI-access can configure outbound HTTP at any URL; SSRF accepted risk; HTTPS posture; loopback-bound default mitigation) and Threat Model 6 (Operator-supplied Docker labels — reserved-namespace clobber, type-gated validator, size-limit DoS surface).
   2. An operator reviewing `.planning/REQUIREMENTS.md` (the v1.2 file) sees every requirement (FOUND-14..16, WH-01..11, LBL-01..06, FCTX-01..07, EXIT-01..06, TAG-01..08) flipped to Validated with a Phase reference.
   3. An operator reading `MILESTONES.md` sees a new v1.2 entry with shipped tags, phase count, plan count, and key accomplishments — formatted consistently with v1.0 and v1.1 entries.
   4. An operator inspecting `ghcr.io/SimplicityGuy/cronduit:latest` after final ship sees the digest match `:1.2.0` on both amd64 and arm64; `:1.2.0` == `:1.2` == `:1` == `:latest` (D-18 four-tag equality verified). The `cargo-deny` CI job is promoted from non-blocking (warn) to blocking (error) before the final tag is pushed.
   5. An operator running `docker compose up` against the shipped quickstart with the new `v1.2.0` image observes the cronduit container reporting `healthy` (v1.1 healthcheck still works), the dashboard renders with new tag filter chips (no regressions on v1.0/v1.1 surfaces), and a webhook configured against a local mock receiver delivers a Standard-Webhooks-spec payload on the first failure.
 
-**Plans**: TBD
+**Plans**: 8 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 24-02-PLAN.md — Milestone audit: invoke /gsd-audit-milestone v1.2; v1.2-MILESTONE-AUDIT.md + REQUIREMENTS.md flips (20 items) + ROADMAP drift cleanup (P17 Complete / P21 11/11 / P22 6/6)
+- [ ] 24-05-PLAN.md — cargo-deny WARN→ERROR promotion (FOUND-16): ci.yml continue-on-error removed; conditional deny.toml/Cargo.lock advisory remediation
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 24-01-PLAN.md — Threat model close-out: TM5 in-place canonical rewrite + new TM6 + STRIDE rows T-S3/T-T4/T-I4/T-D4 + Changelog + README §Security link-back to TM5/TM6 anchors
+- [ ] 24-03-PLAN.md — MILESTONES.md v1.2 release-log entry (additive at top, mirrors v1.1/v1.0 six-row shape)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 24-04-PLAN.md — README updates: v1.2 What's New hero block + §Features pointer (FCTX + exit histogram) + §Configuration §Webhooks subsection + MILESTONES cross-link
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 24-06-PLAN.md — 24-RC4-PREFLIGHT.md (autonomous=false maintainer runbook for v1.2.0-rc.4 tag cut)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 24-07-PLAN.md — 24-HUMAN-UAT.md (autonomous=false maintainer six-scenario UAT runbook covering v1.0/v1.1 regression + all five v1.2 features end-to-end)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 24-08-PLAN.md — 24-FINAL-SHIP-PREFLIGHT.md (autonomous=false maintainer final-tag runbook: retag last-passing-UAT rc.N SHA as v1.2.0; verify four-tag equality + cargo-deny ERROR-gate; flip STATE.md SHIPPED)
 
 ## Progress
 
