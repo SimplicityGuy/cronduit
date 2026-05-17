@@ -1693,14 +1693,20 @@ uat-chips-share-url:
 uat-quickstart RC_TAG:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "▶ Phase 24 UAT Scenario 1: quickstart against {{RC_TAG}}"
+    # Docker image tags omit the `v` prefix (semver-in-image convention; matches
+    # every prior tag: 1.1.0-rc.6, 1.0.1, etc.). Accept either form from the
+    # operator and normalize so the runbook can say `v1.2.0-rc.4` (the git tag)
+    # or `1.2.0-rc.4` (the image tag) interchangeably.
+    RC_RAW="{{RC_TAG}}"
+    RC="${RC_RAW#v}"
+    echo "▶ Phase 24 UAT Scenario 1: quickstart against $RC"
     echo ""
-    echo "Step 1: Pull ghcr.io/simplicityguy/cronduit:{{RC_TAG}}"
-    docker pull ghcr.io/simplicityguy/cronduit:{{RC_TAG}}
+    echo "Step 1: Pull ghcr.io/simplicityguy/cronduit:$RC"
+    docker pull ghcr.io/simplicityguy/cronduit:"$RC"
     echo ""
     echo "Step 2: Bring up docker-compose with CRONDUIT_IMAGE override."
     echo "        (examples/docker-compose.yml:72 already consumes \$CRONDUIT_IMAGE.)"
-    CRONDUIT_IMAGE=ghcr.io/simplicityguy/cronduit:{{RC_TAG}} \
+    CRONDUIT_IMAGE=ghcr.io/simplicityguy/cronduit:"$RC" \
         docker compose -f examples/docker-compose.yml up -d
     echo ""
     echo "Step 3: Wait 90s for the cronduit healthcheck to mark healthy …"
@@ -1728,7 +1734,7 @@ uat-quickstart RC_TAG:
 # UAT Scenario 2: v1.0 + v1.1 dashboard surfaces walkthrough.
 # Operator-eyeball check that no v1.0/v1.1 features regressed under the v1.2 codebase.
 # Assumes cronduit is already running (operator brought it up via
-# `just uat-quickstart v1.2.0-rc.4` and answered 'n' to keep it up, OR
+# `just uat-quickstart 1.2.0-rc.4` and answered 'n' to keep it up, OR
 # re-brought it up between Scenarios — maintainer discretion).
 [group('release')]
 [doc('UAT Scenario 2 — eyeball v1.0/v1.1 surfaces (filter / sort / Run Now / Stop / bulk toggle / timeline / sparklines / overrides / healthcheck) intact')]
