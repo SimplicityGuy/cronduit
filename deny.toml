@@ -92,14 +92,14 @@ confidence-threshold = 0.93
 # DEPRECATED in cargo-deny v0.19.x and emit errors. Do NOT add them.
 
 [bans]
-# rc.1 posture per D-10: log duplicate-version findings as warnings, do
-# NOT fail the bans check. Phase 24 will promote to "deny" with a curated
-# `skip = [...]` allowlist for transitive duplicates we accept (e.g., the
-# windows-sys / windows_x86_64_msvc families).
+# Phase 24 D-10 decision: keep multiple-versions at "warn" (not promoted to "deny").
+# Rationale: the ci.yml ERROR-gate on license/advisory/ban violations is the
+# blocking layer; non-fatal duplicate-version warnings are the informational layer.
+# If a duplicate-version finding needs to become blocking, add an entry to
+# `skip = [...]` for duplicates we accept and flip to "deny" at a future milestone.
 multiple-versions = "warn"
 # Wildcards in dep version requirements are usually a smell; warn (not deny).
 wildcards = "warn"
-# Empty in rc.1; populate in Phase 24 with curated skips.
 skip = []
 skip-tree = []
 
