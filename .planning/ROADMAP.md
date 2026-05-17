@@ -47,8 +47,8 @@
 - [x] **Phase 18: Webhook Payload + State-Filter + Coalescing** — Standard Webhooks v1 payload schema (`payload_version: "v1"`), per-job + `[defaults]` config with `use_defaults = false` disable, edge-triggered streak coalescing (default fires on `streak_position == 1`, `fire_every` per-job override) (completed 2026-04-29)
 - [x] **Phase 19: Webhook HMAC Signing + Receiver Examples** — HMAC-SHA256 only, Standard Webhooks signing-string `webhook-id.webhook-timestamp.payload`, signature header `v1,<base64>`, Python/Go/Node receiver examples with constant-time compare (completed 2026-04-30)
 - [x] **Phase 20: Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1** — HTTPS required for non-loopback/non-RFC1918, 3-attempt full-jitter exponential backoff (t=0/30s/300s × 0.8-1.2× rand), `webhook_deliveries` dead-letter table, 30s drain on shutdown, `cronduit_webhook_*` metric family; **cuts `v1.2.0-rc.1`** (completed 2026-05-01)
-- [ ] **Phase 21: Failure-Context UI Panel + Exit-Code Histogram Card — rc.2** — Inline collapsed-by-default panel on run-detail with 5 P1 signals (time deltas, image-digest delta, config-hash delta, duration-vs-p50, scheduler-fire-skew), 10-bucket exit-code histogram on job-detail with `stopped` as distinct bucket and exit `0` as separate stat; **cuts `v1.2.0-rc.2`**
-- [ ] **Phase 22: Job Tagging Schema + Validators** — `jobs.tags` JSON column, single-file additive migration, lowercase+trim normalization, charset regex `^[a-z0-9][a-z0-9_-]{0,30}$`, reserved-tag rejection, substring-collision check at config-load
+- [x] **Phase 21: Failure-Context UI Panel + Exit-Code Histogram Card — rc.2** — Inline collapsed-by-default panel on run-detail with 5 P1 signals (time deltas, image-digest delta, config-hash delta, duration-vs-p50, scheduler-fire-skew), 10-bucket exit-code histogram on job-detail with `stopped` as distinct bucket and exit `0` as separate stat; **cuts `v1.2.0-rc.2`** (completed 2026-05-03)
+- [x] **Phase 22: Job Tagging Schema + Validators** — `jobs.tags` JSON column, single-file additive migration, lowercase+trim normalization, charset regex `^[a-z0-9][a-z0-9_-]{0,30}$`, reserved-tag rejection, substring-collision check at config-load (completed 2026-05-04)
 - [x] **Phase 23: Job Tagging Dashboard Filter Chips — rc.3** — CSS-only chip components on dashboard, AND filter semantics, untagged-hidden when filter active, URL state via repeated `?tag=`, HTMX dashboard partial swap on chip toggle; **cuts `v1.2.0-rc.3`** (completed 2026-05-05)
 - [ ] **Phase 24: Milestone Close-Out — final `v1.2.0` ship** — UAT-driven rc loop completion, `THREAT_MODEL.md` Threat Model 5 (Webhook Outbound) + Threat Model 6 (Operator-supplied labels), REQUIREMENTS.md flips to Validated, `MILESTONES.md` v1.2 entry, README updates, `:latest` promoted to `:1.2.0` on both archs
 
@@ -418,12 +418,12 @@ Plans:
 |-------|----------------|--------|-----------|
 | 15. Foundation Preamble | 5/5 | Complete    | 2026-04-26 |
 | 16. Failure-Context Schema + run.rs Bug Fix | 7/7 | Complete    | 2026-04-28 |
-| 17. Custom Docker Labels (SEED-001) | 6/6 + 3 gap closure | Gap-closure pending | 2026-04-29 (core) |
+| 17. Custom Docker Labels (SEED-001) | 6/6 + 3 gap closure | Complete | 2026-04-29 |
 | 18. Webhook Payload + State-Filter + Coalescing | 6/6 | Complete   | 2026-04-29 |
 | 19. Webhook HMAC Signing + Receiver Examples | 6/6 | Complete   | 2026-04-30 |
 | 20. Webhook SSRF/HTTPS + Retry/Drain + Metrics — rc.1 | 9/9 | Complete   | 2026-05-01 |
-| 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 10/11 | In Progress|  |
-| 22. Job Tagging Schema + Validators | 4/6 | In Progress|  |
+| 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 11/11 | Complete    | 2026-05-03 |
+| 22. Job Tagging Schema + Validators | 6/6 | Complete    | 2026-05-04 |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete    | 2026-05-05 |
 | 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
 

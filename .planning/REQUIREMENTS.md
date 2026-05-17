@@ -34,43 +34,43 @@ Continuation from v1.0/v1.1 FOUND-01..13.
 
 Inbound: scheduler emits a `RunFinalized` event on every terminal status. Outbound: a dedicated worker dispatches webhook deliveries; the scheduler loop is never blocked.
 
-- [ ] **WH-01**: Operators can configure a webhook URL per job (`webhook = { url = "https://...", states = ["failed", "timeout", "stopped"] }`) and in `[defaults]`. The TOML `[defaults]` + per-job override + `use_defaults = false` disable pattern matches the existing config behavior (parallels SEED-001 / Docker labels — see LBL-01..05). `T-V12-WH-01`, `T-V12-WH-02`.
+- [x] **WH-01**: Operators can configure a webhook URL per job (`webhook = { url = "https://...", states = ["failed", "timeout", "stopped"] }`) and in `[defaults]`. The TOML `[defaults]` + per-job override + `use_defaults = false` disable pattern matches the existing config behavior (parallels SEED-001 / Docker labels — see LBL-01..05). `T-V12-WH-01`, `T-V12-WH-02`.
 
 - [x] **WH-02**: A new module `src/webhooks/mod.rs` owns a dedicated tokio task that consumes `RunFinalized` events from a bounded `tokio::sync::mpsc::channel(1024)`. The scheduler emits via `try_send` (NEVER `await tx.send()`); on full queue, the event is dropped with a warn-level log AND a `cronduit_webhook_delivery_dropped_total` counter increment. The scheduler loop is never blocked by outbound HTTP. `T-V12-WH-03`, `T-V12-WH-04`.
 
-- [ ] **WH-03**: Webhook payloads adhere to the [Standard Webhooks v1 spec](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md): three required headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`); HMAC-SHA256 over `webhook-id.webhook-timestamp.payload` (as raw bytes); signature header value `v1,<base64-of-hmac>`. Payloads include a `payload_version: "v1"` field at the root for forward-compatibility. `T-V12-WH-05`, `T-V12-WH-06`, `T-V12-WH-07`.
+- [x] **WH-03**: Webhook payloads adhere to the [Standard Webhooks v1 spec](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md): three required headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`); HMAC-SHA256 over `webhook-id.webhook-timestamp.payload` (as raw bytes); signature header value `v1,<base64-of-hmac>`. Payloads include a `payload_version: "v1"` field at the root for forward-compatibility. `T-V12-WH-05`, `T-V12-WH-06`, `T-V12-WH-07`.
 
-- [ ] **WH-04**: HMAC algorithm is **SHA-256 only** in v1.2 (no algorithm-agility / multi-secret rotation cronduit-side; rotation lives on the receiver via dual-secret verify). Cronduit ships receiver examples in Python, Go, and Node demonstrating constant-time HMAC compare (NOT `==` on the hex-decoded bytes — timing-attack defense). `T-V12-WH-08`, `T-V12-WH-09`.
+- [x] **WH-04**: HMAC algorithm is **SHA-256 only** in v1.2 (no algorithm-agility / multi-secret rotation cronduit-side; rotation lives on the receiver via dual-secret verify). Cronduit ships receiver examples in Python, Go, and Node demonstrating constant-time HMAC compare (NOT `==` on the hex-decoded bytes — timing-attack defense). `T-V12-WH-08`, `T-V12-WH-09`.
 
-- [ ] **WH-05**: Webhook delivery retry is 3 attempts at t=0, t=30s, t=300s with full-jitter exponential backoff (each attempt's delay multiplied by `rand::random::<f64>() * 0.4 + 0.8` to spread thundering-herd retries). After the third attempt, the delivery is dropped with a counter increment AND an entry in a new `webhook_deliveries` table (one-file migration, no backfill). `T-V12-WH-10`, `T-V12-WH-11`, `T-V12-WH-12`.
+- [x] **WH-05**: Webhook delivery retry is 3 attempts at t=0, t=30s, t=300s with full-jitter exponential backoff (each attempt's delay multiplied by `rand::random::<f64>() * 0.4 + 0.8` to spread thundering-herd retries). After the third attempt, the delivery is dropped with a counter increment AND an entry in a new `webhook_deliveries` table (one-file migration, no backfill). `T-V12-WH-10`, `T-V12-WH-11`, `T-V12-WH-12`.
 
-- [ ] **WH-06**: Webhook flooding from a 1/min failing job is mitigated by **edge-triggered streak coalescing**: by default, deliveries fire only on `streak_position == 1` (the FIRST failure in a new streak), not every subsequent failure. Operators can override per-job with `webhook.fire_every = N` to fire every N failures, or `webhook.fire_every = 0` to keep the original per-failure behavior. Default is `1` (first-of-streak only). `T-V12-WH-13`, `T-V12-WH-14`.
+- [x] **WH-06**: Webhook flooding from a 1/min failing job is mitigated by **edge-triggered streak coalescing**: by default, deliveries fire only on `streak_position == 1` (the FIRST failure in a new streak), not every subsequent failure. Operators can override per-job with `webhook.fire_every = N` to fire every N failures, or `webhook.fire_every = 0` to keep the original per-failure behavior. Default is `1` (first-of-streak only). `T-V12-WH-13`, `T-V12-WH-14`.
 
-- [ ] **WH-07**: Webhook URL validation: `https://` is required for non-loopback / non-RFC1918 destinations. `http://` is permitted only for `127.0.0.0/8`, `::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, and `fd00::/8` (loopback + RFC1918 + ULA). Cronduit emits a startup WARN if any configured webhook URL targets a non-local public destination over `http://`. `T-V12-WH-15`, `T-V12-WH-16`.
+- [x] **WH-07**: Webhook URL validation: `https://` is required for non-loopback / non-RFC1918 destinations. `http://` is permitted only for `127.0.0.0/8`, `::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, and `fd00::/8` (loopback + RFC1918 + ULA). Cronduit emits a startup WARN if any configured webhook URL targets a non-local public destination over `http://`. `T-V12-WH-15`, `T-V12-WH-16`.
 
-- [ ] **WH-08**: SSRF is documented as accepted risk (no allow/block-list filter in v1.2 — half-built filter is worse than no filter; deferred to v1.3 as an explicit feature). `THREAT_MODEL.md` gains Threat Model 5 (Webhook Outbound) enumerating: operator-with-UI-access can configure a webhook URL pointing at any internal service; cronduit is loopback-bound by default; reverse-proxy fronting with auth is the v1.2 mitigation. `T-V12-WH-17`.
+- [x] **WH-08**: SSRF is documented as accepted risk (no allow/block-list filter in v1.2 — half-built filter is worse than no filter; deferred to v1.3 as an explicit feature). `THREAT_MODEL.md` gains Threat Model 5 (Webhook Outbound) enumerating: operator-with-UI-access can configure a webhook URL pointing at any internal service; cronduit is loopback-bound by default; reverse-proxy fronting with auth is the v1.2 mitigation. `T-V12-WH-17`.
 
 - [x] **WH-09**: Webhook payload schema includes (at minimum): `payload_version: "v1"`, `event_type: "run_finalized"`, `run_id`, `job_id`, `job_name`, `status`, `exit_code`, `started_at`, `finished_at`, `duration_ms`, `streak_position`, `consecutive_failures`, `image_digest` (docker jobs only), `config_hash`, `tags`, plus a `cronduit_version` field. The schema is locked at v1.2.0; future additions are additive (new fields only); breaking changes require a `payload_version: "v2"` bump. `T-V12-WH-18`, `T-V12-WH-19`.
 
-- [ ] **WH-10**: Webhook delivery survives scheduler reload (SIGHUP / `POST /api/reload` / file-watch). In-flight deliveries are NOT cancelled; new deliveries continue to be queued. On graceful shutdown (SIGTERM), the worker drains the queue with a configurable `webhook_drain_grace = "30s"` deadline (default), then drops remaining queued deliveries with a counter increment. `T-V12-WH-20`, `T-V12-WH-21`.
+- [x] **WH-10**: Webhook delivery survives scheduler reload (SIGHUP / `POST /api/reload` / file-watch). In-flight deliveries are NOT cancelled; new deliveries continue to be queued. On graceful shutdown (SIGTERM), the worker drains the queue with a configurable `webhook_drain_grace = "30s"` deadline (default), then drops remaining queued deliveries with a counter increment. `T-V12-WH-20`, `T-V12-WH-21`.
 
-- [ ] **WH-11**: A new `cronduit_webhook_*` Prometheus metric family is added to `/metrics`: `cronduit_webhook_deliveries_total{job, status}` (`status` ∈ `{success, failed, dropped}`), `cronduit_webhook_delivery_duration_seconds{job}` (histogram), `cronduit_webhook_queue_depth` (gauge). Bounded cardinality — `status` is a closed enum; `job` is bounded by configured-job-count. Eagerly described at boot like the v1.0 metrics. `T-V12-WH-22`.
+- [x] **WH-11**: A new `cronduit_webhook_*` Prometheus metric family is added to `/metrics`: `cronduit_webhook_deliveries_total{job, status}` (`status` ∈ `{success, failed, dropped}`), `cronduit_webhook_delivery_duration_seconds{job}` (histogram), `cronduit_webhook_queue_depth` (gauge). Bounded cardinality — `status` is a closed enum; `job` is bounded by configured-job-count. Eagerly described at boot like the v1.0 metrics. `T-V12-WH-22`.
 
 ### Custom Docker Labels (LBL) — new category, SEED-001 pre-locked
 
 Pre-locked design: `.planning/seeds/SEED-001-custom-docker-labels.md`. Three decisions inherited verbatim (merge semantics, reserved namespace, type-gating).
 
-- [ ] **LBL-01**: A new `labels: Option<HashMap<String, String>>` field is added to `DefaultsConfig` and `JobConfig`. TOML keys may contain dots (`com.centurylinklabs.watchtower.enable = "false"`). Operator-defined labels are merged with cronduit-internal labels at container-create time, populating `bollard::Config::labels`.
+- [x] **LBL-01**: A new `labels: Option<HashMap<String, String>>` field is added to `DefaultsConfig` and `JobConfig`. TOML keys may contain dots (`com.centurylinklabs.watchtower.enable = "false"`). Operator-defined labels are merged with cronduit-internal labels at container-create time, populating `bollard::Config::labels`.
 
-- [ ] **LBL-02**: Merge semantics — `use_defaults = false` → per-job labels REPLACE defaults entirely (whole-section escape hatch consistent with rest of config). `use_defaults = true` or unset → defaults map ∪ per-job map; **on key collision, per-job key wins** (standard override semantics, parallels every other field). `T-V12-LBL-01`, `T-V12-LBL-02`.
+- [x] **LBL-02**: Merge semantics — `use_defaults = false` → per-job labels REPLACE defaults entirely (whole-section escape hatch consistent with rest of config). `use_defaults = true` or unset → defaults map ∪ per-job map; **on key collision, per-job key wins** (standard override semantics, parallels every other field). `T-V12-LBL-01`, `T-V12-LBL-02`.
 
-- [ ] **LBL-03**: Reserved-namespace validator — operator labels under `cronduit.*` MUST fail config validation at LOAD time (not runtime). The `cronduit.*` prefix is reserved for cronduit-internal labels (currently `cronduit.run_id`, `cronduit.job_name`; reserved for future additions like `cronduit.job_run_number`, `cronduit.image_digest`). Validator emits a GCC-style error pointing at the offending key. `T-V12-LBL-03`, `T-V12-LBL-04`, `T-V12-LBL-05`.
+- [x] **LBL-03**: Reserved-namespace validator — operator labels under `cronduit.*` MUST fail config validation at LOAD time (not runtime). The `cronduit.*` prefix is reserved for cronduit-internal labels (currently `cronduit.run_id`, `cronduit.job_name`; reserved for future additions like `cronduit.job_run_number`, `cronduit.image_digest`). Validator emits a GCC-style error pointing at the offending key. `T-V12-LBL-03`, `T-V12-LBL-04`, `T-V12-LBL-05`.
 
-- [ ] **LBL-04**: Type-gated validator — setting `labels` on a `type = "command"` or `type = "script"` job is a config-validation error at load time (commands and scripts have no container; the labels would be silently dropped). Mirrors the v1.0.1 `cmd`-on-non-docker validator at `src/config/validate.rs:89`. `T-V12-LBL-06`, `T-V12-LBL-07`.
+- [x] **LBL-04**: Type-gated validator — setting `labels` on a `type = "command"` or `type = "script"` job is a config-validation error at load time (commands and scripts have no container; the labels would be silently dropped). Mirrors the v1.0.1 `cmd`-on-non-docker validator at `src/config/validate.rs:89`. `T-V12-LBL-06`, `T-V12-LBL-07`.
 
-- [ ] **LBL-05**: `${ENV_VAR}` interpolation works in label VALUES (free from v1.0's config string-pre-parse interpolation; verified at requirements time). Operators can write `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }` and the value is interpolated at config-load. Keys are NOT interpolated (interpolated keys would be hostile to validation). `T-V12-LBL-08`.
+- [x] **LBL-05**: `${ENV_VAR}` interpolation works in label VALUES (free from v1.0's config string-pre-parse interpolation; verified at requirements time). Operators can write `labels = { "deployment.id" = "${DEPLOYMENT_ID}" }` and the value is interpolated at config-load. Keys are NOT interpolated (interpolated keys would be hostile to validation). `T-V12-LBL-08`.
 
-- [ ] **LBL-06**: Label size limits enforced at config-load: each label value ≤ 4 KB (Docker convention); total label-set size per job ≤ 32 KB (sum of all key+value byte lengths). Larger values fail validation with a clear error message. `T-V12-LBL-09`, `T-V12-LBL-10`.
+- [x] **LBL-06**: Label size limits enforced at config-load: each label value ≤ 4 KB (Docker convention); total label-set size per job ≤ 32 KB (sum of all key+value byte lengths). Larger values fail validation with a clear error message. `T-V12-LBL-09`, `T-V12-LBL-10`.
 
 ### Failure Context on Run Detail (FCTX) — new category
 
@@ -104,21 +104,21 @@ Job-detail page card; parallels v1.1 OBS-04 (p50/p95) pattern. Bucketing strateg
 
 - [x] **EXIT-05**: The card displays "last seen for each code" alongside the count (e.g., "1: 12 occurrences (last: 2h ago)") for the top-3 most-frequent codes. Cronitor-style touch worth adding cheaply; small additional column in the underlying query. `T-V12-EXIT-07`.
 
-- [ ] **EXIT-06**: Exit codes are NOT exposed as a Prometheus label on existing `cronduit_runs_total` family or any new family — preserves v1.0 cardinality discipline (i32 exit codes would be unbounded label cardinality). Operators who want exit-code metrics can scrape the histogram via the dashboard or build their own pipeline. `T-V12-EXIT-08`.
+- [x] **EXIT-06**: Exit codes are NOT exposed as a Prometheus label on existing `cronduit_runs_total` family or any new family — preserves v1.0 cardinality discipline (i32 exit codes would be unbounded label cardinality). Operators who want exit-code metrics can scrape the histogram via the dashboard or build their own pipeline. `T-V12-EXIT-08`.
 
 ### Job Tagging / Grouping (TAG) — new category
 
 UI-only filter chips on the dashboard. NO effect on webhooks (WH-09 includes tags in the payload but never AS a routing key), search, or metrics labels.
 
-- [ ] **TAG-01**: A new `tags: Vec<String>` field is added to `JobConfig` (TOML: `tags = ["backup", "weekly"]`). NOT added to `DefaultsConfig` (per-job only — the `[defaults] + per-job + use_defaults = false` override pattern does NOT apply to tags). `T-V12-TAG-01`.
+- [x] **TAG-01**: A new `tags: Vec<String>` field is added to `JobConfig` (TOML: `tags = ["backup", "weekly"]`). NOT added to `DefaultsConfig` (per-job only — the `[defaults] + per-job + use_defaults = false` override pattern does NOT apply to tags). `T-V12-TAG-01`.
 
 - [x] **TAG-02**: Tags are persisted to a new `jobs.tags TEXT NOT NULL DEFAULT '[]'` column (JSON-serialized array; structurally parity-friendly across SQLite + Postgres without JSONB ops). Migration is a single-file additive nullable→default '[]' (NOT the three-file tightening pattern; old jobs get default `'[]'` automatically on column add). `T-V12-TAG-02`.
 
-- [ ] **TAG-03**: Tag normalization at config-load: lowercase + trim. `["Backup", "backup ", "BACKUP"]` collapse to `["backup"]`. Operators get a config-load WARN (not error) when normalization would collapse multiple tags to the same canonical form — flags the deduplication so operators notice. `T-V12-TAG-03`, `T-V12-TAG-04`.
+- [x] **TAG-03**: Tag normalization at config-load: lowercase + trim. `["Backup", "backup ", "BACKUP"]` collapse to `["backup"]`. Operators get a config-load WARN (not error) when normalization would collapse multiple tags to the same canonical form — flags the deduplication so operators notice. `T-V12-TAG-03`, `T-V12-TAG-04`.
 
-- [ ] **TAG-04**: Tag charset validator at config-load: `^[a-z0-9][a-z0-9_-]{0,30}$` (ASCII lowercase + digits + underscore + dash; max 31 chars total; must start with alphanumeric). REJECT (don't silently mutate) on invalid input — operator gets a clear error pointing at the offending tag. Reserved tag names (`cronduit`, `system`, `internal`) are rejected. `T-V12-TAG-05`, `T-V12-TAG-06`.
+- [x] **TAG-04**: Tag charset validator at config-load: `^[a-z0-9][a-z0-9_-]{0,30}$` (ASCII lowercase + digits + underscore + dash; max 31 chars total; must start with alphanumeric). REJECT (don't silently mutate) on invalid input — operator gets a clear error pointing at the offending tag. Reserved tag names (`cronduit`, `system`, `internal`) are rejected. `T-V12-TAG-05`, `T-V12-TAG-06`.
 
-- [ ] **TAG-05**: Tag substring-collision check at config-load: rejects fleets where one tag is a substring of another (e.g., `back` and `backup` cannot both exist). The SQL filter `tags LIKE '%"' || ?tag || '"%'` is structurally parity-friendly across SQLite + Postgres but vulnerable to substring false-positives without this validator. `T-V12-TAG-07`.
+- [x] **TAG-05**: Tag substring-collision check at config-load: rejects fleets where one tag is a substring of another (e.g., `back` and `backup` cannot both exist). The SQL filter `tags LIKE '%"' || ?tag || '"%'` is structurally parity-friendly across SQLite + Postgres but vulnerable to substring false-positives without this validator. `T-V12-TAG-07`.
 
 - [x] **TAG-06**: The dashboard renders filter chips for every distinct tag in the current fleet. Clicking a chip toggles its filter state (active = teal-bordered + bold; inactive = grey). Multiple active chips compose with **AND semantics** (job must have ALL active tags to render). URL state via repeated `?tag=` params (e.g., `/?tag=backup&tag=weekly`); shareable, bookmarkable. `T-V12-TAG-08`, `T-V12-TAG-09`.
 
@@ -172,17 +172,17 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | FOUND-14  | 16    | Complete |
 | FOUND-15  | 15    | Complete |
 | FOUND-16  | 15    | Complete |
-| WH-01     | 18    | Pending |
+| WH-01     | 18    | Complete |
 | WH-02     | 15    | Complete |
-| WH-03     | 18    | Pending |
-| WH-04     | 19    | Pending |
-| WH-05     | 20    | Pending |
-| WH-06     | 18    | Pending |
-| WH-07     | 20    | Pending |
-| WH-08     | 20    | Pending |
+| WH-03     | 18    | Complete |
+| WH-04     | 19    | Complete |
+| WH-05     | 20    | Complete |
+| WH-06     | 18    | Complete |
+| WH-07     | 20    | Complete |
+| WH-08     | 20    | Complete |
 | WH-09     | 18    | Complete |
-| WH-10     | 20    | Pending |
-| WH-11     | 20    | Pending |
+| WH-10     | 20    | Complete |
+| WH-11     | 20    | Complete |
 | LBL-01    | 17    | Complete |
 | LBL-02    | 17    | Complete |
 | LBL-03    | 17    | Complete |
@@ -201,12 +201,12 @@ Explicit boundaries; NOT in v1.2 or v1.3.
 | EXIT-03   | 21    | Complete |
 | EXIT-04   | 21    | Complete |
 | EXIT-05   | 21    | Complete |
-| EXIT-06   | 21    | Pending |
-| TAG-01    | 22    | Pending |
+| EXIT-06   | 21    | Complete |
+| TAG-01    | 22    | Complete |
 | TAG-02    | 22    | Complete |
-| TAG-03    | 22    | Pending |
-| TAG-04    | 22    | Pending |
-| TAG-05    | 22    | Pending |
+| TAG-03    | 22    | Complete |
+| TAG-04    | 22    | Complete |
+| TAG-05    | 22    | Complete |
 | TAG-06    | 23    | Complete |
 | TAG-07    | 23    | Complete |
 | TAG-08    | 23    | Complete |
