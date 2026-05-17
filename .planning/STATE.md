@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: executing
+status: "Phase 24 shipped — PR #64 (awaiting maintainer UAT against rc.4 image)"
 stopped_at: Phase 24 context gathered
-last_updated: "2026-05-17T01:17:50.139Z"
-last_activity: 2026-05-17 -- Phase 24 execution started
+last_updated: "2026-05-17T03:49:27.112Z"
+last_activity: "2026-05-16 -- Phase 24 shipped — PR #64"
 progress:
   total_phases: 10
   completed_phases: 9
@@ -29,8 +29,8 @@ Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
 Phase: 24 (milestone-close-out-final-v1-2-0-ship) — EXECUTING
 Plan: 1 of 8
-Status: Executing Phase 24
-Last activity: 2026-05-17 -- Phase 24 execution started
+Status: Phase 24 shipped — PR #64 (awaiting maintainer UAT against rc.4 image)
+Last activity: 2026-05-16 -- Phase 24 shipped — PR #64
 
 Progress: [██████████] 100%
 
