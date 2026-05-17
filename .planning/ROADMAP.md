@@ -380,8 +380,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 24-02-PLAN.md — Milestone audit: invoke /gsd-audit-milestone v1.2; v1.2-MILESTONE-AUDIT.md + REQUIREMENTS.md flips (20 items) + ROADMAP drift cleanup (P17 Complete / P21 11/11 / P22 6/6)
-- [ ] 24-05-PLAN.md — cargo-deny WARN→ERROR promotion (FOUND-16): ci.yml continue-on-error removed; conditional deny.toml/Cargo.lock advisory remediation
+- [x] 24-02-PLAN.md — Milestone audit: invoke /gsd-audit-milestone v1.2; v1.2-MILESTONE-AUDIT.md + REQUIREMENTS.md flips (20 items) + ROADMAP drift cleanup (P17 Complete / P21 11/11 / P22 6/6)
+- [x] 24-05-PLAN.md — cargo-deny WARN→ERROR promotion (FOUND-16): ci.yml continue-on-error removed; conditional deny.toml/Cargo.lock advisory remediation
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -425,7 +425,7 @@ Plans:
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 11/11 | Complete    | 2026-05-03 |
 | 22. Job Tagging Schema + Validators | 6/6 | Complete    | 2026-05-04 |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete    | 2026-05-05 |
-| 24. Milestone Close-Out — final v1.2.0 | 0/— | Not started | — |
+| 24. Milestone Close-Out — final v1.2.0 | 2/8 | In Progress|  |
 
 ## v1.2 Build Order
 
