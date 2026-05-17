@@ -390,7 +390,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 24-04-PLAN.md — README updates: v1.2 What's New hero block + §Features pointer (FCTX + exit histogram) + §Configuration §Webhooks subsection + MILESTONES cross-link
+- [x] 24-04-PLAN.md — README updates: v1.2 What's New hero block + §Features pointer (FCTX + exit histogram) + §Configuration §Webhooks subsection + MILESTONES cross-link
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -425,7 +425,7 @@ Plans:
 | 21. Failure-Context UI + Exit-Code Histogram — rc.2 | 11/11 | Complete    | 2026-05-03 |
 | 22. Job Tagging Schema + Validators | 6/6 | Complete    | 2026-05-04 |
 | 23. Job Tagging Dashboard Filter Chips — rc.3 | 8/8 | Complete    | 2026-05-05 |
-| 24. Milestone Close-Out — final v1.2.0 | 4/8 | In Progress|  |
+| 24. Milestone Close-Out — final v1.2.0 | 5/8 | In Progress|  |
 
 ## v1.2 Build Order
 
