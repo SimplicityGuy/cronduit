@@ -54,6 +54,8 @@ image = "alpine:latest"
 labels = { "com.example.owner" = "data-team", "com.example.team" = "infra" }
 ```
 
+**Resolution:** Fixed in commit 273accb — removed `command = "echo merged"` from the `uat-labels-merge` fixture. The `[[jobs]]` block now has only `image` set; `just check-config` will exit 0 for Scenario 4a.
+
 ---
 
 ## Warnings
@@ -72,6 +74,8 @@ schedule = "0 0 * * *"
 image = "alpine:latest"
 labels = { "cronduit.job-name" = "operator-supplied" }
 ```
+
+**Resolution:** Fixed in commit 901bc00 — removed `command = "echo reserved"` from the `uat-labels-reserved-namespace-error` fixture. The `cronduit.job-name` label is still present; `check_label_reserved_namespace` is now the sole driver of the expected non-zero exit.
 
 ### WR-02: `deny.toml` `[bans]` comment contradicts file header — stale "Phase 24 will promote" promise
 
@@ -101,6 +105,8 @@ skip = []
 skip-tree = []
 ```
 
+**Resolution:** Fixed in commit 174c97b — replaced stale "Phase 24 will promote" forward-looking comment with a past-tense D-10 decision record that matches the file header at L3. No contradiction remains.
+
 ### WR-03: README `§Docker image tags` table and mermaid diagram show stale v1.1.0 references
 
 **File:** `README.md:103-118`
@@ -122,6 +128,8 @@ The mermaid diagram at L114-118 uses `v1.1.0-rc.N` and `v1.1.0` as the illustrat
 ```
 
 Mermaid diagram: replace `v1.1.0-rc.N` with `v1.2.0-rc.N` and `v1.1.0` with `v1.2.0` in the node labels.
+
+**Resolution:** Fixed in commit c9a0cf7 — updated `:latest` table row to "currently `:1.2.0`", `:rc` row to "currently `:1.2.0-rc.4`", and mermaid diagram node labels from `v1.1.0` to `v1.2.0`. Archival `:X.Y.Z` examples in the table (e.g. `:1.1.0`) were left untouched as they illustrate the tag format, not the current pointer.
 
 ---
 
