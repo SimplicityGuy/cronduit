@@ -615,12 +615,14 @@ uat-webhook-mock-500:
     echo "▶ Logs streaming to /tmp/cronduit-webhook-mock-500.log"
     echo "▶ Press Ctrl-C to stop."
     : > /tmp/cronduit-webhook-mock-500.log
-    # Heredoc body is indented to match the recipe block (just requires this);
-    # `sed 's/^    //'` strips the 4-space recipe prefix so Python sees a
-    # zero-indent module. Same trick used in the slow-mock recipe below.
+    # Heredoc body uses Python-native indents. `just` already strips the
+    # recipe-prefix 4 spaces before invoking bash, so `cat > "$SCRIPT"` writes
+    # the body as-is and Python sees a valid zero-indent module. (Prior version
+    # double-stripped via `sed 's/^    //'`, which dedented `def` methods OUT
+    # of the class body and broke parsing.)
     SCRIPT=$(mktemp /tmp/cronduit-webhook-mock-500-XXXXXX.py)
     trap 'rm -f "$SCRIPT"' EXIT
-    sed 's/^    //' > "$SCRIPT" <<'PYEOF'
+    cat > "$SCRIPT" <<'PYEOF'
     import http.server, sys, datetime
     LOG = "/tmp/cronduit-webhook-mock-500.log"
     class H(http.server.BaseHTTPRequestHandler):
@@ -656,9 +658,11 @@ uat-webhook-mock-slow:
     echo "▶ Logs streaming to /tmp/cronduit-webhook-mock-slow.log"
     echo "▶ Press Ctrl-C to stop."
     : > /tmp/cronduit-webhook-mock-slow.log
+    # See uat-webhook-mock-500 above — heredoc body is fed directly to cat;
+    # the prior `sed 's/^    //'` double-strip broke Python class-body indent.
     SCRIPT=$(mktemp /tmp/cronduit-webhook-mock-slow-XXXXXX.py)
     trap 'rm -f "$SCRIPT"' EXIT
-    sed 's/^    //' > "$SCRIPT" <<'PYEOF'
+    cat > "$SCRIPT" <<'PYEOF'
     import http.server, sys, time, datetime
     LOG = "/tmp/cronduit-webhook-mock-slow.log"
     class H(http.server.BaseHTTPRequestHandler):
