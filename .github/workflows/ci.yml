@@ -45,17 +45,15 @@ jobs:
       # percentile into src/. See justfile recipe for the grep pattern + rationale.
       - run: just grep-no-percentile-cont
       # Phase 15 / FOUND-16. cargo-deny supply-chain check (advisories +
-      # licenses + duplicate-versions). Non-blocking on rc.1 per D-09 — the
-      # step is marked continue-on-error: true so a transient advisory or
-      # transitive duplicate-version finding cannot redden CI in v1.2 hands.
-      # Promoted to blocking (single-line removal of continue-on-error)
-      # before final v1.2.0 ships in Phase 24. Pairs with deny.toml's
-      # `bans.multiple-versions = "warn"` for two-layer non-blocking (D-10).
+      # licenses + duplicate-versions). PROMOTED TO BLOCKING in Phase 24 per
+      # the original FOUND-16 spec (plan 24-05, D-11). Pairs with deny.toml's
+      # `bans.multiple-versions = "warn"` for layered defense (D-10) — license
+      # / advisory / bans failures redden CI; transitive duplicate-version
+      # warnings stay non-blocking via deny.toml.
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
       - run: just deny
-        continue-on-error: true
 
   # Test matrix: arch dimension only.
   # Both SQLite and Postgres backends are exercised in every cell via
