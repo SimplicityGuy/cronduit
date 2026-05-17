@@ -1,7 +1,12 @@
 # deny.toml — cargo-deny v0.19.x configuration for cronduit.
 # Phase 15 / FOUND-16. License allowlist matches v1.0/v1.1 posture.
-# `bans.multiple-versions = "warn"` is the rc.1 posture (D-10); promoted to
-# "deny" with a curated `skip` list before final v1.2.0 (Phase 24).
+# `bans.multiple-versions = "warn"` stays at "warn" through Phase 24 close-out
+# (D-10 layered-defense pairing with ci.yml's now-blocking cargo-deny gate —
+# duplicate-version findings are emitted as warnings, not errors). Phase 24
+# plan 24-05 promoted the ci.yml gate to BLOCKING and widened this allowlist
+# to cover transitive deps that ship under FSF/OSI-approved licenses cargo-deny
+# did not whitelist by default — see [licenses].allow comments below for
+# per-license rationale + re-evaluate dates.
 
 [graph]
 # Restrict the dep graph to the targets cronduit actually ships for. Same
@@ -35,6 +40,50 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-DFS-2016",
+    # ---- Phase 24 / v1.2.0 close-out additions (plan 24-05, FOUND-16) ----
+    # All five licenses below are OSI-approved AND FSF Free/Libre per cargo-deny's
+    # own classification output. They surfaced once the cargo-deny gate was
+    # promoted from WARN to ERROR — they have been present in the transitive
+    # dep graph since v1.0/v1.1 but were tolerated under continue-on-error: true.
+    # rationale per license: see comments below; re-evaluate at v1.3 milestone close.
+    #
+    # Unicode-3.0 — successor to Unicode-DFS-2016 (already in allowlist above).
+    # OSI + FSF approved. Carried by the entire ICU family (icu_collections,
+    # icu_locale_core, icu_normalizer{,_data}, icu_properties{,_data},
+    # icu_provider, litemap, potential_utf, tinystr, writeable, yoke{,-derive},
+    # zerofrom{,-derive}, zerotrie, zerovec{,-derive}) which transit through
+    # `idna` → `url` → SSRF guard + sqlx URL parsing. Unicode-3.0 is the
+    # current SPDX identifier for the same Unicode Inc. terms covered by
+    # Unicode-DFS-2016; widely accepted across the Rust ecosystem.
+    # expires: 2026-12-31 — re-evaluate before v1.3 close.
+    "Unicode-3.0",
+    # Zlib — OSI + FSF approved permissive license (zlib/libpng). Carried by
+    # `foldhash` 0.1.5 and 0.2.0 (transitive via hashbrown → sqlx-core +
+    # hashbrown → metrics-util → metrics-exporter-prometheus). Zlib is one of
+    # the most permissive OSS licenses; no notice/attribution requirement.
+    # expires: 2026-12-31 — re-evaluate before v1.3 close.
+    "Zlib",
+    # CDLA-Permissive-2.0 — Linux Foundation's "Community Data License
+    # Agreement, Permissive, Version 2.0". OSI + FSF approved. Carried by
+    # `webpki-roots` 0.26.x and 1.0.x (rustls trust-anchor bundle — the
+    # Mozilla root CA list sourced from the Common CA Database; CDLA-2.0 is
+    # CCADB's required redistribution license). Required for the rustls TLS
+    # posture (PROJECT.md D-19: rustls everywhere, zero openssl-sys).
+    # expires: 2026-12-31 — re-evaluate before v1.3 close.
+    "CDLA-Permissive-2.0",
+    # CC0-1.0 — public-domain dedication. FSF Free/Libre and OSI considers
+    # it equivalent to the public domain for software. Carried by `notify`
+    # 8.2.0 (file-watch config reload — Phase 5 hot reload). The CC0 dedication
+    # carries no patent grant explicitly; risk is low for a file-watcher utility
+    # with no algorithmic novelty surface.
+    # expires: 2026-12-31 — re-evaluate before v1.3 close.
+    "CC0-1.0",
+    # NOTE on compound license expressions: `unicode-ident` 1.0.x ships as
+    # `(MIT OR Apache-2.0) AND Unicode-3.0`. cargo-deny does NOT accept
+    # compound SPDX expressions in `[licenses].allow` — only atomic SPDX
+    # identifiers. The compound expression is satisfied automatically because
+    # every atomic component (MIT, Apache-2.0, Unicode-3.0) is individually
+    # allowlisted above.
 ]
 # Confidence threshold for license-detection heuristics. 0.93 is the
 # cargo-deny default and the right value unless proven otherwise.
