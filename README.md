@@ -28,7 +28,7 @@ Cronduit is a single-operator tool for homelab environments. It makes three expl
 
 For non-loopback deployments, always place Cronduit behind a reverse proxy with authentication (Traefik, Caddy, nginx basic auth, etc.).
 
-See [THREAT_MODEL.md](./THREAT_MODEL.md) for the full threat model covering Docker socket access, untrusted clients, config tampering, and malicious images.
+See [THREAT_MODEL.md](./THREAT_MODEL.md) for the full threat model covering Docker socket access, untrusted clients, config tampering, malicious images, [webhook outbound (SSRF)](./THREAT_MODEL.md#threat-model-5-webhook-outbound), and [operator-supplied Docker labels](./THREAT_MODEL.md#threat-model-6-operator-supplied-docker-labels).
 
 ---
 
