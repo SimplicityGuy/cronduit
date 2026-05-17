@@ -615,12 +615,14 @@ uat-webhook-mock-500:
     echo "▶ Logs streaming to /tmp/cronduit-webhook-mock-500.log"
     echo "▶ Press Ctrl-C to stop."
     : > /tmp/cronduit-webhook-mock-500.log
-    # Heredoc body is indented to match the recipe block (just requires this);
-    # `sed 's/^    //'` strips the 4-space recipe prefix so Python sees a
-    # zero-indent module. Same trick used in the slow-mock recipe below.
+    # Heredoc body uses Python-native indents. `just` already strips the
+    # recipe-prefix 4 spaces before invoking bash, so `cat > "$SCRIPT"` writes
+    # the body as-is and Python sees a valid zero-indent module. (Prior version
+    # double-stripped via `sed 's/^    //'`, which dedented `def` methods OUT
+    # of the class body and broke parsing.)
     SCRIPT=$(mktemp /tmp/cronduit-webhook-mock-500-XXXXXX.py)
     trap 'rm -f "$SCRIPT"' EXIT
-    sed 's/^    //' > "$SCRIPT" <<'PYEOF'
+    cat > "$SCRIPT" <<'PYEOF'
     import http.server, sys, datetime
     LOG = "/tmp/cronduit-webhook-mock-500.log"
     class H(http.server.BaseHTTPRequestHandler):
@@ -656,9 +658,11 @@ uat-webhook-mock-slow:
     echo "▶ Logs streaming to /tmp/cronduit-webhook-mock-slow.log"
     echo "▶ Press Ctrl-C to stop."
     : > /tmp/cronduit-webhook-mock-slow.log
+    # See uat-webhook-mock-500 above — heredoc body is fed directly to cat;
+    # the prior `sed 's/^    //'` double-strip broke Python class-body indent.
     SCRIPT=$(mktemp /tmp/cronduit-webhook-mock-slow-XXXXXX.py)
     trap 'rm -f "$SCRIPT"' EXIT
-    sed 's/^    //' > "$SCRIPT" <<'PYEOF'
+    cat > "$SCRIPT" <<'PYEOF'
     import http.server, sys, time, datetime
     LOG = "/tmp/cronduit-webhook-mock-slow.log"
     class H(http.server.BaseHTTPRequestHandler):
@@ -992,22 +996,44 @@ uat-fctx-panel:
     echo "Step 1: Reset DB."
     just db-reset
     echo ""
-    echo "Step 2: Start cronduit in another terminal:    just dev"
-    echo "        Wait until you see 'Listening on 127.0.0.1:8080'."
-    echo "        Then PRESS ENTER here to continue."
-    read
+    echo "Step 2: Bootstrap schema by running cronduit briefly (WAL must be drained"
+    echo "        BEFORE we sqlite3-insert; the prior version seeded against a"
+    echo "        running cronduit, which races on the WAL and leaves the main DB"
+    echo "        file at 0 bytes — sqlite3 CLI then sees an empty schema)."
+    DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc \
+        cargo run --quiet -- run --config examples/cronduit.toml >/dev/null 2>&1 &
+    BOOTSTRAP_PID=$!
+    # Wait up to 15s for migrations + sync to complete (jobs table populated).
+    for _ in $(seq 1 30); do
+      sleep 0.5
+      if sqlite3 cronduit.dev.db "SELECT COUNT(*) FROM jobs;" 2>/dev/null | grep -qE '^[1-9]'; then
+        break
+      fi
+    done
+    kill -INT "$BOOTSTRAP_PID" 2>/dev/null || true
+    wait "$BOOTSTRAP_PID" 2>/dev/null || true
+    # Verify schema is now on disk.
+    if ! sqlite3 cronduit.dev.db "SELECT 1 FROM job_runs LIMIT 1;" >/dev/null 2>&1 \
+         && ! sqlite3 cronduit.dev.db ".schema job_runs" 2>/dev/null | grep -q "CREATE TABLE"; then
+      echo "ERROR: schema bootstrap failed — job_runs table not present after cronduit startup."
+      echo "       Check that 'cargo run -- run --config examples/cronduit.toml' starts cleanly."
+      exit 1
+    fi
+    echo "        ✓ Schema bootstrapped; cronduit stopped; WAL drained."
     echo ""
-    echo "Step 3: Resolve job id for the docker example job (or any seeded job)."
-    JOB_ID=$(just api-job-id "fire-skew-demo")
+    echo "Step 3: Resolve job id by querying the now-quiescent DB (no cronduit running)."
+    JOB_ID=$(sqlite3 cronduit.dev.db "SELECT id FROM jobs WHERE name='fire-skew-demo';")
+    if [ -z "$JOB_ID" ]; then echo "ERROR: fire-skew-demo job not found in DB"; exit 1; fi
     echo "        JOB_ID=$JOB_ID"
     echo ""
-    echo "Step 4: Seed 4 consecutive failed runs via raw sqlite3 (mirrors fixture shape)."
+    echo "Step 4: Seed 4 consecutive failed runs via sqlite3 (cronduit not running — safe)."
     for i in 1 2 3 4; do
       sqlite3 cronduit.dev.db "INSERT INTO job_runs (job_id, status, trigger, start_time, end_time, duration_ms, exit_code, job_run_number, image_digest, config_hash, scheduled_for) VALUES ($JOB_ID, 'failed', 'manual', datetime('now', '-' || $i || ' minutes'), datetime('now', '-' || $i || ' minutes', '+30 seconds'), 30000, 1, $i, NULL, 'seed-hash', datetime('now', '-' || $i || ' minutes'));"
     done
-    echo ""
     LATEST_RUN_ID=$(sqlite3 cronduit.dev.db "SELECT id FROM job_runs WHERE job_id=$JOB_ID ORDER BY id DESC LIMIT 1;")
-    echo "Step 5: Visit the run-detail page in your browser:"
+    echo ""
+    echo "Step 5: Start cronduit in another terminal:    just dev"
+    echo "        Then visit the run-detail page in your browser:"
     echo "        http://127.0.0.1:8080/jobs/$JOB_ID/runs/$LATEST_RUN_ID"
     echo ""
     echo "Expected: collapsed-by-default 'Failure context' panel with 4 consecutive failures meta."
@@ -1033,14 +1059,31 @@ uat-exit-histogram:
     echo "Step 1: Reset DB."
     just db-reset
     echo ""
-    echo "Step 2: Start cronduit:    just dev   (then PRESS ENTER)"
-    read
+    echo "Step 2: Bootstrap schema by running cronduit briefly (drains WAL before"
+    echo "        sqlite3 inserts — same WAL-race fix as uat-fctx-panel)."
+    DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc \
+        cargo run --quiet -- run --config examples/cronduit.toml >/dev/null 2>&1 &
+    BOOTSTRAP_PID=$!
+    for _ in $(seq 1 30); do
+      sleep 0.5
+      if sqlite3 cronduit.dev.db "SELECT COUNT(*) FROM jobs;" 2>/dev/null | grep -qE '^[1-9]'; then
+        break
+      fi
+    done
+    kill -INT "$BOOTSTRAP_PID" 2>/dev/null || true
+    wait "$BOOTSTRAP_PID" 2>/dev/null || true
+    if ! sqlite3 cronduit.dev.db ".schema job_runs" 2>/dev/null | grep -q "CREATE TABLE"; then
+      echo "ERROR: schema bootstrap failed — job_runs table not present."
+      exit 1
+    fi
+    echo "        ✓ Schema bootstrapped; cronduit stopped; WAL drained."
     echo ""
-    echo "Step 3: Resolve job id."
-    JOB_ID=$(just api-job-id "fire-skew-demo")
+    echo "Step 3: Resolve job id by querying the now-quiescent DB."
+    JOB_ID=$(sqlite3 cronduit.dev.db "SELECT id FROM jobs WHERE name='fire-skew-demo';")
+    if [ -z "$JOB_ID" ]; then echo "ERROR: fire-skew-demo job not found in DB"; exit 1; fi
     echo "        JOB_ID=$JOB_ID"
     echo ""
-    echo "Step 4: Seed mixed exit-code runs via raw sqlite3 (covers EXIT-04 dual-classifier — stopped vs failed @ 137):"
+    echo "Step 4: Seed mixed exit-code runs (covers EXIT-04 dual-classifier — stopped vs failed @ 137):"
     # 5 success, 3 failed exit=1, 1 failed exit=127, 1 stopped exit=137 (cronduit SIGKILL), 1 failed exit=137 (external signal)
     sqlite3 cronduit.dev.db "
       INSERT INTO job_runs (job_id, status, trigger, start_time, end_time, duration_ms, exit_code, job_run_number, image_digest, config_hash, scheduled_for) VALUES
@@ -1055,7 +1098,8 @@ uat-exit-histogram:
         ($JOB_ID, 'stopped', 'manual', datetime('now', '-2 minutes'), datetime('now', '-2 minutes', '+30 seconds'), 30000, 137, 9, NULL, 'h', datetime('now', '-2 minutes')),
         ($JOB_ID, 'failed', 'manual', datetime('now', '-1 minutes'), datetime('now', '-1 minutes', '+30 seconds'), 30000, 137, 10, NULL, 'h', datetime('now', '-1 minutes'));"
     echo ""
-    echo "Step 5: Visit the job-detail page:"
+    echo "Step 5: Start cronduit in another terminal:    just dev"
+    echo "        Then visit the job-detail page:"
     echo "        http://127.0.0.1:8080/jobs/$JOB_ID"
     echo ""
     echo "Expected: 'Exit Code Distribution' card visible (sibling to Duration card)."
@@ -1693,14 +1737,20 @@ uat-chips-share-url:
 uat-quickstart RC_TAG:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "▶ Phase 24 UAT Scenario 1: quickstart against {{RC_TAG}}"
+    # Docker image tags omit the `v` prefix (semver-in-image convention; matches
+    # every prior tag: 1.1.0-rc.6, 1.0.1, etc.). Accept either form from the
+    # operator and normalize so the runbook can say `v1.2.0-rc.4` (the git tag)
+    # or `1.2.0-rc.4` (the image tag) interchangeably.
+    RC_RAW="{{RC_TAG}}"
+    RC="${RC_RAW#v}"
+    echo "▶ Phase 24 UAT Scenario 1: quickstart against $RC"
     echo ""
-    echo "Step 1: Pull ghcr.io/simplicityguy/cronduit:{{RC_TAG}}"
-    docker pull ghcr.io/simplicityguy/cronduit:{{RC_TAG}}
+    echo "Step 1: Pull ghcr.io/simplicityguy/cronduit:$RC"
+    docker pull ghcr.io/simplicityguy/cronduit:"$RC"
     echo ""
     echo "Step 2: Bring up docker-compose with CRONDUIT_IMAGE override."
     echo "        (examples/docker-compose.yml:72 already consumes \$CRONDUIT_IMAGE.)"
-    CRONDUIT_IMAGE=ghcr.io/simplicityguy/cronduit:{{RC_TAG}} \
+    CRONDUIT_IMAGE=ghcr.io/simplicityguy/cronduit:"$RC" \
         docker compose -f examples/docker-compose.yml up -d
     echo ""
     echo "Step 3: Wait 90s for the cronduit healthcheck to mark healthy …"
@@ -1728,7 +1778,7 @@ uat-quickstart RC_TAG:
 # UAT Scenario 2: v1.0 + v1.1 dashboard surfaces walkthrough.
 # Operator-eyeball check that no v1.0/v1.1 features regressed under the v1.2 codebase.
 # Assumes cronduit is already running (operator brought it up via
-# `just uat-quickstart v1.2.0-rc.4` and answered 'n' to keep it up, OR
+# `just uat-quickstart 1.2.0-rc.4` and answered 'n' to keep it up, OR
 # re-brought it up between Scenarios — maintainer discretion).
 [group('release')]
 [doc('UAT Scenario 2 — eyeball v1.0/v1.1 surfaces (filter / sort / Run Now / Stop / bulk toggle / timeline / sparklines / overrides / healthcheck) intact')]
