@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: — Operator Integration & Insight
 status: executing
 stopped_at: Phase 24 context gathered
-last_updated: "2026-05-17T01:14:20.414Z"
-last_activity: 2026-05-17 -- Phase 24 planning complete
+last_updated: "2026-05-17T01:17:50.139Z"
+last_activity: 2026-05-17 -- Phase 24 execution started
 progress:
   total_phases: 10
   completed_phases: 9
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 23 — job-tagging-dashboard-filter-chips-rc-3
+**Current focus:** Phase 24 — milestone-close-out-final-v1-2-0-ship
 
 ## Current Position
 
 Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 24
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-17 -- Phase 24 planning complete
+Phase: 24 (milestone-close-out-final-v1-2-0-ship) — EXECUTING
+Plan: 1 of 8
+Status: Executing Phase 24
+Last activity: 2026-05-17 -- Phase 24 execution started
 
 Progress: [██████████] 100%
 
