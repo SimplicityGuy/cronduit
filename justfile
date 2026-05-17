@@ -1675,3 +1675,183 @@ uat-chips-share-url:
     echo ""
     echo "The maintainer is the source of truth — Claude does NOT mark this passed."
     read -rp "Press enter when (a) (b) (c) (d) and Step 7 all confirmed..."
+
+# ===== Phase 24 — v1.2.0 milestone close-out UAT recipes (plan 24-07) =====
+# Per project memory `feedback_uat_use_just_commands.md` + plan 24-07 Task 1:
+# four recipes that wrap the operations 24-HUMAN-UAT.md references. The recipes
+# compose existing primitives (`just check-config` at L877) where applicable —
+# NO raw `cargo run -- check` invocations re-inlined. The existing
+# `compose-up-rc3` recipe at L921 is left UNTOUCHED (historical v1.1 artifact);
+# the new `uat-quickstart RC_TAG` is the forward-going parameterized recipe.
+
+# UAT Scenario 1: docker compose up the published rc.N image and verify dashboard.
+# Parameterized on RC_TAG so plan 24-08's iterated rc.N reuses the same recipe.
+# Strategy (a) per plan 24-07: sets CRONDUIT_IMAGE env var; examples/docker-compose.yml:72
+# already consumes ${CRONDUIT_IMAGE:-…} so NO edit to docker-compose.yml is required.
+[group('release')]
+[doc('UAT Scenario 1 — bring up compose pinned to RC_TAG (e.g. v1.2.0-rc.4), eyeball dashboard, tear down')]
+uat-quickstart RC_TAG:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 24 UAT Scenario 1: quickstart against {{RC_TAG}}"
+    echo ""
+    echo "Step 1: Pull ghcr.io/simplicityguy/cronduit:{{RC_TAG}}"
+    docker pull ghcr.io/simplicityguy/cronduit:{{RC_TAG}}
+    echo ""
+    echo "Step 2: Bring up docker-compose with CRONDUIT_IMAGE override."
+    echo "        (examples/docker-compose.yml:72 already consumes \$CRONDUIT_IMAGE.)"
+    CRONDUIT_IMAGE=ghcr.io/simplicityguy/cronduit:{{RC_TAG}} \
+        docker compose -f examples/docker-compose.yml up -d
+    echo ""
+    echo "Step 3: Wait 90s for the cronduit healthcheck to mark healthy …"
+    sleep 90
+    docker compose -f examples/docker-compose.yml ps
+    echo ""
+    echo "Maintainer eyeball criteria — confirm each:"
+    echo "  (a) Open http://localhost:8080 — dashboard MUST render without errors"
+    echo "      (no 500 page, no JS console errors in F12)."
+    echo "  (b) 'docker compose ps' above MUST show the cronduit container with"
+    echo "      health: healthy (not 'starting' or 'unhealthy')."
+    echo ""
+    echo "The maintainer is the source of truth — Claude does NOT mark this passed."
+    read -rp "Did the dashboard render and the healthcheck go healthy? (y/n) " ok
+    if [ "$ok" != "y" ]; then
+        echo "Scenario 1 did NOT pass — investigate before continuing the UAT runbook."
+        exit 1
+    fi
+    echo ""
+    echo "Step 4: Tear down the compose stack (Scenarios 2-6 will re-up if needed)."
+    docker compose -f examples/docker-compose.yml down
+    echo ""
+    echo "Scenario 1 PASSED per maintainer eyeball."
+
+# UAT Scenario 2: v1.0 + v1.1 dashboard surfaces walkthrough.
+# Operator-eyeball check that no v1.0/v1.1 features regressed under the v1.2 codebase.
+# Assumes cronduit is already running (operator brought it up via
+# `just uat-quickstart v1.2.0-rc.4` and answered 'n' to keep it up, OR
+# re-brought it up between Scenarios — maintainer discretion).
+[group('release')]
+[doc('UAT Scenario 2 — eyeball v1.0/v1.1 surfaces (filter / sort / Run Now / Stop / bulk toggle / timeline / sparklines / overrides / healthcheck) intact')]
+uat-regression-v1x:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 24 UAT Scenario 2: v1.0 + v1.1 regression walkthrough"
+    echo ""
+    echo "Cronduit must already be running (e.g. via 'just uat-quickstart v1.2.0-rc.4',"
+    echo "OR via 'just dev' with a fleet TOML loaded). Open http://localhost:8080"
+    echo "and verify EACH of the nine v1.0/v1.1 surfaces below:"
+    echo ""
+    echo "  (a) Filter — type into the dashboard name-filter input, list narrows live."
+    echo "  (b) Sort — click any sortable column header, table reorders."
+    echo "  (c) Run Now — click 'Run Now' on a job; a new run appears under that job."
+    echo "  (d) Stop — start a long-running job and click 'Stop'; the run terminates."
+    echo "  (e) Bulk toggle — select multiple rows + bulk disable; all selected jobs flip."
+    echo "  (f) Timeline — open the cross-job timeline page; runs render in the timeline."
+    echo "  (g) Sparklines — per-job sparkline cards render on the dashboard."
+    echo "  (h) Settings overrides — open settings page; override values flow into job execution."
+    echo "  (i) Healthcheck — 'docker compose ps' (or systemd / direct binary) still shows"
+    echo "      cronduit healthy."
+    echo ""
+    echo "The maintainer is the source of truth — Claude does NOT mark this passed."
+    read -rp "Did all nine v1.0/v1.1 surfaces work without regression? (y/n) " ok
+    if [ "$ok" != "y" ]; then
+        echo "Scenario 2 did NOT pass — capture the failing surface and stop the UAT runbook."
+        exit 1
+    fi
+    echo ""
+    echo "Scenario 2 PASSED per maintainer eyeball."
+
+# UAT Scenario 4a: custom Docker labels merge precedence (defaults + per-job).
+# Composes `just check-config` (L877) rather than re-inlining `cargo run -- check`
+# per plan 24-07 Task 1 strategy (keeps the abstraction layer consistent).
+[group('release')]
+[doc('UAT Scenario 4a — labels merge precedence (defaults + per-job override) via check-config')]
+uat-labels-merge:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 24 UAT Scenario 4a: custom Docker labels merge precedence"
+    echo ""
+    mkdir -p .tmp
+    cat > .tmp/uat-labels-merge.toml <<'TOML_EOF'
+    [server]
+    bind = "127.0.0.1:8080"
+    timezone = "UTC"
+
+    [defaults]
+    labels = { "com.example.env" = "prod", "com.example.owner" = "platform" }
+
+    [[jobs]]
+    name = "label-merge-test"
+    type = "docker"
+    schedule = "0 0 * * *"
+    image = "alpine:latest"
+    command = "echo merged"
+    labels = { "com.example.owner" = "data-team", "com.example.team" = "infra" }
+    TOML_EOF
+    echo "Step 1: Validate the merge fixture via 'just check-config' (composes the"
+    echo "        existing recipe at L877 — no raw 'cargo run -- check' here)."
+    just check-config .tmp/uat-labels-merge.toml
+    echo ""
+    echo "Maintainer eyeball criteria — confirm both:"
+    echo "  (a) Config parses without error (just check-config exited 0)."
+    echo "  (b) Per-job 'com.example.owner = data-team' wins over defaults 'platform'"
+    echo "      (per-job-wins on collision) AND new 'com.example.team = infra' merges in."
+    echo "      Verify by inspecting the rendered config (cronduit logs at startup print"
+    echo "      the effective merged labels per job)."
+    echo ""
+    echo "The maintainer is the source of truth — Claude does NOT mark this passed."
+    read -rp "Did the merge match the documented precedence (per-job-wins)? (y/n) " ok
+    if [ "$ok" != "y" ]; then
+        echo "Scenario 4a did NOT pass — investigate before continuing the UAT runbook."
+        exit 1
+    fi
+    echo ""
+    echo "Scenario 4a PASSED per maintainer eyeball."
+
+# UAT Scenario 4b: cronduit.* reserved-namespace error at config-load.
+# Composes `just check-config` and asserts the validator REJECTS the config.
+[group('release')]
+[doc('UAT Scenario 4b — cronduit.* reserved-namespace validator rejects operator-supplied label')]
+uat-labels-reserved-namespace-error:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ Phase 24 UAT Scenario 4b: cronduit.* reserved-namespace error"
+    echo ""
+    mkdir -p .tmp
+    cat > .tmp/uat-labels-reserved.toml <<'TOML_EOF'
+    [server]
+    bind = "127.0.0.1:8080"
+    timezone = "UTC"
+
+    [[jobs]]
+    name = "reserved-ns-test"
+    type = "docker"
+    schedule = "0 0 * * *"
+    image = "alpine:latest"
+    command = "echo reserved"
+    labels = { "cronduit.job-name" = "operator-supplied" }
+    TOML_EOF
+    echo "Step 1: 'just check-config' MUST FAIL with a reserved-namespace error."
+    if just check-config .tmp/uat-labels-reserved.toml > .tmp/uat-labels-reserved.log 2>&1; then
+        echo "FAIL: check-config exited 0 — the reserved-namespace validator did NOT reject."
+        cat .tmp/uat-labels-reserved.log
+        exit 1
+    fi
+    echo "Step 2: Verify the error message names the cronduit.* reserved namespace."
+    if ! grep -q "cronduit\." .tmp/uat-labels-reserved.log; then
+        echo "FAIL: expected 'cronduit.*' reserved-namespace error message; got:"
+        cat .tmp/uat-labels-reserved.log
+        exit 1
+    fi
+    echo ""
+    echo "Reserved-namespace error surfaced at config-load. Maintainer eyeball:"
+    cat .tmp/uat-labels-reserved.log
+    echo ""
+    echo "The maintainer is the source of truth — Claude does NOT mark this passed."
+    read -rp "Did the error clearly name the cronduit.* reserved namespace? (y/n) " ok
+    if [ "$ok" != "y" ]; then
+        echo "Scenario 4b did NOT pass — investigate the error UX before continuing."
+        exit 1
+    fi
+    echo ""
+    echo "Scenario 4b PASSED per maintainer eyeball."
