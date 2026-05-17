@@ -1827,7 +1827,6 @@ uat-labels-reserved-namespace-error:
     type = "docker"
     schedule = "0 0 * * *"
     image = "alpine:latest"
-    command = "echo reserved"
     labels = { "cronduit.job-name" = "operator-supplied" }
     TOML_EOF
     echo "Step 1: 'just check-config' MUST FAIL with a reserved-namespace error."
