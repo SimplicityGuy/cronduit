@@ -1785,7 +1785,6 @@ uat-labels-merge:
     type = "docker"
     schedule = "0 0 * * *"
     image = "alpine:latest"
-    command = "echo merged"
     labels = { "com.example.owner" = "data-team", "com.example.team" = "infra" }
     TOML_EOF
     echo "Step 1: Validate the merge fixture via 'just check-config' (composes the"
