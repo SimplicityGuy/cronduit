@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: "Phase 24 shipped — PR #64 (awaiting maintainer UAT against rc.4 image)"
-stopped_at: Phase 24 context gathered
-last_updated: "2026-05-17T03:49:27.112Z"
-last_activity: "2026-05-16 -- Phase 24 shipped — PR #64"
+status: "v1.2 SHIPPED — final tag v1.2.0 pushed 2026-05-19 (bit-identical to rc.5 SHA 7fb1de5)"
+stopped_at: v1.2.0 shipped
+last_updated: "2026-05-19T20:55:00Z"
+last_activity: "2026-05-19 -- v1.2.0 SHIPPED — retag of rc.5 SHA 7fb1de5 (UAT-validated 2026-05-19)"
 progress:
   total_phases: 10
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 78
-  completed_plans: 70
-  percent: 90
+  completed_plans: 78
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** Phase 24 — milestone-close-out-final-v1-2-0-ship
+**Current focus:** v1.2 SHIPPED — awaiting `/gsd-complete-milestone v1.2` archival
 
 ## Current Position
 
-Milestone: v1.2 — Operator Integration & Insight (in progress; roadmap created 2026-04-25)
+Milestone: v1.2 — Operator Integration & Insight (SHIPPED 2026-05-19, tags `v1.2.0-rc.1` … `v1.2.0-rc.5`, final `v1.2.0`)
 Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 24 (milestone-close-out-final-v1-2-0-ship) — EXECUTING
-Plan: 1 of 8
-Status: Phase 24 shipped — PR #64 (awaiting maintainer UAT against rc.4 image)
-Last activity: 2026-05-16 -- Phase 24 shipped — PR #64
+Phase: 24 (milestone-close-out-final-v1-2-0-ship) — SHIPPED
+Plan: 8 of 8
+Status: v1.2.0 SHIPPED — final tag retags rc.5 SHA 7fb1de5; `:latest` advanced from `:1.1.0` to `:1.2.0`; four-tag equality verified (`:1.2.0` = `:1.2` = `:1` = `:latest` = `sha256:c440f30d…`)
+Last activity: 2026-05-19 -- v1.2.0 SHIPPED — retag of rc.5 SHA 7fb1de5 (UAT-validated 2026-05-19)
 
 Progress: [██████████] 100%
 
