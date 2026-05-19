@@ -1253,18 +1253,46 @@ uat-tags-persist:
     echo "Step 4: Validate the TOML via just check-config (must exit 0)."
     just check-config .tmp/uat-tags-persist.toml
     echo ""
-    echo "Step 5: Start cronduit in another terminal so the upsert runs:"
-    echo "        cargo run -- run --config .tmp/uat-tags-persist.toml --log-format text"
-    echo "        Wait for 'Listening on 127.0.0.1:8080'. Then PRESS ENTER here."
-    read
+    echo "Step 5: Run cronduit briefly so the upsert lands, then stop it so the WAL"
+    echo "        drains to the main DB file (the prior version of this recipe asked"
+    echo "        the operator to start cronduit in another terminal and then read"
+    echo "        jobs.tags via sqlite3 while cronduit held the WAL — that races and"
+    echo "        leaves the main file at 0 bytes, so sqlite3 sees 'no such table')."
+    DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc \
+        cargo run --quiet -- run --config .tmp/uat-tags-persist.toml >/dev/null 2>&1 &
+    BOOTSTRAP_PID=$!
+    for _ in $(seq 1 30); do
+      sleep 0.5
+      if sqlite3 cronduit.dev.db "SELECT COUNT(*) FROM jobs WHERE name='uat-tags-persist-demo';" 2>/dev/null | grep -qE '^[1-9]'; then
+        break
+      fi
+    done
+    kill -INT "$BOOTSTRAP_PID" 2>/dev/null || true
+    wait "$BOOTSTRAP_PID" 2>/dev/null || true
+    if ! sqlite3 cronduit.dev.db "SELECT 1 FROM jobs WHERE name='uat-tags-persist-demo';" 2>/dev/null | grep -q '^1$'; then
+      echo "ERROR: cronduit bootstrap did not upsert the uat-tags-persist-demo row."
+      exit 1
+    fi
+    echo "        ✓ Upsert landed; cronduit stopped; WAL drained."
     echo ""
-    echo "Step 6: Print jobs.tags column for the demo row (raw sqlite3 inspection,"
-    echo "        per the uat-fctx-bugfix-spot-check / uat-fctx-panel precedent)."
+    echo "Step 6: Print jobs.tags column for the demo row (sqlite3 reads the now-quiescent DB)."
     sqlite3 cronduit.dev.db "SELECT name, tags FROM jobs WHERE name = 'uat-tags-persist-demo';"
     echo ""
-    echo "Expected output: tags = '[\"backup\",\"prod\",\"weekly\"]' (sorted-canonical JSON;"
-    echo "                  operator wrote weekly,backup,prod -> column stores backup,prod,weekly)."
-    echo "Maintainer: confirm the column form is the sorted-canonical JSON. The maintainer"
+    echo "Step 7: Restart-persistence check — run cronduit again briefly; tags MUST be retained."
+    DATABASE_URL=sqlite://./cronduit.dev.db?mode=rwc \
+        cargo run --quiet -- run --config .tmp/uat-tags-persist.toml >/dev/null 2>&1 &
+    RESTART_PID=$!
+    sleep 3
+    kill -INT "$RESTART_PID" 2>/dev/null || true
+    wait "$RESTART_PID" 2>/dev/null || true
+    echo "        After-restart tags:"
+    sqlite3 cronduit.dev.db "SELECT name, tags FROM jobs WHERE name = 'uat-tags-persist-demo';"
+    echo ""
+    echo "Expected output (both Step 6 and Step 7): tags = '[\"backup\",\"prod\",\"weekly\"]'"
+    echo "                  (sorted-canonical JSON; operator wrote weekly,backup,prod -> column"
+    echo "                  stores backup,prod,weekly)."
+    echo "Maintainer: confirm the column form is the sorted-canonical JSON AND is identical"
+    echo "            across Step 6 (post-upsert) and Step 7 (post-restart). The maintainer"
     echo "            is the source of truth — Claude does NOT mark this passed."
 
 # TAG-03/04/05 + D-08 validator UX walk. Walks the maintainer through
