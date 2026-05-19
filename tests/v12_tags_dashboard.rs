@@ -929,8 +929,7 @@ async fn name_filter_hx_include_carries_active_tag() {
     // Belt and suspenders: also confirm the other three selectors are still
     // present — widening must EXTEND not REPLACE.
     assert!(
-        filter_input_tag.contains("[name='sort']")
-            && filter_input_tag.contains("[name='order']"),
+        filter_input_tag.contains("[name='sort']") && filter_input_tag.contains("[name='order']"),
         "Name-filter input's hx-include must extend (not replace) the prior selector list. \
          Got: {filter_input_tag}"
     );
