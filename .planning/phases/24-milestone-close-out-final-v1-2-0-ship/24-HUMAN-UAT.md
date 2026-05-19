@@ -26,9 +26,13 @@ status: pending
 > the runbook body. (Recipe internals legitimately wrap concrete commands —
 > that is what `just` is for as a make-replacement.)
 >
-> **Image under test:** `ghcr.io/simplicityguy/cronduit:v1.2.0-rc.4`
-> (or `:v1.2.0-rc.N` if iterated — re-run this runbook against the new rc tag
+> **Image under test:** `ghcr.io/simplicityguy/cronduit:1.2.0-rc.4`
+> (or `:1.2.0-rc.N` if iterated — re-run this runbook against the new rc tag
 > and update the `RC tag UAT-validated` row in the Final sign-off block).
+> Note: docker image tags drop the `v` prefix (semver-in-image convention;
+> matches every prior tag — `1.1.0-rc.6`, `1.0.1`, etc.). The matching git
+> tag is `v1.2.0-rc.4`. The `uat-quickstart` recipe accepts either form
+> (`v1.2.0-rc.4` OR `1.2.0-rc.4`) and normalizes internally.
 >
 > **Six scenarios:**
 >   1. `docker compose up` quickstart + dashboard renders without regression.
@@ -70,7 +74,7 @@ regression).
 
 **Steps:**
 
-1. Run `just uat-quickstart v1.2.0-rc.4` from a fresh terminal. The recipe
+1. Run `just uat-quickstart 1.2.0-rc.4` from a fresh terminal. The recipe
    pulls the rc.4 image, brings up `examples/docker-compose.yml` with
    `CRONDUIT_IMAGE` set so the existing image line at L72 resolves to the rc
    tag (no edit to the compose file), waits 90s for the healthcheck, prints
@@ -98,7 +102,7 @@ stack gets a single-session smoke test against v1.0/v1.1 surfaces.
 
 **Steps:**
 
-1. Bring cronduit back up. Run `just uat-quickstart v1.2.0-rc.4` from a
+1. Bring cronduit back up. Run `just uat-quickstart 1.2.0-rc.4` from a
    fresh terminal and at the eyeball prompt LEAVE cronduit running (answer
    `n` to the tear-down prompt only after Scenario 6 — OR re-bring-up
    between scenarios per maintainer discretion. Either path is valid.)
