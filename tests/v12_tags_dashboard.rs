@@ -879,6 +879,62 @@ async fn poll_hx_include_widened() {
     );
 }
 
+// Regression: the name-filter input's hx-include must include [name='tag'] so
+// typing into the filter preserves the active chip set across the keyup HTMX
+// request. Without [name='tag'] the request fires with no `tag=` params, the
+// handler resets active_tags to empty, and the OOB chip strip re-renders all
+// chips as inactive — breaking TAG-06's "AND filter semantics intersect"
+// across chips + name-filter. Surfaced during Phase 24 rc.4 UAT Scenario 6.4.
+#[tokio::test]
+async fn name_filter_hx_include_carries_active_tag() {
+    let (app, pool) = build_test_app().await;
+    seed_job_with_tags(&pool, "alpha", "*/5 * * * *", &["backup"]).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/?tag=backup")
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let body = std::str::from_utf8(&bytes).expect("utf-8");
+
+    // Locate the name-filter input element and inspect its hx-include attr.
+    let filter_idx = body
+        .find("name=\"filter\"")
+        .expect("name-filter input must render in dashboard.html");
+    // Walk back to the opening `<input` and forward to the closing `>` of
+    // that tag — gives us the full opening tag of the filter input.
+    let tag_open = body[..filter_idx]
+        .rfind("<input")
+        .expect("opening <input before name=\"filter\"");
+    let tag_close_rel = body[filter_idx..]
+        .find('>')
+        .expect("closing > after name=\"filter\"");
+    let filter_input_tag = &body[tag_open..filter_idx + tag_close_rel + 1];
+
+    assert!(
+        filter_input_tag.contains("[name='tag']"),
+        "Name-filter input's hx-include must include [name='tag'] so typing the filter \
+         preserves the active chip set (TAG-06 AND-with-name-filter compose). Got: \
+         {filter_input_tag}"
+    );
+    // Belt and suspenders: also confirm the other three selectors are still
+    // present — widening must EXTEND not REPLACE.
+    assert!(
+        filter_input_tag.contains("[name='sort']") && filter_input_tag.contains("[name='order']"),
+        "Name-filter input's hx-include must extend (not replace) the prior selector list. \
+         Got: {filter_input_tag}"
+    );
+}
+
 // ---- Compile-only references to silence dead-code warnings -----------------
 //
 // Wave 1-3 will use Request/Body/StatusCode/to_bytes/ServiceExt/build_test_app/seed_job
