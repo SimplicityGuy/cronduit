@@ -1,7 +1,8 @@
+<!-- generated-by: gsd-doc-writer -->
 # Cronduit Webhooks
 
 Cronduit emits Standard Webhooks v1 deliveries on terminal job-run events
-(`failed`, `timeout`, `stopped` by default — configurable per job). This
+(`failed`, `timeout` by default; `stopped` is opt-in — configurable per job). This
 document is the operator-facing hub for receiver implementation and
 verification. For TOML config field reference, see
 [`CONFIG.md`](./CONFIG.md). For the architectural picture, see

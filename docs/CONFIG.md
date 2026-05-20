@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # Cronduit Configuration Reference
 
 Cronduit is configured via a **single TOML file**. That file is the source of truth — any job present in the database but not in the reloaded config is disabled. There is no layered config, no include-file machinery, and no environment-only config path. This is deliberate: an operator should be able to look at the file and know exactly which jobs are scheduled, without needing to cross-reference three locations.
@@ -86,7 +87,7 @@ Invalid timezone names (`America/Los_Angles`, typo of `Angeles`) are caught by `
 
 How long to keep rows in the `job_logs` table. A daily pruner deletes rows older than this in batches of 1000 with a 100ms sleep between batches to avoid stalling concurrent writes. After a large prune, SQLite gets a `WAL_CHECKPOINT(TRUNCATE)` to reclaim WAL growth.
 
-The pruner emits `tracing` INFO events on every cycle so you can confirm it's running. It also runs once at startup so a freshly-started Cronduit reclaims old rows immediately instead of waiting 24 hours.
+The pruner emits a `tracing` INFO event at startup confirming it's wired up, and an INFO event on every prune cycle. The pruner runs on a 24-hour interval from startup: the initial immediate tick is skipped, so the first prune happens after 24 hours, not at startup.
 
 ### `[server].shutdown_grace`
 
@@ -126,7 +127,7 @@ The `[defaults]` section is optional. It provides shared field values that apply
 
 ### Which fields are defaults-eligible?
 
-**Only these six fields** can be set under `[defaults]`:
+These fields can be set under `[defaults]` (note that `labels` and `webhook` are also defaults-eligible, in addition to the core fields below):
 
 | Field | Scope | Notes |
 |---|---|---|
@@ -527,7 +528,7 @@ Field-by-field behavior:
 
 - `[server].database_url` — interpolated, wrapped in SecretString.
 - `[jobs.env]` values — interpolated, wrapped in SecretString.
-- `[[jobs]].command`, `[[jobs]].script`, `[[jobs]].cmd` — NOT interpolated. These fields are **not** run through the env resolver because it is easy to accidentally shell-inject: `command = "curl ${URL}"` would substitute user-controlled text into a shell command at parse time. Instead, pass the value as an env var to the job and reference it inside the command string (where it is obvious to the reader that the value is runtime, not parse-time).
+- `[[jobs]].command`, `[[jobs]].script`, `[[jobs]].cmd` — **interpolated.** Env-var interpolation is a whole-file textual `${VAR}` pass that runs over the entire TOML source before parsing, so it resolves `${VAR}` in **every** field, including `command`, `script`, and `cmd`. Be aware of the shell-injection risk: `command = "curl ${URL}"` substitutes user-controlled text into the command at parse time. To keep parse-time config separate from runtime values, prefer passing the value as an env var to the job and referencing it inside the command string (where it is obvious to the reader that the value is runtime, not parse-time).
 
 If you need to make a command's behavior depend on the environment, use shell expansion:
 
@@ -599,7 +600,7 @@ Three reload paths, all converging on the same `do_reload` codepath:
 
 ### 1. File watcher (automatic)
 
-When `[server].watch_config = true` (the default), Cronduit uses `notify` 8.2 to watch the config file for changes. On a save, it waits ~1 second (debounce), then re-reads, re-validates, re-interpolates env vars, re-merges `[defaults]`, and syncs the DB.
+When `[server].watch_config = true` (the default), Cronduit uses `notify` 8.2 to watch the config file for changes. On a save, it waits 500ms (debounce), then re-reads, re-validates, re-interpolates env vars, re-merges `[defaults]`, and syncs the DB.
 
 The watcher detects both atomic saves (editor writes to `.tmp` then renames) and in-place edits. It gracefully handles the file being temporarily absent (some editors delete-then-create) by retrying.
 
@@ -609,7 +610,7 @@ The watcher detects both atomic saves (editor writes to `.tmp` then renames) and
 curl -X POST http://localhost:8080/api/reload
 ```
 
-Returns `{"status":"reloaded","jobs_synced":N}` on success, or `{"status":"error","errors":[...]}` with the same structured error list `cronduit check` produces on validation failure. The Settings page in the web UI has a "Reload now" button that hits this endpoint.
+Returns `{"status":"ok","added":N,"updated":N,"disabled":N,"unchanged":N,"message":"..."}` on success, or `{"status":"error","added":N,"updated":N,"disabled":N,"unchanged":N,"message":"..."}` on validation failure (the `message` field carries the error text that `cronduit check` produces). The Settings page in the web UI has a "Reload now" button that hits this endpoint.
 
 ### 3. SIGHUP
 

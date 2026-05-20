@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # Cronduit Quickstart
 
 This guide walks you from `git clone` to a running scheduled job in under ten minutes. It assumes you already have a host that runs Docker and a terminal — if you need a deeper reference for individual fields, jump to [`CONFIG.md`](./CONFIG.md). If you want the architectural picture, read [`SPEC.md`](./SPEC.md). If you need to understand the trust model before deploying, read [`../THREAT_MODEL.md`](../THREAT_MODEL.md).
@@ -11,7 +12,7 @@ This guide walks you from `git clone` to a running scheduled job in under ten mi
 3. [Pick a compose variant](#pick-a-compose-variant)
 4. [Start Cronduit](#start-cronduit)
 5. [Open the web UI](#open-the-web-ui)
-6. [Walk through the four example jobs](#walk-through-the-four-example-jobs)
+6. [Walk through the example jobs](#walk-through-the-example-jobs)
 7. [Trigger a run manually](#trigger-a-run-manually)
 8. [Add your own job](#add-your-own-job)
 9. [Reload the config](#reload-the-config)
@@ -121,9 +122,9 @@ You should see the Cronduit dashboard in its terminal-green design. The dashboar
 
 If the dashboard loads but is unstyled (plain HTML, no colors), your Cronduit image was built without running `just tailwind` during the build step. Rebuild from source or pull a fresh image from GHCR.
 
-## Walk through the four example jobs
+## Walk through the example jobs
 
-The shipped `examples/cronduit.toml` contains four jobs. Each one demonstrates a different execution path so you can see every feature Cronduit supports without reading the spec first.
+The shipped `examples/cronduit.toml` contains eight active jobs. The four below cover the core execution paths so you can see every feature Cronduit supports without reading the spec first; the remaining four (`hello-world-container`, `isolated-batch`, `wh-example-unsigned`, `fire-skew-demo`) are labelled, webhook, and demo variants documented inline in the config.
 
 ### 1. `echo-timestamp` — command job, runs every minute
 
@@ -184,7 +185,7 @@ This is the most feature-dense example — three distinct concepts live in this 
 - `delete` — inherited from `[defaults].delete = true`.
 - `timeout` — inherited from `[defaults].timeout = "5m"`.
 
-The `[defaults]` section (lines 29-34 of `examples/cronduit.toml`) provides shared defaults that every job inherits unless it overrides them per-job or opts out with `use_defaults = false`. Moving shared fields into `[defaults]` is the right pattern once you have more than a handful of jobs — it keeps per-job blocks minimal and one-line spec edits to `[defaults]` propagate everywhere.
+The `[defaults]` section (lines 35-44 of `examples/cronduit.toml`) provides shared defaults that every job inherits unless it overrides them per-job or opts out with `use_defaults = false`. Moving shared fields into `[defaults]` is the right pattern once you have more than a handful of jobs — it keeps per-job blocks minimal and one-line spec edits to `[defaults]` propagate everywhere.
 
 **Why `cmd` is on the job and NOT in `[defaults]`:** `cmd` is a per-job-only field (see [CONFIG.md § cmd](./CONFIG.md#jobscmd)). It overrides the Docker image's baked-in `CMD`. Without `cmd`, `alpine:latest` has no default entrypoint and would exit immediately with no output — so the `cmd = ["echo", "..."]` line is load-bearing here. This is exactly what `docker run alpine echo "..."` does from the command line.
 
@@ -247,7 +248,7 @@ The VPN sidecar must already be running when Cronduit spawns the job. Cronduit r
 
 Three ways to reload the config, all converging on the same `do_reload` path inside Cronduit:
 
-1. **File watcher** (default). If `[server].watch_config = true`, Cronduit watches the config file for changes and reloads automatically within a debounce window (~1 second).
+1. **File watcher** (default). If `[server].watch_config = true`, Cronduit watches the config file for changes and reloads automatically within a debounce window (500ms).
 2. **HTTP endpoint.** `curl -X POST http://localhost:8080/api/reload`. The dashboard Settings page has a "Reload now" button that hits this endpoint.
 3. **SIGHUP.** `docker compose kill -s SIGHUP cronduit` sends a SIGHUP to the cronduit process, which triggers a reload.
 
@@ -306,7 +307,7 @@ You edited `[defaults].image` or the `hello-world` block and ended up with a con
 
 ### I set a field in `[defaults]` but jobs don't inherit it
 
-Check that the field is one of the defaults-eligible fields: `image`, `network`, `volumes`, `delete`, `timeout`, `random_min_gap`. Other fields (`cmd`, `container_name`, `command`, `script`, `env`) are **per-job only** and will not merge from `[defaults]`. See [CONFIG.md § defaults](./CONFIG.md#defaults) for the complete list.
+Check that the field is one of the defaults-eligible fields: `image`, `network`, `volumes`, `delete`, `timeout`, `random_min_gap`. Other fields (`cmd`, `container_name`, `command`, `script`, `env`) are **per-job only** and will not merge from `[defaults]`. See [CONFIG.md § defaults](./CONFIG.md#defaults-section) for the complete list.
 
 Also check that the job does not have `use_defaults = false` — that opts the job out of the entire `[defaults]` section.
 

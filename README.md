@@ -1,14 +1,15 @@
+<!-- generated-by: gsd-doc-writer -->
 <div align="center">
 
-<img src="design/banners/cronduit-banner-animated.svg" alt="cronduit" width="400" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="design/banners/banner_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="design/banners/banner_light.png">
+  <img alt="Cronduit — Self-hosted Docker-native cron scheduler with a web UI" src="design/banners/banner_dark.png" width="600">
+</picture>
 
-[![CI](https://github.com/SimplicityGuy/cronduit/actions/workflows/ci.yml/badge.svg)](https://github.com/SimplicityGuy/cronduit/actions/workflows/ci.yml)
-![License: MIT](https://img.shields.io/github/license/SimplicityGuy/cronduit)
-![Rust](https://img.shields.io/badge/rust-1.94+-orange.svg)
-[![just](https://img.shields.io/badge/just-task%20runner-blue)](https://just.systems)
-[![Clippy](https://img.shields.io/badge/clippy-rust%20linter-green)](https://github.com/rust-lang/rust-clippy)
-[![Docker](https://img.shields.io/badge/docker-multi--arch-blue?logo=docker)](https://www.docker.com/)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-powered-orange?logo=anthropic&logoColor=white)](https://claude.ai/code)
+<br><br>
+
+[![CI](https://github.com/SimplicityGuy/cronduit/actions/workflows/ci.yml/badge.svg)](https://github.com/SimplicityGuy/cronduit/actions/workflows/ci.yml) ![License: MIT](https://img.shields.io/github/license/SimplicityGuy/cronduit) ![Rust](https://img.shields.io/badge/rust-1.94+-orange.svg)
 
 **Self-hosted Docker-native cron scheduler with a web UI. One tool that both runs recurrent jobs reliably AND makes their state observable through a browser.**
 
@@ -80,7 +81,7 @@ open http://localhost:8080
 
 Pinning a specific image tag in production? See [Docker image tags](#docker-image-tags) for which tag matches different operator needs (`:X.Y`, `:latest`, `:rc`, `:main`).
 
-You should see four example jobs in the dashboard:
+You should see eight example jobs in the dashboard — the four below cover the core execution types:
 
 - **echo-timestamp** (command) -- every minute, prints `date` output. Instant heartbeat so you know Cronduit is alive.
 - **http-healthcheck** (command) -- every 5 minutes, `wget --spider` against `https://www.google.com`. Realistic uptime canary demonstrating DNS + TLS + egress.
@@ -349,7 +350,7 @@ webhook = { url = "https://hooks.example.com/cronduit" }
 Webhook behavior:
 
 - **Standard-Webhooks-v1 payload.** `webhook-id` / `webhook-timestamp` / `webhook-signature` headers; body carries `payload_version: "v1"`, job name, run ID, status, exit code, duration, start/end timestamps, and tags.
-- **HMAC-SHA256 signing.** Secret is read from the env var named in `secret_env` (never plaintext-in-config). Receiver examples for Python / Go / Node ship in `docs/webhooks/receivers/`.
+- **HMAC-SHA256 signing.** Secret is read from the env var named in `secret_env` (never plaintext-in-config). Receiver examples for Python / Go / Node ship in `examples/webhook-receivers/{python,go,node}/`.
 - **State filter + coalescing.** `states = ["failed", "timeout", "stopped"]` controls which terminal states fire. Coalescing is edge-triggered: by default only the first run of a fail-streak fires (configurable per job via `fire_every`).
 - **HTTPS-required + SSRF posture.** Plain HTTP is rejected for non-loopback / non-RFC1918 destinations; `userinfo` credentials are stripped from URLs before delivery.
 - **Retry + drain.** Three attempts at t=0, t=30s, t=300s with full jitter. Unrecoverable failures land in the `webhook_deliveries` dead-letter table. Graceful 30s drain on shutdown.
@@ -470,7 +471,7 @@ just ci                  # Full ordered CI chain
 
 ```bash
 just tailwind            # Build CSS once
-just tailwind-watch      # Watch mode for live development
+just dev-ui              # Live dev loop: Tailwind --watch + cargo watch
 ```
 
 The `rust-embed` crate reads assets from disk in debug builds, so template and CSS changes are visible on browser refresh without recompiling.

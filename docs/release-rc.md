@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # Cutting a release-candidate tag
 
 This document is the maintainer runbook for cutting a `vX.Y.Z-rc.N` pre-release tag (e.g., `v1.1.0-rc.1`). Read it before tagging — the steps below are linear and the tag is a one-way action (no force-push, no untag-and-retry; if you mess up, ship `rc.N+1`).
@@ -151,7 +152,7 @@ If UAT discovers a *minor* issue (typo in release notes, missing CHANGELOG line)
 
 ## References
 
-- **Phase 12 plan**: `.planning/phases/12-docker-healthcheck-rc-1-cut/12-CONTEXT.md` — full decision context (D-10 metadata-action patch, D-11 this runbook, D-12 changelog policy, D-13 maintainer-cut rationale).
+- **Phase 12 plan**: `.planning/milestones/v1.1-phases/12-docker-healthcheck-rc-1-cut/12-CONTEXT.md` — full decision context (D-10 metadata-action patch, D-11 this runbook, D-12 changelog policy, D-13 maintainer-cut rationale).
 - **rc cut schedule**: `.planning/ROADMAP.md` § "rc cut points" — which rc cuts at which phase boundary.
 - **`:latest` pinning rationale**: `.planning/PROJECT.md` § Current Milestone — why `:latest` stays at v1.0.1 through rcs.
 - **GHA workflow patches**: `.github/workflows/release.yml` (D-10) and `.github/workflows/compose-smoke.yml` (D-09).
