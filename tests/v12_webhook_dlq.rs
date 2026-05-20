@@ -290,10 +290,16 @@ async fn dlq_url_matches_configured_url() {
         !stored_url.is_empty(),
         "DLQ url column must NOT be empty (B2 regression)"
     );
+    // T-I4: write_dlq now scrubs userinfo via strip_url_credentials before
+    // persisting, which also normalizes the URL through url::Url (e.g. appends
+    // the empty-path trailing slash). The persisted value must equal the
+    // scrubbed/normalized form of the configured URL — credentials stripped,
+    // host/port/path preserved.
+    let expected_url = cronduit::db::strip_url_credentials(&configured_url);
     assert_eq!(
-        stored_url, configured_url,
-        "DLQ url column must equal the configured webhook URL; \
-         got `{stored_url}` expected `{configured_url}`"
+        stored_url, expected_url,
+        "DLQ url column must equal the scrubbed configured webhook URL; \
+         got `{stored_url}` expected `{expected_url}`"
     );
 }
 

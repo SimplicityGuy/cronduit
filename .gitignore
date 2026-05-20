@@ -35,11 +35,22 @@ target/
 # https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 #.idea/
 
+# Vim / Neovim swap & backup files (e.g. .README.md.swp appears while a file
+# is open in an editor and must never be committed).
+*.swp
+*.swo
+*.swn
+*~
+
 # Claude Code harness local state — session scratch, scheduled-task locks,
 # etc. This directory is written by the CLI harness during interactive
 # sessions and must never be committed. A stale lock file (scheduled_tasks.lock)
 # slipped into minor-fixes pre-rewrite; this ignore rule prevents recurrence.
 .claude/
+
+# Local tooling scratch — Playwright MCP output and ad-hoc temp dir.
+.playwright-mcp/
+.tmp/
 
 # =============================================================================
 # Docker

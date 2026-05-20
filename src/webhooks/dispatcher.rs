@@ -283,10 +283,12 @@ impl WebhookDispatcher for HttpDispatcher {
         // src/scheduler/run.rs) is preserved verbatim per D-26 split.
         match response {
             Ok(resp) if resp.status().is_success() => {
+                // T-I4: scrub any userinfo (user:pass@) before it reaches the log sink.
+                let safe_url = crate::db::strip_url_credentials(&cfg.url);
                 tracing::debug!(
                     target: "cronduit.webhooks",
                     run_id = event.run_id, job_name = %event.job_name,
-                    url = %cfg.url, status = resp.status().as_u16(),
+                    url = %safe_url, status = resp.status().as_u16(),
                     "webhook delivered"
                 );
                 Ok(())
@@ -304,10 +306,12 @@ impl WebhookDispatcher for HttpDispatcher {
                 );
                 let body_preview = resp.text().await.unwrap_or_default();
                 let truncated: String = body_preview.chars().take(200).collect();
+                // T-I4: scrub any userinfo (user:pass@) before it reaches the log sink.
+                let safe_url = crate::db::strip_url_credentials(&cfg.url);
                 tracing::warn!(
                     target: "cronduit.webhooks",
                     run_id = event.run_id, job_name = %event.job_name,
-                    url = %cfg.url, status = code, body_preview = %truncated,
+                    url = %safe_url, status = code, body_preview = %truncated,
                     retry_after = ?retry_after,
                     "webhook non-2xx"
                 );
@@ -334,16 +338,23 @@ impl WebhookDispatcher for HttpDispatcher {
                 } else {
                     "network"
                 };
+                // T-I4: scrub userinfo from BOTH the url field AND the reqwest
+                // error string — reqwest's error Display can echo the full
+                // request URL incl. user:pass@host. strip_url_credentials passes
+                // plain (non-URL) error text through unchanged, so only an
+                // embedded credential-bearing URL token is rewritten.
+                let safe_url = crate::db::strip_url_credentials(&cfg.url);
+                let err_str = crate::db::strip_url_credentials(&format!("{e}"));
                 tracing::warn!(
                     target: "cronduit.webhooks",
                     run_id = event.run_id, job_name = %event.job_name,
-                    url = %cfg.url, kind, error = %e,
+                    url = %safe_url, kind, error = %err_str,
                     "webhook network error"
                 );
                 if e.is_timeout() {
                     Err(WebhookError::Timeout)
                 } else {
-                    Err(WebhookError::Network(format!("{e}")))
+                    Err(WebhookError::Network(err_str))
                 }
             }
         }

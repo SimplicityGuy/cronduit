@@ -360,6 +360,28 @@ pub fn strip_db_credentials(database_url: &str) -> String {
         .unwrap_or_else(|_| "<unparseable>".into())
 }
 
+/// Strip the `userinfo` (username + password) component from a webhook URL so
+/// embedded credentials never reach `webhook_deliveries.url`,
+/// `webhook_deliveries.last_error`, or tracing spans (THREAT_MODEL T-I4).
+/// Robust against credentials containing `@` / `?` / `/` chars where a regex
+/// would misparse — mirrors [`strip_db_credentials`].
+///
+/// CRITICAL DIFFERENCE from [`strip_db_credentials`]: on parse failure the
+/// input is returned UNCHANGED (verbatim), NOT `"<unparseable>"`. A webhook
+/// URL field — unlike a DB connection string — must pass non-URL and
+/// userinfo-free inputs through safely (reqwest error strings, plain messages),
+/// scrubbing only an embedded `user:pass@host` URL token. The helper is
+/// idempotent, so re-scrubbing already-scrubbed text is harmless.
+pub fn strip_url_credentials(url: &str) -> String {
+    Url::parse(url)
+        .map(|mut u| {
+            let _ = u.set_password(None);
+            let _ = u.set_username("");
+            u.to_string()
+        })
+        .unwrap_or_else(|_| url.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +399,68 @@ mod tests {
     fn strip_creds_sqlite_is_unchanged() {
         let out = strip_db_credentials("sqlite:///data/cronduit.db");
         assert_eq!(out, "sqlite:///data/cronduit.db");
+    }
+
+    #[test]
+    fn strip_url_creds_userinfo_present() {
+        // userinfo (user:pass) stripped; scheme/host/path/query intact.
+        let out = strip_url_credentials("https://user:pass@host/path?q=1");
+        assert!(!out.contains("user"), "username leaked: {out}");
+        assert!(!out.contains("pass"), "password leaked: {out}");
+        assert!(out.contains("host"), "host dropped: {out}");
+        assert!(out.contains("/path"), "path dropped: {out}");
+        assert!(out.contains("q=1"), "query dropped: {out}");
+    }
+
+    #[test]
+    fn strip_url_creds_password_only() {
+        // password-only userinfo (":secret@") stripped; host/path retained.
+        let out = strip_url_credentials("https://:secret@host/x");
+        assert!(!out.contains("secret"), "password leaked: {out}");
+        assert!(out.contains("host"), "host dropped: {out}");
+        assert!(out.contains("/x"), "path dropped: {out}");
+    }
+
+    #[test]
+    fn strip_url_creds_username_only() {
+        // username-only userinfo ("user@") stripped entirely; host retained.
+        let out = strip_url_credentials("https://user@host/x");
+        assert!(!out.contains("user@"), "userinfo segment leaked: {out}");
+        assert!(out.contains("host"), "host dropped: {out}");
+    }
+
+    #[test]
+    fn strip_url_creds_no_userinfo_passthrough() {
+        // No userinfo: host/path/query preserved (semantically unchanged).
+        let out = strip_url_credentials("https://host/path?q=1");
+        assert!(out.contains("host"), "host dropped: {out}");
+        assert!(out.contains("/path"), "path dropped: {out}");
+        assert!(out.contains("q=1"), "query dropped: {out}");
+    }
+
+    #[test]
+    fn strip_url_creds_port_preserved() {
+        // Port + path + query survive the round-trip; userinfo removed.
+        let out = strip_url_credentials("https://user:pass@host:8443/p?q=1");
+        assert!(!out.contains("user"), "username leaked: {out}");
+        assert!(!out.contains("pass"), "password leaked: {out}");
+        assert!(out.contains(":8443"), "port dropped: {out}");
+        assert!(out.contains("/p"), "path dropped: {out}");
+        assert!(out.contains("q=1"), "query dropped: {out}");
+    }
+
+    #[test]
+    fn strip_url_creds_non_url_passthrough() {
+        // Non-URL input is returned UNCHANGED verbatim (the deliberate
+        // difference from strip_db_credentials, which yields "<unparseable>").
+        let out = strip_url_credentials("not a url");
+        assert_eq!(out, "not a url");
+    }
+
+    #[test]
+    fn strip_url_creds_empty_passthrough() {
+        let out = strip_url_credentials("");
+        assert_eq!(out, "");
     }
 
     #[tokio::test]

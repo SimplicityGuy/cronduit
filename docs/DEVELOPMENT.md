@@ -16,7 +16,7 @@ For runtime configuration see [docs/CONFIG.md](CONFIG.md); for a Docker-first wa
 | `cargo-nextest` | latest | CI test runner (`just nextest`). Install via `cargo install cargo-nextest` or `taiki-e/install-action` (CI). |
 | Docker | recent | Required for integration tests, image builds (`just image*`), and the compose stack. The scheduler also talks to the host Docker socket at runtime. |
 | `sqlite3` CLI | any | Used by several DB inspection / UAT recipes (`uat-*`, `db-reset` cleanup). |
-| `tailwindcss` standalone | v4.2.4 | Auto-downloaded by `just tailwind` into `bin/tailwindcss` — **no Node required**. |
+| `tailwindcss` standalone | v4.3.0 | Auto-downloaded by `just tailwind` into `bin/tailwindcss` — **no Node required**. |
 
 The Rust version is pinned in two places that must stay aligned:
 
@@ -86,7 +86,7 @@ Static assets are embedded via `rust-embed` (`src/web/assets.rs`, `#[folder = "a
 
 ### CSS changes — Tailwind standalone, no Node
 
-Tailwind config lives in `assets/src/app.css` using the v4 inline format (`@import "tailwindcss"`, `@source "../../templates"`, and `@theme` — there is no `tailwind.config.js`). `just tailwind` downloads the standalone v4.2.4 binary to `bin/tailwindcss` on first run (idempotent), then compiles minified CSS to `assets/static/app.css`:
+Tailwind config lives in `assets/src/app.css` using the v4 inline format (`@import "tailwindcss"`, `@source "../../templates"`, and `@theme` — there is no `tailwind.config.js`). `just tailwind` downloads the standalone v4.3.0 binary to `bin/tailwindcss` on first run (idempotent), then compiles minified CSS to `assets/static/app.css`:
 
 ```bash
 ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --minify

@@ -265,7 +265,9 @@ impl<D: WebhookDispatcher> RetryingDispatcher<D> {
         // where the job's webhook config was removed mid-run; in that case
         // log WARN and persist an empty string so the row still inserts.
         let url = match self.webhooks.get(&event.job_id) {
-            Some(cfg) => cfg.url.clone(),
+            // T-I4: scrub userinfo so webhook_deliveries.url never persists
+            // credentials, even if the dispatcher-boundary scrub is ever bypassed.
+            Some(cfg) => crate::db::strip_url_credentials(&cfg.url),
             None => {
                 tracing::warn!(
                     target: "cronduit.webhooks",
@@ -389,7 +391,13 @@ impl<D: WebhookDispatcher> WebhookDispatcher for RetryingDispatcher<D> {
                         }
                         WebhookError::Network(msg) => {
                             last_status = None;
-                            last_error = Some(truncate_error(msg));
+                            // T-I4 defense-in-depth: the dispatcher already scrubs
+                            // the reqwest error string at construction, but the
+                            // helper is idempotent + passthrough-safe, so re-scrub
+                            // here guards any future Network() built off the
+                            // dispatcher path. Plain messages pass through unchanged.
+                            last_error =
+                                Some(truncate_error(&crate::db::strip_url_credentials(msg)));
                             last_retry_after = None;
                         }
                         WebhookError::InvalidUrl(msg) => {
