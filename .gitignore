@@ -48,6 +48,10 @@ target/
 # slipped into minor-fixes pre-rewrite; this ignore rule prevents recurrence.
 .claude/
 
+# Local tooling scratch — Playwright MCP output and ad-hoc temp dir.
+.playwright-mcp/
+.tmp/
+
 # =============================================================================
 # Docker
 # =============================================================================
