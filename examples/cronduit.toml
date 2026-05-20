@@ -1,12 +1,14 @@
 # examples/cronduit.toml -- Cronduit quickstart configuration.
 #
-# This file ships six example jobs covering every execution type:
+# This file ships eight example jobs covering every execution type:
 #   1. echo-timestamp (command) - every minute, instant heartbeat
 #   2. http-healthcheck (command) - every 5 minutes, uptime canary
 #   3. disk-usage (script) - every 15 minutes, script-job demo on /data
 #   4. hello-world (docker) - every 5 minutes, [defaults] merge + cmd demo
 #   5. hello-world-container (docker) - every 5 minutes, per-job override demo
 #   6. isolated-batch (docker, use_defaults=false) - daily 4am, label REPLACE demo
+#   7. wh-example-unsigned (command) - every 2 minutes, unsigned-webhook delivery demo (webhook fires on failed/stopped to a loopback receiver; `command = "false"` always fails to exercise the firing path)
+#   8. fire-skew-demo (docker) - every minute, FCTX-06 fire-skew demo (sleep 30 then echo; seeds `just uat-fire-skew`)
 #
 # Phase 17 / SEED-001 also adds `[defaults].labels` (Watchtower exclusion) and
 # per-job `labels` on hello-world (Traefik MERGE) + isolated-batch (REPLACE).
@@ -46,7 +48,7 @@ labels = { "com.centurylinklabs.watchtower.enable" = "false" }
 # ------------------------------------------------------------
 # Quickstart jobs
 # ------------------------------------------------------------
-# Six jobs covering every execution type so a new operator can see
+# Eight jobs covering every execution type so a new operator can see
 # commands, scripts, and Docker containers run out of the box:
 #
 #   1. echo-timestamp         -- command (every 1 min)  instant heartbeat
@@ -55,6 +57,8 @@ labels = { "com.centurylinklabs.watchtower.enable" = "false" }
 #   4. hello-world            -- docker  (every 5 min)  [defaults] merge + cmd override + labels MERGE
 #   5. hello-world-container  -- docker  (every 5 min)  per-job override demo
 #   6. isolated-batch         -- docker  (daily 4 am)   use_defaults=false + labels REPLACE
+#   7. wh-example-unsigned    -- command (every 2 min)  unsigned-webhook delivery demo (fires on failed/stopped to a loopback receiver; command=false to exercise the firing path)
+#   8. fire-skew-demo         -- docker  (every 1 min)  FCTX-06 fire-skew demo (sleep 30 then echo; seeds `just uat-fire-skew`)
 #
 # Command/script jobs run inside the cronduit runtime image (alpine:3)
 # and rely on busybox applets (date, wget, du, df, /bin/sh). Docker jobs
