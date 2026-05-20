@@ -5,6 +5,16 @@ Release log for Cronduit. Each entry summarizes a shipped milestone and points a
 
 ---
 
+## v1.2.1 — Patch: webhook-URL credential scrubbing + maintenance — SHIPPED 2026-05-19
+
+Security + maintenance patch on top of `v1.2.0`. Closes Threat Model **T-I4** (webhook URL `userinfo` credential leak): a new `strip_url_credentials` helper (`src/db/mod.rs`, mirrors `strip_db_credentials`) strips the `user:password@` component from webhook URLs before they are logged or persisted, applied at every sink — the dispatcher tracing spans, the `WebhookError::Network` error string (a `reqwest` error whose `Display` can echo the full request URL), and the `webhook_deliveries.url` / `last_error` writes (`src/webhooks/retry.rs`). Maintenance in the same cut: corrected the `examples/cronduit.toml` header to list all 8 active jobs, added `.gitignore` rules for editor swap files and local tooling scratch, and ran `scripts/update-project.sh` (Cargo.lock refresh within semver, Tailwind standalone `v4.2.4 → v4.3.0` with regenerated `app.css`, and a GitHub Actions pin bump). No schema changes and no new requirements.
+
+**Tags:** `v1.2.1`
+**Type:** Patch — security fix (T-I4) + dependency/maintenance
+**Reference:** `.planning/quick/260519-qcp-webhook-url-credential-scrubbing-t-i4-fi/`
+
+---
+
 ## v1.2 — Operator Integration & Insight — SHIPPED 2026-05-19
 
 v1.2 is the operator-integration-and-insight milestone on top of the shipped v1.1.0 codebase. Ten phases (15–24) delivered five operator-observable features: outbound webhook notifications (Standard-Webhooks-v1 payload + HMAC-SHA256 signing + full-jitter retry + 30s drain + SSRF/HTTPS posture + per-job state filter + edge-triggered coalescing), custom Docker labels (`[defaults]` + per-job merge precedence + `cronduit.*` reserved-namespace validator + type-gated to `docker` jobs), a failure-context UI panel on run-detail (5 P1 signals: time + image + config + duration-vs-p50 + scheduler-fire-skew), an exit-code histogram card on job-detail (10-bucket strategy + last-100-runs window + status-discriminator-wins classifier), and job tagging with dashboard filter chips (lowercase+trim normalization + charset regex + AND filter semantics + URL-state via repeated `?tag=` + untagged-hidden when filter active). One new module (`src/webhooks/`), one new validator pair (`src/config/validate.rs::check_labels_*`), one new DB column (`job_runs.config_hash`), one new JSON-encoded TEXT column (`jobs.tags`), one new view-model module (`src/web/exit_buckets.rs`). Threat model gained Threat Model 5 (Webhook Outbound) and Threat Model 6 (Operator-supplied Docker labels) at milestone close. `cargo-deny` promoted from non-blocking (warn) to blocking (error) before final ship. Released iteratively as `v1.2.0-rc.1` through `v1.2.0-rc.5` (rc.5 cut after rc.4 UAT surfaced two recipe bugs + a TAG-06 compose regression — PRs #65 + #66), then promoted to `v1.2.0` (retag of rc.5 SHA `7fb1de5` per "what was tested is what ships" discipline).
