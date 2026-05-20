@@ -23,7 +23,7 @@ ci: fmt-check clippy openssl-check nextest schema-diff image
 [doc('Tag and push a release. Usage: just release 1.0.0')]
 release version:
     @echo "Creating release v{{version}}..."
-    git tag -a "v{{version}}" -m "Release v{{version}}"
+    git tag -s "v{{version}}" -m "Release v{{version}}"
     git push origin "v{{version}}"
     @echo "Release v{{version}} tagged and pushed. CI will build and publish."
 
