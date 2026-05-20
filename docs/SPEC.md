@@ -1,3 +1,4 @@
+<!-- generated-by: gsd-doc-writer -->
 # Cronduit Specification (v1.0.0)
 
 > **Status:** This is the authoritative behavioral reference for Cronduit as it shipped in v1.0.0 (2026-04-14). It describes what the binary actually does — not what was originally planned. For the historical pre-implementation spec, see the v1.0 milestone archive at [`.planning/milestones/v1.0-ROADMAP.md`](../.planning/milestones/v1.0-ROADMAP.md).
