@@ -185,6 +185,7 @@ Items acknowledged and deferred at v1.1 milestone close on 2026-04-24. All six s
 |----|------|-------------|---------|-----------|
 | 260421-nn3 | 2026-04-22 | Fix `get_dashboard_jobs` Postgres `j.enabled = true` BIGINT bug (queries.rs lines 615 + 628) + add Postgres regression test `tests/dashboard_jobs_pg.rs` mirroring v13_timeline_explain harness. Closes the deferred item logged in Phase 13 plan 06. | `07d81bb`, `7cb1a10`, `7917502` | `.planning/quick/260421-nn3-fix-get-dashboard-jobs-postgres-j-enable/` |
 | 260519-qcp | 2026-05-19 | Close THREAT_MODEL T-I4 webhook-URL credential gap: add `strip_url_credentials` helper (src/db/mod.rs) + scrub userinfo at every webhook URL/error sink before log/persist (dispatcher tracing spans, `WebhookError::Network`, DLQ `url`/`last_error`); fix `examples/cronduit.toml` header (6→8 jobs); ignore `*.swp`. For v1.2.1. | `7e33ff5`, `fb93c50`, `f3b041b`, `2cf1f9e` | `.planning/quick/260519-qcp-webhook-url-credential-scrubbing-t-i4-fi/` |
+| fast-260519 | 2026-05-19 | `just release` now creates a **signed** tag (`git tag -s`, was `-a`) so releases are PGP-signed like v1.2.0 (v1.2.1 shipped unsigned). | `8c98bc8` | (fast task — justfile) |
 
 v1.0 quick task `260414-gbf` is archived in `.planning/milestones/v1.0-MILESTONE-AUDIT.md`.
 
