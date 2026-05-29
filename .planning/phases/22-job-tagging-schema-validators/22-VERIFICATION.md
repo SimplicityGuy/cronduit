@@ -1,7 +1,8 @@
 ---
 phase: 22-job-tagging-schema-validators
 verified: 2026-05-04T00:00:00Z
-status: human_needed
+status: passed
+human_validated: "Maintainer (Robert) 2026-05-19 — Scenarios 1–4 validated during the v1.2.0 ship UAT; marked passed by maintainer instruction"
 score: 14/14 must-haves verified (autonomous surface)
 overrides_applied: 0
 re_verification: null
@@ -25,7 +26,7 @@ human_verification:
 **Phase Goal:** Operators can attach normalized organizational tags to jobs in TOML config; tags persist to a new JSON column on `jobs`, validate against a strict charset + reserved-name list at config-load, and reject substring-collisions across the fleet. Phase 22 also closes the WH-09 webhook-payload `tags` placeholder shipped by Phase 18.
 
 **Verified:** 2026-05-04
-**Status:** READY FOR PR (PENDING MAINTAINER UAT)
+**Status:** passed — maintainer-validated 2026-05-19 (v1.2.0 ship UAT)
 **Re-verification:** No — initial verification.
 
 ---

@@ -2,11 +2,11 @@
 
 ## Current State
 
-**Shipped:** `v1.1.0` on 2026-04-23 — Operator Quality of Life polish milestone on top of the v1.0.1 codebase. Six phases (10, 11, 12, 12.1 inserted, 13, 14), 52 plans, 33/33 v1.1 requirements Complete. Adds a new `stopped` status with a per-run stop button wired through all three executors, per-job run numbers (`#1, #2, …`) backfilled via an idempotent three-file migration, zero-gap log backfill on navigate-back with id-based SSE dedupe, a new `/timeline` gantt page, dashboard sparklines + success-rate badges, job-detail p50/p95 duration trends, a CSRF-gated bulk enable/disable UX backed by a tri-state `jobs.enabled_override` column, a working out-of-the-box `docker compose up` healthcheck via a new `cronduit health` CLI + Dockerfile HEALTHCHECK, and a locked six-tag GHCR contract (`:X.Y.Z`, `:X.Y`, `:X`, `:latest`, `:rc`, `:main`). `:latest` promoted from `:1.0.1` to `:1.1.0` on both archs at final tag. No net-new external dependencies (one `rand 0.8 → 0.9` hygiene bump); one new nullable DB column. See [`MILESTONES.md`](../MILESTONES.md) and [`.planning/MILESTONES.md`](MILESTONES.md) for full history.
+**Shipped:** `v1.2.0` on 2026-05-19 (+ `v1.2.1` patch 2026-05-19) — Operator Integration & Insight. Ten phases (15–24), 78 plans, 41/41 v1.2 requirements Validated, audit verdict `passed`. Makes cronduit a participant in the operator's broader infrastructure: outbound webhooks (Standard Webhooks v1 payloads + HMAC-SHA256 signing + per-job state-filter + edge-triggered streak coalescing + SSRF/HTTPS posture + 3-attempt retry/dead-letter queue + graceful-shutdown drain + a `cronduit_webhook_*` Prometheus family, with stdlib reference receivers in Python/Go/Node), a collapsed-by-default failure-context panel on run detail (5 P1 signals via a single-query CTE), a per-job exit-code histogram card (10 buckets, `stopped` distinct from signal-killed), job tagging with CSS-only AND-semantics dashboard filter chips + shareable `?tag=` URL state, and custom Docker labels on spawned containers (SEED-001; `[defaults]` + per-job-wins merge, reserved `cronduit.*` namespace, type-gated validators). Also fixes the load-bearing v1.1 `job_runs.container_id` regression and promotes `cargo-deny` to a blocking CI gate. `:latest` promoted from `:1.1.0` to `:1.2.0` on both archs. Four net-new runtime deps (`reqwest`, `hmac`, `base64`, `ulid`); two new nullable `job_runs` columns + a `jobs.tags` JSON column + a `webhook_deliveries` dead-letter table. The `v1.2.1` patch adds webhook-URL credential scrubbing (THREAT_MODEL T-I4). See [`MILESTONES.md`](../MILESTONES.md) and [`.planning/MILESTONES.md`](MILESTONES.md) for full history.
 
-**Prior:** `v1.0.0` (2026-04-14) + `v1.0.1` patch (2026-04-14) — single-binary Rust cron scheduler with terminal-green HTMX web UI, full Docker-API job execution including `--network container:<name>`, `@random` schedule resolver, hot config reload, Prometheus metrics, SSE log tail, multi-arch (amd64+arm64) GHCR release, and a documented threat model. 86/86 v1 requirements complete; audit verdict `passed`.
+**Prior:** `v1.1.0` (2026-04-23) — Operator Quality of Life: stop-a-running-job, per-job run numbers, log-UX fixes, `/timeline` page, sparklines + success-rate badges, p50/p95 duration trends, CSRF-gated bulk enable/disable, out-of-the-box `docker compose up` healthcheck, six-tag GHCR contract. `v1.0.0`/`v1.0.1` (2026-04-14) — the initial single-binary Docker-native scheduler (terminal-green HTMX UI, full Docker-API execution incl. `--network container:<name>`, `@random`, hot reload, Prometheus, SSE log tail, multi-arch GHCR, documented threat model).
 
-**Next milestone:** v1.2 — Operator Integration & Insight (in progress; kicked off 2026-04-25). Goal: make cronduit a participant in the operator's broader infrastructure — push notifications outward via webhooks, expose richer failure context inward, and let operators organize and integrate via tags and Docker labels. Five features in scope: webhook notifications, failure context on run detail, per-job exit-code histogram, job tagging/grouping, custom Docker labels (SEED-001). Cross-run log search and job concurrency/queuing punted to v1.3.
+**Next milestone:** v1.3 — not yet kicked off. Candidate scope (deferred from v1.2): cross-run log search across the retention window (engine choice — naive LIKE vs SQLite FTS5 / Postgres tsvector — left for usage-data-driven decision) and job concurrency limits + queuing (deep scheduler-core change). Run `/gsd-new-milestone` to define it.
 
 ## What This Is
 
@@ -16,7 +16,8 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 
 **One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.** If everything else is cut, the scheduler must (1) execute jobs on time with full Docker networking support (especially `--network container:<name>` for VPN setups) and (2) let the operator see pass/fail, logs, and timing from a browser.
 
-## Current Milestone: v1.2 — Operator Integration & Insight
+<details>
+<summary>✅ Shipped milestone: v1.2 — Operator Integration & Insight (2026-05-19)</summary>
 
 **Goal:** Make cronduit a participant in the operator's broader infrastructure — push notifications outward via webhooks, expose richer failure context inward, and let operators organize and integrate their fleet via tags and Docker labels.
 
@@ -41,6 +42,8 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 
 - Cross-run log search across retention window — design ambiguity around naive LIKE vs SQLite FTS5 / Postgres tsvector engine choice; let v1.2 ship and observe usage data first.
 - Job concurrency limits and queuing — deep scheduler-core change (`tokio::select!` loop + persistence + fairness); too risky to bundle with v1.2's expand-shape work. Already on the v1.3 candidate list.
+
+</details>
 
 ## Requirements
 
@@ -137,22 +140,21 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 - ✓ `rand` crate bumped from `0.8` to `0.9` across all call sites (`@random` slot picker, CSRF token gen) — v1.1 (Phase 10, FOUND-12)
 - ✓ `Cargo.toml` version bumped from `1.0.1` to `1.1.0` on the first v1.1 commit; rc tags use semver pre-release format (`v1.1.0-rc.1` etc.) — v1.1 (Phase 10, FOUND-13)
 
+**v1.2 — Operator Integration & Insight** (41/41 Validated; full REQ-ID traceability in `.planning/milestones/v1.2-REQUIREMENTS.md`)
+- ✓ Outbound webhooks on terminal job states — per-job URL + state-filter list, edge-triggered streak coalescing (`fire_every`), `[defaults]` + per-job override with `use_defaults = false` disable, Standard Webhooks v1 payload — v1.2 (Phases 15/18, WH-01..03, WH-06, WH-09)
+- ✓ Webhook HMAC-SHA256 signing (`v1,<base64>` over `id.timestamp.payload`) + stdlib Python/Go/Node reference receivers with constant-time compare — v1.2 (Phase 19, WH-04)
+- ✓ Webhook SSRF/HTTPS posture, 3-attempt full-jitter retry + `webhook_deliveries` dead-letter queue, SIGTERM drain budget, `cronduit_webhook_*` metric family — v1.2 (Phase 20, WH-05, WH-07, WH-08, WH-10, WH-11)
+- ✓ Custom Docker labels on spawned containers (SEED-001) — `[defaults]` + per-job-wins merge, reserved `cronduit.*` namespace, type-gated + size + ASCII-key validators, value interpolation — v1.2 (Phase 17, LBL-01..06)
+- ✓ Failure-context panel on run detail — 5 P1 signals (time deltas/streak/last-success, image-digest delta, config-hash delta, duration-vs-p50, scheduler fire-skew) via a single-query CTE; per-run `image_digest` + `config_hash` columns + run.rs:301 fix — v1.2 (Phases 16/21, FOUND-14, FCTX-01..07)
+- ✓ Per-job exit-code histogram card — 10-bucket classifier (`stopped` distinct from signal-killed), last-100 runs, top-3 codes — v1.2 (Phase 21, EXIT-01..06)
+- ✓ Job tagging + dashboard filter chips — `jobs.tags` JSON column with charset/reserved/substring-collision validators; CSS-only AND-semantics chips, untagged-hidden, shareable `?tag=` URL state; tags in webhook payload — v1.2 (Phases 22/23, TAG-01..08)
+- ✓ `cargo-deny` promoted to a blocking CI gate; `Cargo.toml` bumped to `1.2.0` on the first v1.2 commit — v1.2 (Phases 15/24, FOUND-15, FOUND-16)
+
 ### Active
 
 <!-- Current scope. Building toward these. Hypotheses until shipped. -->
 
-**v1.2 — Operator Integration & Insight** (see `REQUIREMENTS.md` for the full testable list with REQ-IDs once generated)
-
-*Outbound integration*
-- [ ] Webhook notifications on job state transitions — per-job URL + state-filter list; HMAC signing; 3-attempt exponential backoff retry; `[defaults]` fallback with per-job override and `use_defaults = false` disable
-- [ ] Custom Docker labels on spawned containers (SEED-001) — `labels` map in `[defaults]` and per `[[jobs]]`; merge semantics + `cronduit.*` reserved namespace + type-gating locked at seed time
-
-*Insight on existing runs*
-- [ ] Failure context on run detail — time-based deltas (first-failure timestamp, streak, last-success link) + image-digest delta + config-hash delta; new `job_runs.image_digest` column with backfill
-- [ ] Per-job exit-code histogram on job detail page — new card showing distribution over the last N runs
-
-*Organization*
-- [ ] Job tagging / grouping — `tags = ["backup", "weekly"]`; UI-only filter chips on dashboard; does NOT affect webhooks, search, or metrics labels
+_No active milestone. v1.2 shipped 2026-05-19 — run `/gsd-new-milestone` to define v1.3 scope (cross-run log search + job concurrency/queuing are the leading candidates)._
 
 ### Future Requirements
 
@@ -176,7 +178,7 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 - **Multi-node / distributed scheduling** — single-node only. Distribution is a different product.
 - **User management / RBAC** — single-operator tool; no user accounts in v1 or v2.
 - **Workflow DAGs / job dependencies** — no "run B after A succeeds". Jobs are independent.
-- **Email notifications** — post-v1 add-on; can layer on top of the metrics/log outputs. Webhook notifications have been promoted to Future Requirements (v1.2); email notifications remain out of scope entirely (operators can wire a webhook → email bridge if they want it).
+- **Email notifications** — post-v1 add-on; can layer on top of the metrics/log outputs. Webhook notifications shipped in v1.2; email notifications remain out of scope entirely (operators can wire a webhook → email bridge if they want it).
 - **Ad-hoc one-shot runs not defined in the config** — config remains the single source of truth for what runs. Adding a UI form that accepts arbitrary commands/images would create a blast-radius surface that pairs poorly with v1's unauthenticated posture.
 - **Importer for existing ofelia configs** — users rewrite their schedules in Cronduit's TOML by hand. Not worth the translation surface area.
 - **SPA / React frontend** — server-rendered HTML only. Keeps the single-binary story and matches the terminal aesthetic.
@@ -184,6 +186,14 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 ## Context
 
 **Who this is for.** First user is Robert's own homelab. v1.0 ships as public OSS at `github.com/SimplicityGuy/cronduit` — the tool is intended for outside adopters from day one, with docs and quality bar to match.
+
+**Codebase state at v1.2.0 (2026-05-19).**
+- New `src/webhooks/` module (dispatcher trait + Noop/Http/Retrying dispatchers + bounded-mpsc worker) plus failure-context CTE, exit-code classifier, and tag plumbing across config/db/web layers.
+- Four net-new runtime crates: `reqwest 0.13` (rustls), `hmac 0.13`, `base64 0.22`, `ulid 1.2` (+ `wiremock 0.6` dev-dep). `cargo tree -i openssl-sys` still empty (rustls invariant held).
+- Schema: `job_runs.image_digest` + `job_runs.config_hash` (nullable, backfilled), `jobs.tags` JSON column, `webhook_deliveries` dead-letter table — all dual-backend migration pairs.
+- 78 plans across 10 phases (15–24); `cargo-deny` now a blocking CI gate; `webhook-interop` CI matrix (Python/Go/Node) added.
+- Reference webhook receivers shipped under `examples/webhook-receivers/{python,go,node}/`; operator hub at `docs/WEBHOOKS.md`; `THREAT_MODEL.md` gains TM5 (Webhook Outbound) + TM6 (Docker labels).
+- Release artifacts at v1.2.0: multi-arch image at `ghcr.io/SimplicityGuy/cronduit:1.2.0`; `:latest` promoted from `:1.1.0` to `:1.2.0`; `v1.2.1` patch follows same day.
 
 **Codebase state at v1.1.0 (2026-04-23).**
 - ~14,500 lines of Rust in `src/` + expanded integration test suite (new `tests/stop_executors.rs`, `tests/process_group_kill.rs`, `tests/metrics_stopped.rs`, `tests/v11_bulk_toggle.rs` + `_pg.rs`, `tests/v13_timeline_explain.rs`, `tests/v13_timeline_timezone.rs`, `tests/dashboard_jobs_pg.rs` among others)
@@ -220,6 +230,13 @@ Cronduit collapses those into one tool: define jobs in a config file, get a dash
 - Rust-side percentile computation (not `percentile_cont`) is acceptable for dashboard-sized windows — performance dominated by the `LIMIT 100` scan, not the percentile math.
 - UAT-driven rc-loop (rc.3 → rc.6 on Phase 14) catches real operator-visible bugs (dashboard reflection, timeline bar CSS, `just` recipes, self-polling partials) that unit + integration tests missed. Worth the four extra rc cuts.
 - Maintainer-action tag cuts (D-13) scale cleanly — rc.1 through v1.1.0 all landed without the maintainer fighting the workflow.
+
+**Validated v1.2 hypotheses.**
+- The expand-shape milestone (net-new outbound surface) landed additively on the v1.1 codebase with no scheduler-core refactor — the bounded-mpsc + `try_send` drop-on-full webhook worker keeps the scheduler loop isolated from receiver latency/backpressure (WH-02 scheduler-survival contract held).
+- A single-query CTE (`get_failure_context`) is the right shape for the failure panel — five signals in one indexed round-trip, EXPLAIN-locked on both backends, beats five separate queries.
+- Standard Webhooks v1 + sign-once HMAC-SHA256 with stdlib-only reference receivers (no SDK) keeps the integration surface auditable and the interop fixture catches wire-format drift in CI before language receivers run.
+- CSS-only filter chips (no JS beyond HTMX) deliver AND-semantics + shareable URL state within the no-SPA constraint; the substring-collision validator is required to keep the `tags LIKE` filter false-positive-free.
+- The iterative rc loop (rc.1 → rc.5, retag last-passing SHA as `v1.2.0`) again caught operator-visible issues UAT-side; "what was tested is what ships" (bit-identical retag) held.
 
 ## Constraints
 
@@ -286,6 +303,14 @@ Cronduit collapses those into one tool: define jobs in a config file, get a dash
 | UAT-driven rc loop (rc.3 → rc.6 on Phase 14) | Each UAT pass surfaces real operator-visible bugs that unit/integration tests missed; fixes land in-cycle, not on main | ✓ Settled (v1.1, Phase 14) — four fix PRs (#39, #40, #41) before `v1.1.0` tag |
 | `mark_run_orphaned` `WHERE status = 'running'` guard locked in by test | Research Correction #4 — without the guard, restart would overwrite `stopped`/`success`/`failed`/`timeout` rows | ✓ Settled (v1.1, Phase 10) — SCHED-13 |
 | Tailwind v3 → v4 migration landed at start of v1.1 | Dep refresh + Tailwind upgrade as a single PR avoided mixed-state churn later in the milestone | ✓ Settled (v1.1, PR #26) |
+| Bounded `mpsc(1024)` webhook worker with `try_send` drop-on-full (not `.send().await`) | The scheduler loop must never block on receiver latency; dropping past the bound + a counter preserves scheduler survival | ✓ Settled (v1.2, Phase 15) — WH-02 locked at the test boundary |
+| Standard Webhooks v1 wire format + SHA-256-only HMAC (no algorithm agility / cronduit-side rotation) | Interop with an established spec; rotation is a receiver concern; smaller surface | ✓ Settled (v1.2, Phases 18/19) — 7-file interop fixture + CI matrix |
+| Webhook SSRF = accepted documented risk (no destination allow/block-list), HTTPS required for non-local | Operator-with-UI-access is already trusted in the v1 posture; loopback default + HTTPS validator + reverse-proxy fronting are the mitigations | ✓ Settled (v1.2, Phase 20) — THREAT_MODEL TM5; allow-list deferred to v1.3 |
+| Failure context via a single-query CTE (`get_failure_context`) | One indexed round-trip for 5 signals beats five queries; EXPLAIN-locked on both backends | ✓ Settled (v1.2, Phases 16/21) — FCTX-07 |
+| Exit-code histogram: status-discriminator-wins classifier (`stopped` distinct from signal-killed 128–143) | Operators must tell an operator-stopped run apart from a SIGTERM-killed one even though both exit 137 | ✓ Settled (v1.2, Phase 21) — EXIT-04 |
+| Job tags are UI/payload-only (NOT metrics labels); substring-collision rejected at config-load | Avoids unbounded Prometheus cardinality; keeps the `tags LIKE` filter false-positive-free | ✓ Settled (v1.2, Phases 22/23) — TAG-05 |
+| Docker labels: `[defaults]` + per-job-wins merge, reserved `cronduit.*` namespace, docker-type-gated | Interop (Traefik/Watchtower) without clobbering cronduit's own labels; first realized-seed (SEED-001) close-out pattern | ✓ Settled (v1.2, Phase 17) — LBL-01..06 |
+| `cargo-deny` promoted from warn to a blocking CI gate before the final v1.2.0 tag | Supply-chain hygiene for an OSS release; one-time license-allowlist remediation cleared pre-existing deps | ✓ Settled (v1.2, Phase 24) — FOUND-16 |
 
 ## Evolution
 
@@ -305,4 +330,11 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-28 — Phase 16 (Failure-Context Schema + run.rs:277 Bug Fix) complete: load-bearing v1.1 bug at `src/scheduler/run.rs:301` fixed (`container_id_for_finalize` now reads `docker_result.container_id` instead of `image_digest`); `DockerExecResult` carries both `container_id` and `image_digest` fields; `job_runs.image_digest` and `job_runs.config_hash` columns added on both backends with best-effort backfill; `finalize_run` widened to 8 args; `insert_running_run` widened to 4 args; `get_failure_context(pool, job_id)` single-query helper landed using D-05 CTE shape (two CTEs joined `LEFT JOIN ON 1=1`, epoch sentinel `1970-01-01T00:00:00Z`); EXPLAIN-plan tests assert `idx_job_runs_job_id_start` is hit on both backends. FOUND-14, FCTX-04, FCTX-07 validated (HUMAN-UAT spot check 2026-04-28: real container IDs in `job_runs.container_id`, no `sha256:` prefix). Code review WR-02 (regression-test coverage for the bug fix is `#[ignore]`-gated — needs Docker daemon) and a just-recipe DB-path mismatch (`uat-fctx-bugfix-spot-check` targets `cronduit.dev.db` but daemon writes to `cronduit.db`) deferred as non-blocking follow-ups. Next: Phase 17 (Custom Docker Labels — SEED-001). Previous: 2026-04-26 — Phase 15 (Foundation Preamble) complete: workspace bumped to `1.2.0`, `cargo-deny` CI preamble landed warn-only, webhook delivery worker scaffolding wired into `SchedulerLoop` with bounded `mpsc(1024)` + `try_send` non-blocking emit at `finalize_run` step 7d + `cronduit_webhook_delivery_dropped_total` counter. WH-02 scheduler-survival contract locked at the test boundary. FOUND-15, FOUND-16, WH-02 validated. 2026-04-25 — v1.2 milestone "Operator Integration & Insight" kicked off. Five features: webhooks (override pattern), failure context on run detail, per-job exit-code histogram, job tagging (UI-only), custom Docker labels (SEED-001). 2026-04-24 — v1.1 milestone closed.*
+*Last updated: 2026-05-29 after the v1.2 — Operator Integration & Insight milestone. v1.2.0 shipped 2026-05-19 (+ v1.2.1 patch): outbound webhooks (Standard Webhooks v1 + HMAC + SSRF/HTTPS posture + retry/DLQ + drain + metrics + Python/Go/Node receivers), failure-context panel + exit-code histogram, job tagging + dashboard filter chips, custom Docker labels (SEED-001), the run.rs:301 container_id fix, and cargo-deny promoted to a blocking gate. 78 plans across Phases 15–24; 41/41 requirements Validated; audit verdict `passed`. `:latest` promoted to `:1.2.0`. All five v1.2 features moved to Validated; v1.2 milestone section collapsed; roadmap + requirements archived under `.planning/milestones/v1.2-*`. Next: `/gsd-new-milestone` for v1.3 (cross-run log search + job concurrency/queuing the leading candidates).*
+
+<details>
+<summary>Earlier in-milestone updates (v1.2)</summary>
+
+*2026-04-28 — Phase 16 (Failure-Context Schema + run.rs:277 Bug Fix) complete: load-bearing v1.1 bug at `src/scheduler/run.rs:301` fixed (`container_id_for_finalize` now reads `docker_result.container_id` instead of `image_digest`); `DockerExecResult` carries both `container_id` and `image_digest` fields; `job_runs.image_digest` and `job_runs.config_hash` columns added on both backends with best-effort backfill; `finalize_run` widened to 8 args; `insert_running_run` widened to 4 args; `get_failure_context(pool, job_id)` single-query helper landed using D-05 CTE shape (two CTEs joined `LEFT JOIN ON 1=1`, epoch sentinel `1970-01-01T00:00:00Z`); EXPLAIN-plan tests assert `idx_job_runs_job_id_start` is hit on both backends. FOUND-14, FCTX-04, FCTX-07 validated (HUMAN-UAT spot check 2026-04-28: real container IDs in `job_runs.container_id`, no `sha256:` prefix). Code review WR-02 (regression-test coverage for the bug fix is `#[ignore]`-gated — needs Docker daemon) and a just-recipe DB-path mismatch (`uat-fctx-bugfix-spot-check` targets `cronduit.dev.db` but daemon writes to `cronduit.db`) deferred as non-blocking follow-ups. Next: Phase 17 (Custom Docker Labels — SEED-001). Previous: 2026-04-26 — Phase 15 (Foundation Preamble) complete: workspace bumped to `1.2.0`, `cargo-deny` CI preamble landed warn-only, webhook delivery worker scaffolding wired into `SchedulerLoop` with bounded `mpsc(1024)` + `try_send` non-blocking emit at `finalize_run` step 7d + `cronduit_webhook_delivery_dropped_total` counter. WH-02 scheduler-survival contract locked at the test boundary. FOUND-15, FOUND-16, WH-02 validated. 2026-04-25 — v1.2 milestone "Operator Integration & Insight" kicked off. Five features: webhooks (override pattern), failure context on run detail, per-job exit-code histogram, job tagging (UI-only), custom Docker labels (SEED-001). 2026-04-24 — v1.1 milestone closed.*
+
+</details>

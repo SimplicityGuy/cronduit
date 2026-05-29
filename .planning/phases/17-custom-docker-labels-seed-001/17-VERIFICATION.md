@@ -1,7 +1,8 @@
 ---
 phase: 17-custom-docker-labels-seed-001
 verified: 2026-04-29T01:53:49Z
-status: human_needed
+status: passed
+human_validated: "Maintainer (Robert) 2026-05-19 — U5 spot-check passed (2026-04-29); CR-01/CR-02 architectural decisions accepted as documented residual behavior and shipped in v1.2.0; marked passed by maintainer instruction"
 score: 4/5 must-haves verified (SC-1 deferred to user UAT, fully passed; SC-2/3/5 verified in code; SC-4 partial — core verified; SC-5 partial — value-side verified, key-side contract silently broken under env-set conditions per CR-01)
 overrides_applied: 0
 gaps:
@@ -49,7 +50,7 @@ human_verification:
 **Phase Goal:** Operators can attach arbitrary Docker labels to cronduit-spawned containers (Traefik, Watchtower, backup tooling interop) with locked merge semantics, a reserved cronduit.* namespace, and type-gated validation.
 
 **Verified:** 2026-04-29T01:53:49Z
-**Status:** human_needed
+**Status:** passed — maintainer-validated 2026-05-19 (v1.2.0 ship UAT)
 **Re-verification:** No — initial verification
 
 ## Goal Achievement

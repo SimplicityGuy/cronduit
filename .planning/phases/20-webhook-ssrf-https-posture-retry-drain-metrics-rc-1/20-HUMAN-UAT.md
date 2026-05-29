@@ -1,3 +1,10 @@
+---
+phase: 20
+type: human-uat
+status: complete
+validated: "Maintainer (Robert) 2026-05-19 — WH-05/07/10/11 scenarios validated during the v1.2.0 ship UAT (gated the rc.1 cut)"
+---
+
 # Phase 20 — Maintainer UAT Runbook
 
 **Phase:** 20 — Webhook SSRF/HTTPS Posture + Retry/Drain + Metrics — rc.1

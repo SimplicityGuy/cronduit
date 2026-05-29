@@ -2,10 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Operator Integration & Insight
-status: "v1.2 SHIPPED — final tag v1.2.0 pushed 2026-05-19 (bit-identical to rc.5 SHA 7fb1de5)"
-stopped_at: v1.2.0 shipped
-last_updated: "2026-05-19T20:55:00Z"
-last_activity: "2026-05-19 -- v1.2.0 SHIPPED — retag of rc.5 SHA 7fb1de5 (UAT-validated 2026-05-19)"
+status: Awaiting next milestone
+last_updated: "2026-05-29T22:34:41.861Z"
+last_activity: 2026-05-29 — Milestone v1.2 completed and archived
 progress:
   total_phases: 10
   completed_phases: 10
@@ -18,21 +17,17 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-25 — v1.2 milestone kicked off)
+See: `.planning/PROJECT.md` (updated 2026-05-29 — v1.2 milestone completed & archived)
 
 **Core value:** One tool that both runs recurrent jobs reliably AND makes their state observable through a web UI.
-**Current focus:** v1.2 SHIPPED — awaiting `/gsd-complete-milestone v1.2` archival
+**Current focus:** Planning next milestone (v1.3) — run `/gsd-new-milestone`. Leading candidates: cross-run log search + job concurrency/queuing.
 
 ## Current Position
 
-Milestone: v1.2 — Operator Integration & Insight (SHIPPED 2026-05-19, tags `v1.2.0-rc.1` … `v1.2.0-rc.5`, final `v1.2.0`)
-Previous milestone: v1.1 (SHIPPED 2026-04-23, tags `v1.1.0-rc.1` … `v1.1.0-rc.6`, final `v1.1.0`)
-Phase: 24 (milestone-close-out-final-v1-2-0-ship) — SHIPPED
-Plan: 8 of 8
-Status: v1.2.0 SHIPPED — final tag retags rc.5 SHA 7fb1de5; `:latest` advanced from `:1.1.0` to `:1.2.0`; four-tag equality verified (`:1.2.0` = `:1.2` = `:1` = `:latest` = `sha256:c440f30d…`)
-Last activity: 2026-05-19 -- v1.2.0 SHIPPED — retag of rc.5 SHA 7fb1de5 (UAT-validated 2026-05-19)
-
-Progress: [██████████] 100%
+Phase: Milestone v1.2 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-05-29 — Milestone v1.2 completed and archived
 
 ## v1.2 Roadmap Summary
 
@@ -196,3 +191,7 @@ Stopped at: Phase 24 context gathered
 Resume command: `/gsd-execute-phase 23` to launch Plan 23-07 (HUMAN-UAT runbook, autonomous=false)
 
 **Planned Plan:** 23-07 — HUMAN-UAT runbook (autonomous=false maintainer plan with 6 scenarios covering the three uat-chips-* recipes plus mobile viewport / light-mode / keyboard nav / screen-reader narration / name-filter compose; TAG-06, TAG-07, TAG-08)
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

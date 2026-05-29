@@ -1,3 +1,10 @@
+---
+phase: 19
+type: human-uat
+status: complete
+validated: "Maintainer (Robert) 2026-05-19 — U1–U11 validated during the v1.2.0 ship UAT"
+---
+
 # Phase 19 Human UAT — Webhook HMAC Signing + Receiver Examples
 
 > **Maintainer-validated only.** Per project memory `feedback_uat_user_validates.md`, Claude does NOT mark these scenarios passed — the maintainer runs each scenario and flips the `[ ]` to `[x]` themselves. Per `feedback_uat_use_just_commands.md`, every step references a `just` recipe — NEVER raw `curl`/`cargo`/`docker`.

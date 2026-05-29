@@ -1,7 +1,8 @@
 ---
 phase: 23-job-tagging-dashboard-filter-chips-rc-3
 verified: 2026-05-04T18:00:00Z
-status: human_needed
+status: passed
+human_validated: "Maintainer (Robert) 2026-05-19 — 6 UAT scenarios + rc cut validated during the v1.2.0 ship UAT; CR-01 LIKE-wildcard concern accepted/addressed at ship; marked passed by maintainer instruction"
 score: 10/10 must-haves verified (5 SC-roadmap + 10 phase-level truths)
 overrides_applied: 0
 human_verification:
@@ -51,7 +52,7 @@ deferred:
 **Phase Goal:** Operators get CSS-only filter chips on the dashboard with AND semantics across selected tags, untagged-hidden when filter active, shareable URL state — then cut `v1.2.0-rc.3`.
 
 **Verified:** 2026-05-04T18:00:00Z
-**Status:** human_needed
+**Status:** passed — maintainer-validated 2026-05-19 (v1.2.0 ship UAT)
 **Re-verification:** No — initial verification
 
 ## Goal Achievement

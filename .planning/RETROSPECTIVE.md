@@ -2,6 +2,49 @@
 
 *A living document updated after each milestone. Lessons feed forward into future planning.*
 
+## Milestone: v1.2 — Operator Integration & Insight
+
+**Shipped:** 2026-05-19 (tag `v1.2.0`; rc tags `v1.2.0-rc.1` … `v1.2.0-rc.5`; patch `v1.2.1`)
+**Phases:** 10 (15–24) | **Plans:** 78 | **Tasks:** 158 | **Calendar timeline:** ~24 days (2026-04-25 → 2026-05-19)
+**Requirements:** 41 / 41 v1.2 Validated | **Outcome:** all five features shipped; audit verdict `passed`; `:latest` promoted to `:1.2.0`
+
+### What Was Built
+
+The "expand" milestone — net-new operator-facing surface on top of the v1.1 codebase. Outbound webhooks end-to-end (Standard Webhooks v1 payloads, HMAC-SHA256 signing, per-job state-filter + edge-triggered streak coalescing, SSRF/HTTPS posture, 3-attempt full-jitter retry + `webhook_deliveries` dead-letter queue, SIGTERM drain budget, `cronduit_webhook_*` metric family, and stdlib Python/Go/Node reference receivers locked to a shared interop fixture). A failure-context panel on run detail (5 P1 signals via a single-query CTE) and a per-job exit-code histogram card (10-bucket classifier, `stopped` distinct from signal-killed). Job tagging with CSS-only AND-semantics dashboard filter chips + shareable `?tag=` URL state. Custom Docker labels on spawned containers (SEED-001). Plus the load-bearing run.rs:301 `container_id` fix and `cargo-deny` promoted to a blocking CI gate.
+
+### What Worked
+
+- The bounded-mpsc + `try_send` drop-on-full webhook worker kept the scheduler loop fully isolated from receiver latency — the WH-02 scheduler-survival contract was lockable at the test boundary and never regressed across 6 webhook-touching phases.
+- A single-query CTE for failure context (5 signals, one indexed round-trip) was both faster and simpler than five separate queries, and EXPLAIN-locked on both backends.
+- Standard Webhooks v1 + a 7-file interop fixture caught wire-format drift in Rust CI *before* the language receivers ran — cheap, high-signal regression guard.
+- Wave-based parallel planning held up at scale (phase 20 ran 12 plans across 7 waves; phase 21 ran 11).
+- The iterative rc loop (rc.1 → rc.5) again surfaced operator-visible issues UAT-side; the "retag the last UAT-passing SHA as v1.2.0" discipline (bit-identical ship) held.
+
+### What Was Inefficient
+
+- The audit's UAT/quick-task scan keys on the literal token `status: complete` and a bare `SUMMARY.md` filename, while the repo's UAT files used `validated`/`passed` and prefixed summary names — milestone close required a normalization pass across 9 UAT files + 3 quick tasks that could have been avoided with a consistent status vocabulary from the start.
+- Several phase-20 gap-closure plans (20-10..20-12) landed after the initial 9, so the ROADMAP per-phase plan count drifted (showed 9/9 vs the real 12) until the close-out audit fixed it.
+- Disk exhaustion in an executor session (phase 20) blocked local `cargo test`/`clippy`, forcing reliance on CI for some gates.
+
+### Patterns Established
+
+- **Bounded-channel + drop-on-full worker** for any outbound side-effect that must not back-pressure the scheduler (reusable beyond webhooks).
+- **Single-query CTE view-models** pre-formatted server-side so askama templates stay logic-free.
+- **First realized-seed close-out** (SEED-001): dormant → realized frontmatter audit trail + maintainer UAT checklist — the template every future seed close inherits.
+- **Stdlib-only reference clients** (no SDK) + shared interop fixture as the cross-language contract lock.
+
+### Key Lessons
+
+- Pick one canonical "done" status token (`complete`) for UAT/verification frontmatter at milestone start — the tooling keys on it, and drift creates avoidable close-out churn.
+- Net-new outbound surface can land additively on a shipped core if the integration point is a bounded queue with explicit drop semantics — no scheduler-core refactor was needed.
+- "Accepted documented risk" (webhook SSRF, no allow-list) paired with a loopback-default posture and a THREAT_MODEL section is a legitimate ship gate for the v1 trust model — don't over-build mitigations the threat model doesn't require.
+
+### Cost Observations
+
+- Model mix: predominantly opus (quality profile); planner + executor both opus.
+- Sessions: multi-session across ~24 calendar days, wave-parallelized within phases.
+- Notable: the longest milestone yet (78 plans) stayed coherent via strict dependency ordering (P15 → P18/19/20; P16 → P18/21; P22 → P23) and three planned rc checkpoints.
+
 ## Milestone: v1.1 — Operator Quality of Life
 
 **Shipped:** 2026-04-23 (tag `v1.1.0`; rc tags `v1.1.0-rc.1` … `v1.1.0-rc.6`)
