@@ -1,8 +1,9 @@
 ---
 phase: 24-milestone-close-out-final-v1-2-0-ship
 verified: 2026-05-16T00:00:00Z
-status: human_needed
-score: 10/10 automated must-haves verified; 1 maintainer-execution item pending
+status: passed
+human_validated: "Maintainer (Robert) 2026-05-19 — full v1.2 regression + new-features UAT (Scenarios 1–6) validated; v1.2.0 shipped as a retag of rc.5 SHA 7fb1de5; marked passed by maintainer instruction"
+score: 10/10 automated must-haves verified; final UAT validated by maintainer 2026-05-19
 overrides_applied: 0
 human_verification:
   - test: "Run full v1.2 UAT against rc.4 image: execute Scenarios 1–6 in 24-HUMAN-UAT.md"
@@ -14,7 +15,7 @@ human_verification:
 
 **Phase Goal:** Operational close-out for the v1.2 — Operator Integration & Insight milestone, anchored in five operator-observable success criteria: (1) THREAT_MODEL.md canonical close-out with TM5/TM6; (2) REQUIREMENTS.md Validated flip for all 20 remaining unticked v1.2 requirements + v1.2-MILESTONE-AUDIT.md; (3) MILESTONES.md v1.2 entry; (4) cargo-deny gate promotion to blocking + :latest promotion via maintainer retag; (5) regression-smoke + new-features UAT runbooks authored.
 **Verified:** 2026-05-16
-**Status:** human_needed
+**Status:** passed — maintainer-validated 2026-05-19 (v1.2.0 ship UAT)
 **Re-verification:** No — initial verification
 
 ---

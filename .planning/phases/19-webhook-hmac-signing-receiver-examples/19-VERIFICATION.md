@@ -1,7 +1,8 @@
 ---
 phase: 19-webhook-hmac-signing-receiver-examples
 verified: 2026-04-30T20:15:00Z
-status: human_needed
+status: passed
+human_validated: "Maintainer (Robert) 2026-05-19 — U1–U11 validated during the v1.2.0 ship UAT (shipped from rc.5 SHA 7fb1de5); marked passed by maintainer instruction"
 score: 3/3 must-haves verified
 overrides_applied: 0
 re_verification:
@@ -51,7 +52,7 @@ human_verification:
 
 **Phase Goal:** Operators can verify webhook authenticity using HMAC-SHA256 and the Standard Webhooks signing-string convention; ship reference receiver examples that demonstrate constant-time HMAC compare.
 **Verified:** 2026-04-30T20:15:00Z
-**Status:** human_needed
+**Status:** passed — maintainer-validated 2026-05-19 (v1.2.0 ship UAT)
 **Re-verification:** Yes — after BL-01 + WR-01..WR-05 auto-fix landed (commits `2e7a8f8`, `f5823a8`, `a0a72fd`, `f421815`, `fc4917d`, `6fffa95`, `53d8adc`).
 
 ## Re-verification Summary

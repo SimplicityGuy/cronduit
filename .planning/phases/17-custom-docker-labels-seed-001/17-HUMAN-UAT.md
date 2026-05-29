@@ -1,3 +1,10 @@
+---
+phase: 17
+type: human-uat
+status: complete
+validated: "Maintainer (Robert) 2026-04-29 — all 6 UAT items passed locally per D-09; shipped in v1.2.0"
+---
+
 # Phase 17 — Human UAT (SEED-001 Custom Docker Labels)
 
 **Owner:** Maintainer (Robert)

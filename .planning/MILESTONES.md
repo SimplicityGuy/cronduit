@@ -1,5 +1,33 @@
 # Milestones
 
+## v1.2 — Operator Integration & Insight (Shipped: 2026-05-19)
+
+**Tags:** `v1.2.0-rc.1`, `v1.2.0-rc.2`, `v1.2.0-rc.3`, `v1.2.0-rc.4`, `v1.2.0-rc.5`, `v1.2.0`, `v1.2.1` · **Phases:** 10 (15–24) · **Plans:** 78 · **Tasks:** 158 · **Requirements shipped:** 41 / 41 v1.2
+
+**Delivered:** The milestone that makes cronduit a participant in the operator's broader infrastructure — pushing state outward via webhooks, exposing richer failure context inward, and letting operators organize and integrate via tags and Docker labels. Operators can now configure per-job outbound webhooks (Standard Webhooks v1 payloads, HMAC-SHA256 signing, state-filter + edge-triggered streak coalescing, SSRF/HTTPS posture, 3-attempt retry + dead-letter queue, graceful-shutdown drain, and a Prometheus metric family), read a rich failure-context panel on the run-detail page (5 P1 signals), scan a per-job exit-code histogram on the job-detail page (10 buckets, stopped distinct from signal-killed), tag jobs in TOML and filter the dashboard with CSS-only AND-semantics chips that carry into shareable URLs, and attach arbitrary Docker labels to spawned containers (per-job-wins merge, reserved `cronduit.*` namespace). It also fixes the load-bearing v1.1 `job_runs.container_id` regression and promotes `cargo-deny` to a blocking CI gate. Released iteratively `v1.2.0-rc.1` → `v1.2.0-rc.5`, then the last UAT-passing rc SHA was retagged `v1.2.0` ("what was tested is what ships"); `:latest` promoted to `1.2.0`.
+
+### Key accomplishments
+
+1. **Outbound webhooks (Phases 15, 18, 19, 20)** — `src/webhooks/` worker (bounded mpsc, drop-on-full scheduler-survival contract) delivering byte-stable Standard Webhooks v1 payloads with sign-once HMAC-SHA256; per-job state-filter + edge-triggered streak coalescing; LOAD-time SSRF/HTTPS-required validator; 3-attempt retry chain honoring `Retry-After` with a `webhook_deliveries` dead-letter queue; SIGTERM drain budget; `cronduit_webhook_*` metric family eager-zeroed at boot; stdlib reference receivers (Python/Go/Node) using constant-time compare, locked to a shared interop fixture + hard CI matrix.
+2. **Failure-context panel on run detail (Phases 16, 21)** — single-query CTE (`get_failure_context`) returning streak + last-success metadata in one round-trip; run-detail panel rendering 5 P1 signals (timestamp, image digest, config hash, duration-vs-p50 delta, scheduler fire-skew), gated to failed/timeout runs, with an index-plan EXPLAIN regression lock.
+3. **Per-job exit-code histogram (Phase 21)** — pure-Rust 10-variant `ExitBucket` classifier (status-discriminator-wins so `stopped` is distinct from signal-killed 128–143) over the last 100 runs, with a top-3-codes summary and success-rate badge that excludes `stopped`.
+4. **Job tagging + dashboard filter chips (Phases 22, 23)** — normalized tags in TOML persisted to a `jobs.tags` JSON column with strict-charset + reserved-name + substring-collision validators; CSS-only filter chips with AND semantics across tags, untagged-hidden when filtering, alphabetical order, and shareable/bookmarkable `?tag=` URL state; tags flow into the webhook payload (closing WH-09).
+5. **Custom Docker labels — SEED-001 (Phase 17)** — operator labels reach spawned containers' `ContainerCreateBody.labels` with `[defaults]` + per-job `per-job-wins` merge, a reserved `cronduit.*` namespace, type-gated + size + strict-ASCII-key validators, and env-var interpolation on values; established the project's first realized-seed close-out pattern.
+6. **Foundation fix + supply-chain gate (Phases 16, 20, 24)** — fixed the v1.1 `run.rs` regression so `job_runs.container_id` records the real container ID (not the image digest) (FOUND-14); added per-run `image_digest` + `config_hash` columns; promoted `cargo-deny` to a blocking CI gate with a one-time license-allowlist remediation; authored TM5/TM6 threat-model sections and the v1.2 close-out audit.
+
+### Validated milestone gates
+
+- **Requirements coverage:** 41/41 Complete across 6 categories (FOUND-14..16, WH-01..11, LBL-01..06, FCTX-01..07, EXIT-01..06, TAG-01..08). Full REQ-ID → phase traceability in `.planning/milestones/v1.2-REQUIREMENTS.md`.
+- **Milestone audit:** `.planning/milestones/v1.2-MILESTONE-AUDIT.md` — verdict **passed** (requirements coverage, cross-phase integration, E2E flows, Nyquist compliance).
+- **Threat model:** `THREAT_MODEL.md` gains Threat Model 5 (Webhook Outbound / SSRF) and Threat Model 6 (operator-supplied Docker labels), plus STRIDE rows T-S3 / T-T4 / T-I4 / T-D4.
+- **UAT:** 10 phase HUMAN-UAT runbooks maintainer-validated (every step `just`-recipe-driven); full v1.2 regression + new-features UAT signed off against the rc that shipped as `v1.2.0` (2026-05-19).
+
+### Patch releases
+
+- **v1.2.1 (2026-05-19):** webhook-URL credential scrubbing — `strip_url_credentials` userinfo stripping at every webhook-URL sink (closes THREAT_MODEL T-I4) + maintenance.
+
+---
+
 ## v1.1 — Operator Quality of Life (Shipped: 2026-04-23)
 
 **Tags:** `v1.1.0-rc.1`, `v1.1.0-rc.2`, `v1.1.0-rc.3`, `v1.1.0-rc.4`, `v1.1.0-rc.5`, `v1.1.0-rc.6`, `v1.1.0` · **Phases:** 6 (10, 11, 12, 12.1, 13, 14) · **Plans:** 52 · **Requirements shipped:** 33 / 33 v1.1

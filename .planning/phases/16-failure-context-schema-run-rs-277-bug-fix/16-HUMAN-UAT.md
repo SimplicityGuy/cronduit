@@ -2,7 +2,7 @@
 phase: 16
 gathered: 2026-04-27
 validated: 2026-04-28
-status: validated
+status: complete
 scope: minimal — one spot check for FOUND-14 operator-observable
 ---
 

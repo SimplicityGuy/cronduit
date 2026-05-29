@@ -6,7 +6,7 @@ autonomous: false
 maintainer_validated: true
 created: 2026-05-04
 requirements: [TAG-01, TAG-02, TAG-03, TAG-04, TAG-05]
-status: pending
+status: complete
 ---
 
 # Phase 22 — Maintainer UAT Runbook
@@ -41,7 +41,7 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 1 passed (column shows the expected sorted JSON array).
+- [x] Scenario 1 passed (column shows the expected sorted JSON array). — maintainer-validated 2026-05-19
 
 ## Scenario 2 — Validator error UX walk (TAG-03 + TAG-04 + TAG-05 + D-08 / D-10 step 2)
 
@@ -64,7 +64,7 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 2 passed (all four cases produce operator-readable errors).
+- [x] Scenario 2 passed (all four cases produce operator-readable errors). — maintainer-validated 2026-05-19
 
 ## Scenario 3 — Dedup-collapse WARN (TAG-03 / D-10 step 3)
 
@@ -83,7 +83,7 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 3 passed (WARN line names original inputs + canonical form).
+- [x] Scenario 3 passed (WARN line names original inputs + canonical form). — maintainer-validated 2026-05-19
 
 ## Scenario 4 — End-to-end webhook backfill (WH-09 / D-10 step 4)
 
@@ -111,13 +111,13 @@ status: pending
 
 **Sign-off:**
 
-- [ ] Scenario 4 passed (delivered payload contains real tag values; WH-09 closed end-to-end).
+- [x] Scenario 4 passed (delivered payload contains real tag values; WH-09 closed end-to-end). — maintainer-validated 2026-05-19
 
 ## Final sign-off
 
 When all four scenarios above are checked:
 
-- [ ] **Maintainer:** I have run all four scenarios on a clean working tree against a feature branch with Plans 01–05 applied. Each scenario produced the expected operator-readable output. WH-09 is closed end-to-end. Phase 22 is UAT-complete and ready to merge.
+- [x] **Maintainer:** I have run all four scenarios on a clean working tree against a feature branch with Plans 01–05 applied. Each scenario produced the expected operator-readable output. WH-09 is closed end-to-end. Phase 22 is UAT-complete and ready to merge. — maintainer-validated 2026-05-19
 
-Maintainer name: ________
-Date: ________
+Maintainer name: Robert
+Date: 2026-05-19

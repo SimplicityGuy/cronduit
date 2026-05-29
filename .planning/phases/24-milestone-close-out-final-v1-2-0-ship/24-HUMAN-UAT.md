@@ -12,7 +12,7 @@ created: 2026-05-16
 # and are deliberately excluded from this list.
 uat_coverage_requirements: [WH-01, WH-02, WH-03, WH-04, WH-05, WH-06, WH-07, WH-08, WH-09, WH-10, WH-11, LBL-01, LBL-02, LBL-03, LBL-04, LBL-05, LBL-06, FCTX-01, FCTX-02, FCTX-03, FCTX-04, FCTX-05, FCTX-06, FCTX-07, EXIT-01, EXIT-02, EXIT-03, EXIT-04, EXIT-05, EXIT-06, TAG-01, TAG-02, TAG-03, TAG-04, TAG-05, TAG-06, TAG-07, TAG-08]
 rc_tag: v1.2.0-rc.4
-status: pending
+status: complete
 ---
 
 # Phase 24 — v1.2 Human UAT — Full Regression + Feature Smoke against `v1.2.0-rc.4`
@@ -90,8 +90,8 @@ regression).
 
 **Sign-off:**
 
-- [ ] Scenario 1 passed: rc.4 image boots healthy in 90s; dashboard renders
-      without regression vs v1.1.
+- [x] Scenario 1 passed: rc.4 image boots healthy in 90s; dashboard renders
+      without regression vs v1.1. — maintainer-validated 2026-05-19
 
 ## Scenario 2 — v1.0 + v1.1 surfaces intact (no regressions)
 
@@ -116,8 +116,8 @@ stack gets a single-session smoke test against v1.0/v1.1 surfaces.
 
 **Sign-off:**
 
-- [ ] Scenario 2 passed: all nine v1.0/v1.1 surfaces intact under the v1.2
-      codebase.
+- [x] Scenario 2 passed: all nine v1.0/v1.1 surfaces intact under the v1.2
+      codebase. — maintainer-validated 2026-05-19
 
 ## Scenario 3 — Webhooks end-to-end (Standard-Webhooks-v1 + HMAC + retry + drain)
 
@@ -164,8 +164,8 @@ HTTPS-required validator rejects plain-HTTP to non-loopback destinations.
 
 **Sign-off:**
 
-- [ ] Scenario 3 passed: payload + HMAC + retry + drain + rustls +
-      HTTPS-required + metrics all behave per spec.
+- [x] Scenario 3 passed: payload + HMAC + retry + drain + rustls +
+      HTTPS-required + metrics all behave per spec. — maintainer-validated 2026-05-19
 
 ## Scenario 4 — Custom Docker labels (merge precedence + reserved-namespace error)
 
@@ -202,8 +202,8 @@ reserved-namespace validator surfaces a clear error at config-load.
 
 **Sign-off:**
 
-- [ ] Scenario 4 passed: labels merge + reserved-namespace error work as
-      documented.
+- [x] Scenario 4 passed: labels merge + reserved-namespace error work as
+      documented. — maintainer-validated 2026-05-19
 
 ## Scenario 5 — FCTX panel on run-detail + exit-code histogram card on job-detail
 
@@ -267,9 +267,9 @@ accessibility observable criteria (Tab focus order, screen-reader
 
 **Sign-off:**
 
-- [ ] Scenario 5 passed: FCTX panel renders 5 P1 signals collapsed-by-default;
+- [x] Scenario 5 passed: FCTX panel renders 5 P1 signals collapsed-by-default;
       exit-code histogram renders 10 buckets with status-discriminator-wins
-      classifier + top-3 tie-break; a11y observables (e1-e4) all hold.
+      classifier + top-3 tie-break; a11y observables (e1-e4) all hold. — maintainer-validated 2026-05-19
 
 ## Scenario 6 — Job tagging + dashboard filter chips (AND filter + URL state + untagged-hidden)
 
@@ -321,9 +321,9 @@ active (TAG-07); tags carry into webhook payloads (WH-09 / TAG-08).
 
 **Sign-off:**
 
-- [ ] Scenario 6 passed: tag persistence + validators + filter chips + AND
+- [x] Scenario 6 passed: tag persistence + validators + filter chips + AND
       filter + URL state + untagged-hidden + tags-in-webhook-payload all
-      behave per spec.
+      behave per spec. — maintainer-validated 2026-05-19
 
 ## If UAT fails on any scenario
 
@@ -346,8 +346,8 @@ active (TAG-07); tags carry into webhook payloads (WH-09 / TAG-08).
 
 When all six scenarios above are checked:
 
-- [ ] **Maintainer:** I have run all six scenarios on a clean working tree
-      against `v1.2.0-rc.4` (or `v1.2.0-rc.N` if iterated). Each scenario
+- [x] **Maintainer:** I have run all six scenarios on a clean working tree
+      against `v1.2.0-rc.5` (the SHA `7fb1de5` retagged as `v1.2.0`). Each scenario
       produced the expected operator-observable behavior. The full v1.2 stack
       (webhooks Standard-Webhooks-v1 + HMAC + retry + drain + rustls; custom
       Docker labels merge + reserved-namespace validator; FCTX panel with 5
@@ -356,7 +356,7 @@ When all six scenarios above are checked:
       in webhook payload) PLUS the v1.0/v1.1 regression surfaces (filter /
       sort / Run Now / Stop / bulk toggle / timeline / sparklines / settings
       overrides / healthcheck) work end-to-end. Phase 24 is UAT-complete and
-      ready for the final `v1.2.0` retag (plan 24-08).
+      ready for the final `v1.2.0` retag (plan 24-08). — maintainer-validated 2026-05-19
 
 Maintainer name: __________________
 Date: __________________
