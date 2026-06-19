@@ -39,11 +39,14 @@ build:
 build-release:
     cargo build --release
 
-# Remove cargo/build artifacts, generated CSS, and the dev SQLite database
+# Remove cargo/build artifacts (target/), generated CSS, the downloaded Tailwind
+# binary, Playwright MCP scratch, and the dev SQLite database. All regenerable:
+# `just build` rebuilds target/, `just tailwind` re-downloads bin/tailwindcss and
+# rebuilds app.css, MCP runs recreate .playwright-mcp/. Idempotent (rm -rf).
 [group('build')]
 clean:
     cargo clean
-    rm -rf .sqlx/tmp assets/static/app.css cronduit.dev.db cronduit.dev.db-wal cronduit.dev.db-shm
+    rm -rf .sqlx/tmp assets/static/app.css bin/tailwindcss .playwright-mcp cronduit.dev.db cronduit.dev.db-wal cronduit.dev.db-shm
 
 # Uses v4.3.0. Config lives in assets/src/app.css via @import "tailwindcss",
 # @source "../../templates", and @theme — no tailwind.config.js (v4 format).
