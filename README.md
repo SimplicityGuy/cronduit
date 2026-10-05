@@ -214,7 +214,7 @@ delete = true               # When true, cronduit removes the container after wa
                             # avoid the moby#8441 race that loses exit codes; the explicit remove
                             # happens after the run is fully recorded.
 timeout = "5m"              # Default job timeout
-random_min_gap = "90m"      # Minimum gap between @random-scheduled jobs on the same day.
+random_min_gap = "90m"      # Minimum gap between @random-scheduled jobs that can fire on the same day.
                             # Optional -- omit to allow @random jobs to land back-to-back.
 ```
 

@@ -2,6 +2,9 @@
 //!
 //! Transforms schedule strings containing `@random` tokens into concrete cron values.
 //! Enforces minimum spacing between @random jobs via a slot-based algorithm.
+//! Spacing is day-of-week aware: two jobs only need `random_min_gap` separation
+//! where their resolved schedules can fire on the same day (distances are
+//! measured on a weekly ring, so 23:50 Mon vs 00:10 Tue is still 20 minutes).
 //! Handles infeasibility by relaxing the gap with a warning.
 //!
 //! T-05-01: Validates field count before resolution; rejects malformed input.
@@ -22,6 +25,12 @@ const FIELD_RANGES: [(u32, u32); 5] = [
 
 /// Minutes in a day, used for circular gap calculations.
 const MINUTES_IN_DAY: u32 = 1440;
+
+/// Minutes in a week, the ring on which resolved fire times are compared.
+const MINUTES_IN_WEEK: u32 = 7 * MINUTES_IN_DAY;
+
+/// Day-of-week bitmask with every day (Sun..Sat) set.
+const ALL_DAYS: u8 = 0b0111_1111;
 
 /// Maximum retry attempts for resolving a single schedule to a valid cron expression.
 const MAX_RESOLVE_RETRIES: u32 = 10;
@@ -124,17 +133,122 @@ fn minute_of_day(schedule: &str) -> Option<u32> {
     Some(hour * 60 + minute)
 }
 
-/// Circular distance between two times on a 24-hour ring.
-fn circular_distance(a: u32, b: u32) -> u32 {
-    let diff = a.abs_diff(b);
-    diff.min(MINUTES_IN_DAY - diff)
+/// Days of the week (bit `d` = day `d`, Sunday = 0) on which a 5-field cron
+/// schedule can fire.
+///
+/// Conservative by design: anything that cannot be pinned to a definite set of
+/// weekdays is treated as "every day", which can only make spacing stricter.
+/// That covers `*`/`?`, names, `L`/`#` modifiers, unresolved `@random`, and any
+/// restricted day-of-month field (Vixie cron ORs a restricted dom with the dow,
+/// so such a job can fire on any weekday).
+fn dow_mask(schedule: &str) -> u8 {
+    let fields: Vec<&str> = schedule.split_whitespace().collect();
+    if fields.len() != 5 || !matches!(fields[2], "*" | "?") {
+        return ALL_DAYS;
+    }
+    let mut mask = 0u8;
+    for item in fields[4].split(',') {
+        let (range, step) = match item.split_once('/') {
+            Some((r, s)) => match s.parse::<u32>() {
+                Ok(step) if step > 0 => (r, step),
+                _ => return ALL_DAYS,
+            },
+            None => (item, 1),
+        };
+        let (lo, hi) = match range {
+            "*" | "?" => (0, 6),
+            _ => match range.split_once('-') {
+                Some((a, b)) => match (a.parse::<u32>(), b.parse::<u32>()) {
+                    (Ok(a), Ok(b)) if a <= b && b <= 7 => (a, b),
+                    _ => return ALL_DAYS,
+                },
+                None => match range.parse::<u32>() {
+                    // `N/step` means "from N to the end of the range".
+                    Ok(v) if v <= 7 && item.contains('/') => (v, 7),
+                    Ok(v) if v <= 7 => (v, v),
+                    _ => return ALL_DAYS,
+                },
+            },
+        };
+        for v in (lo..=hi).step_by(step as usize) {
+            // `7` is an alias for Sunday.
+            mask |= 1 << (v % 7);
+        }
+    }
+    if mask == 0 { ALL_DAYS } else { mask }
 }
 
-/// Check if a candidate minute-of-day has sufficient gap from all allocated slots.
-fn has_sufficient_gap(candidate: u32, allocated: &[u32], min_gap_minutes: u32) -> bool {
-    allocated
+/// Minute-of-week fire positions of a resolved schedule: one per day it can
+/// fire on. Returns `None` when the schedule has no single fire time per day
+/// (e.g. hour `*`), in which case gap enforcement does not apply.
+fn week_slots(schedule: &str) -> Option<Vec<u32>> {
+    let mod_val = minute_of_day(schedule)?;
+    let mask = dow_mask(schedule);
+    Some(
+        (0..7)
+            .filter(|d| mask & (1 << d) != 0)
+            .map(|d| d * MINUTES_IN_DAY + mod_val)
+            .collect(),
+    )
+}
+
+/// Circular distance between two times on a 7-day ring.
+fn circular_distance(a: u32, b: u32) -> u32 {
+    let diff = a.abs_diff(b);
+    diff.min(MINUTES_IN_WEEK - diff)
+}
+
+/// Smallest distance between any candidate fire position and any allocated one.
+fn min_distance(candidate: &[u32], allocated: &[u32]) -> u32 {
+    candidate
         .iter()
-        .all(|&slot| circular_distance(candidate, slot) >= min_gap_minutes)
+        .flat_map(|&c| allocated.iter().map(move |&a| circular_distance(c, a)))
+        .min()
+        .unwrap_or(MINUTES_IN_WEEK)
+}
+
+/// Check if a candidate's fire positions have sufficient gap from all allocated slots.
+fn has_sufficient_gap(candidate: &[u32], allocated: &[u32], min_gap_minutes: u32) -> bool {
+    min_distance(candidate, allocated) >= min_gap_minutes
+}
+
+/// Whether the minute and hour fields resolve to one fixed time of day, i.e.
+/// whether `random_min_gap` applies to this raw schedule at all.
+fn has_single_time_of_day(raw: &str) -> bool {
+    let fields: Vec<&str> = raw.split_whitespace().collect();
+    fields.len() == 5
+        && fields[..2]
+            .iter()
+            .all(|f| *f == "@random" || f.parse::<u32>().is_ok())
+}
+
+/// Smallest achievable worst-case number of gap-constrained @random jobs
+/// sharing one day.
+///
+/// Jobs whose day-of-week is `@random` (with an unrestricted day-of-month) can
+/// be placed on any single day, so they are spread over the least-loaded days;
+/// every other job counts against each day in its [`dow_mask`].
+fn max_jobs_per_day(raws: &[&str]) -> u32 {
+    let mut fixed = [0u32; 7];
+    let mut flexible = 0u32;
+    for raw in raws.iter().filter(|r| has_single_time_of_day(r)) {
+        let fields: Vec<&str> = raw.split_whitespace().collect();
+        if fields[4] == "@random" && matches!(fields[2], "*" | "?") {
+            flexible += 1;
+            continue;
+        }
+        let mask = dow_mask(raw);
+        for (d, load) in fixed.iter_mut().enumerate() {
+            if mask & (1 << d) != 0 {
+                *load += 1;
+            }
+        }
+    }
+    let mut level = fixed.iter().copied().max().unwrap_or(0);
+    while fixed.iter().map(|&f| level - f).sum::<u32>() < flexible {
+        level += 1;
+    }
+    level
 }
 
 /// Count how many @random fields a schedule has (fewer = more constrained).
@@ -153,7 +267,10 @@ fn random_field_count(schedule: &str) -> usize {
 /// Implements slot-based gap enforcement:
 /// - Non-random jobs get identity resolution
 /// - Random jobs sorted by constraint severity (fewer @random fields first)
-/// - Feasibility pre-check with gap relaxation for overflow
+/// - Gap is enforced only between jobs that can fire on the same day
+///   (day-of-week aware; see [`dow_mask`])
+/// - Feasibility pre-check per day bucket with gap relaxation for overflow
+/// - Jobs without a single time of day (e.g. hour `*`) are exempt from the gap
 /// - T-05-02: Retry capped at 100 per job; infeasible gap relaxation ensures termination
 pub fn resolve_random_schedules_batch(
     jobs: &[(String, String, Option<String>)],
@@ -178,17 +295,24 @@ pub fn resolve_random_schedules_batch(
         }
     }
 
-    let num_random = random_jobs.len();
     let mut gap_minutes = (min_gap.as_secs() / 60) as u32;
 
-    // Feasibility pre-check.
-    if num_random > 0 && gap_minutes > 0 {
-        let needed = num_random as u32 * gap_minutes;
+    // Feasibility pre-check, judged on the busiest day after spreading
+    // @random day-of-week jobs as evenly as possible.
+    let per_day = max_jobs_per_day(
+        &random_jobs
+            .iter()
+            .map(|(_, _, raw, _)| raw.as_str())
+            .collect::<Vec<_>>(),
+    );
+    if per_day > 0 && gap_minutes > 0 {
+        let needed = per_day * gap_minutes;
         if needed > MINUTES_IN_DAY {
-            let relaxed = MINUTES_IN_DAY / num_random as u32;
+            let relaxed = MINUTES_IN_DAY / per_day;
             tracing::warn!(
                 target: "cronduit.random",
-                jobs = num_random,
+                jobs = random_jobs.len(),
+                jobs_per_day = per_day,
                 gap_minutes = gap_minutes,
                 relaxed_gap_minutes = relaxed,
                 "random_min_gap is infeasible; relaxing gap for overflow jobs"
@@ -210,46 +334,44 @@ pub fn resolve_random_schedules_batch(
 
         // If existing resolved is provided, check if it satisfies the gap.
         if let Some(ex) = existing.as_deref()
-            && let Some(mod_val) = minute_of_day(ex)
-            && has_sufficient_gap(mod_val, &allocated_slots, gap_minutes)
+            && let Some(slots) = week_slots(ex)
+            && has_sufficient_gap(&slots, &allocated_slots, gap_minutes)
         {
-            allocated_slots.push(mod_val);
+            allocated_slots.extend(slots);
             results.push(((*name).clone(), ex.to_string()));
             continue;
         }
         // Existing doesn't satisfy gap or not parseable; re-resolve.
 
         // Try to find a slot that satisfies the gap constraint.
-        let mut best_candidate: Option<(String, u32, u32)> = None; // (schedule, mod, min_dist)
+        let mut best_candidate: Option<(String, Vec<u32>, u32)> = None; // (schedule, slots, min_dist)
 
         for _ in 0..MAX_SLOT_RETRIES {
             let candidate = resolve_schedule(raw, None, rng);
-            if let Some(mod_val) = minute_of_day(&candidate) {
-                if has_sufficient_gap(mod_val, &allocated_slots, gap_minutes) {
-                    allocated_slots.push(mod_val);
-                    results.push(((*name).clone(), candidate));
-                    best_candidate = None; // signal success
-                    break;
-                }
-                // Track the candidate with the maximum minimum distance to neighbors.
-                let min_dist = allocated_slots
-                    .iter()
-                    .map(|&s| circular_distance(mod_val, s))
-                    .min()
-                    .unwrap_or(MINUTES_IN_DAY);
-                if best_candidate
-                    .as_ref()
-                    .is_none_or(|(_s, _m, d)| min_dist > *d)
-                {
-                    best_candidate = Some((candidate, mod_val, min_dist));
-                }
-                continue;
+            let Some(slots) = week_slots(&candidate) else {
+                // No single time of day (e.g. hour `*`): the gap does not apply.
+                results.push(((*name).clone(), candidate));
+                best_candidate = None;
+                break;
+            };
+            if has_sufficient_gap(&slots, &allocated_slots, gap_minutes) {
+                allocated_slots.extend(slots);
+                results.push(((*name).clone(), candidate));
+                best_candidate = None; // signal success
+                break;
             }
-            // Couldn't extract minute-of-day; keep trying.
+            // Track the candidate with the maximum minimum distance to neighbors.
+            let min_dist = min_distance(&slots, &allocated_slots);
+            if best_candidate
+                .as_ref()
+                .is_none_or(|(_s, _m, d)| min_dist > *d)
+            {
+                best_candidate = Some((candidate, slots, min_dist));
+            }
         }
 
         // If we didn't break out of the loop (no success), use best candidate.
-        if let Some((sched, mod_val, min_dist)) = best_candidate {
+        if let Some((sched, slots, min_dist)) = best_candidate {
             tracing::warn!(
                 target: "cronduit.random",
                 job = %name,
@@ -258,7 +380,7 @@ pub fn resolve_random_schedules_batch(
                 "could not satisfy gap constraint after {} retries; using best candidate",
                 MAX_SLOT_RETRIES
             );
-            allocated_slots.push(mod_val);
+            allocated_slots.extend(slots);
             results.push(((*name).clone(), sched));
         }
     }
@@ -462,6 +584,154 @@ mod tests {
         let result = resolve_schedule("@random 14 *", None, &mut rng);
         // Should return the input unchanged (can't resolve malformed)
         assert_eq!(result, "@random 14 *");
+    }
+
+    fn random_jobs(n: usize, schedule: &str) -> Vec<(String, String, Option<String>)> {
+        (0..n)
+            .map(|i| (format!("job-{i}"), schedule.to_string(), None))
+            .collect()
+    }
+
+    /// Smallest weekly distance between any two jobs that share a fire day.
+    fn min_pairwise_gap(results: &[(String, String)]) -> u32 {
+        let slots: Vec<Vec<u32>> = results
+            .iter()
+            .map(|(_, s)| week_slots(s).expect("resolved schedule has a time of day"))
+            .collect();
+        let mut min = MINUTES_IN_WEEK;
+        for i in 0..slots.len() {
+            for j in (i + 1)..slots.len() {
+                min = min.min(min_distance(&slots[i], &slots[j]));
+            }
+        }
+        min
+    }
+
+    #[test]
+    fn dow_mask_parsing() {
+        assert_eq!(dow_mask("0 3 * * *"), ALL_DAYS);
+        assert_eq!(dow_mask("0 3 * * ?"), ALL_DAYS);
+        assert_eq!(dow_mask("0 3 * * 2"), 0b000_0100);
+        assert_eq!(dow_mask("0 3 * * 7"), 0b000_0001, "7 is Sunday");
+        assert_eq!(dow_mask("0 3 * * 1-5"), 0b011_1110);
+        assert_eq!(dow_mask("0 3 * * 0,6"), 0b100_0001);
+        assert_eq!(dow_mask("0 3 * * */2"), 0b101_0101);
+        assert_eq!(
+            dow_mask("0 3 * * 1/3"),
+            0b001_0010 | 0b000_0001,
+            "1,4,7(=0)"
+        );
+        // Unpinnable weekdays are conservatively treated as every day.
+        assert_eq!(dow_mask("0 3 * * MON"), ALL_DAYS);
+        assert_eq!(dow_mask("0 3 * * 5L"), ALL_DAYS);
+        assert_eq!(dow_mask("0 3 * * @random"), ALL_DAYS);
+        // A restricted day-of-month ORs with the dow, so any day can fire.
+        assert_eq!(dow_mask("0 3 15 * 2"), ALL_DAYS);
+    }
+
+    #[test]
+    fn per_day_load_spreads_random_dow() {
+        // Issue #76 shape: 73 jobs, each free to pick its day-of-week.
+        let raws = vec!["@random @random * * @random"; 73];
+        assert_eq!(max_jobs_per_day(&raws), 11); // ceil(73 / 7)
+        // Wildcard dow pins every job to every day.
+        let raws = vec!["@random @random * * *"; 10];
+        assert_eq!(max_jobs_per_day(&raws), 10);
+        // Fixed loads are filled up to before flexible jobs raise the peak.
+        let mut raws = vec!["@random @random * * 1"; 5];
+        raws.extend(vec!["@random @random * * @random"; 6]);
+        assert_eq!(max_jobs_per_day(&raws), 5);
+        // No single time of day => exempt from the gap and from the count.
+        assert_eq!(max_jobs_per_day(&["@random * * * *"]), 0);
+    }
+
+    #[test]
+    fn random_dow_jobs_fit_without_relaxing() {
+        // Issue #76: 73 x `@random @random * * @random` with a 90m gap used to
+        // be judged infeasible (73 * 90 > 1440) and still exhaust retries.
+        for seed in 0..20 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let jobs = random_jobs(73, "@random @random * * @random");
+            let results =
+                resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+            assert_eq!(results.len(), 73);
+            let gap = min_pairwise_gap(&results);
+            assert!(gap >= 90, "seed {seed}: jobs only {gap} minutes apart");
+        }
+    }
+
+    #[test]
+    fn same_dow_jobs_respect_gap() {
+        let mut rng = seeded_rng();
+        let jobs = random_jobs(8, "@random @random * * 3");
+        let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+        assert_eq!(results.len(), 8);
+        assert!(results.iter().all(|(_, s)| s.ends_with(" 3")));
+        assert!(min_pairwise_gap(&results) >= 90);
+    }
+
+    #[test]
+    fn different_dow_jobs_may_share_time_of_day() {
+        // Seven jobs pinned to the same hour on distinct weekdays: 60 slots per
+        // day can't hold seven 90m-apart jobs, but they never share a day.
+        let mut rng = seeded_rng();
+        let jobs: Vec<(String, String, Option<String>)> = (0..7)
+            .map(|d| (format!("job-{d}"), format!("@random 12 * * {d}"), None))
+            .collect();
+        let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+        assert_eq!(results.len(), 7);
+        assert!(min_pairwise_gap(&results) >= 90);
+    }
+
+    #[test]
+    fn wildcard_dow_conflicts_with_every_day() {
+        // A daily job at 12:00 must keep a Tuesday-only job 90m away too, so
+        // the Tuesday job's persisted 12:30 slot is rejected and re-rolled.
+        let mut rng = seeded_rng();
+        let jobs = vec![
+            (
+                "daily".to_string(),
+                "@random @random * * *".to_string(),
+                Some("0 12 * * *".to_string()),
+            ),
+            (
+                "tuesday".to_string(),
+                "@random @random * * 2".to_string(),
+                Some("30 12 * * 2".to_string()),
+            ),
+        ];
+        let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+        let daily = &results.iter().find(|(n, _)| n == "daily").unwrap().1;
+        let tuesday = &results.iter().find(|(n, _)| n == "tuesday").unwrap().1;
+        assert_eq!(daily, "0 12 * * *");
+        assert_ne!(tuesday, "30 12 * * 2", "existing slot violates the gap");
+        assert!(min_pairwise_gap(&results) >= 90);
+    }
+
+    #[test]
+    fn gap_wraps_across_midnight_between_days() {
+        // 23:50 Monday and 00:10 Tuesday are 20 minutes apart.
+        let mon = week_slots("50 23 * * 1").unwrap();
+        let tue = week_slots("10 0 * * 2").unwrap();
+        assert_eq!(min_distance(&mon, &tue), 20);
+        // Saturday 23:50 and Sunday 00:10 wrap around the week.
+        let sat = week_slots("50 23 * * 6").unwrap();
+        let sun = week_slots("10 0 * * 0").unwrap();
+        assert_eq!(min_distance(&sat, &sun), 20);
+    }
+
+    #[test]
+    fn no_time_of_day_is_resolved_without_gap() {
+        // Previously dropped from the results entirely (hour `*`).
+        let mut rng = seeded_rng();
+        let jobs = random_jobs(2, "@random * * * *");
+        let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+        assert_eq!(results.len(), 2);
+        assert!(
+            results
+                .iter()
+                .all(|(_, s)| validate_cron(s) && !is_random_schedule(s))
+        );
     }
 
     /// Helper: circular distance on a ring of `modulus` size

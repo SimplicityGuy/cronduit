@@ -5,7 +5,7 @@
 //! D-07: All schedule evaluation uses `[server].timezone` only.
 
 use crate::db::queries::DbJob;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use chrono_tz::Tz;
 use croner::Cron;
 use std::cmp::{Ordering, Reverse};
@@ -56,17 +56,33 @@ pub struct MissedFire {
 /// For each job, parses the cron expression and finds the next occurrence
 /// after the current time in the configured timezone.
 pub fn build_initial_heap(jobs: &[DbJob], tz: Tz) -> BinaryHeap<Reverse<FireEntry>> {
+    build_initial_heap_at(
+        jobs,
+        Utc::now().with_timezone(&tz),
+        tokio::time::Instant::now(),
+    )
+}
+
+/// Build the fire queue relative to an explicit wall-clock / monotonic pair.
+///
+/// `now_tz` and `now_instant` must describe the same moment; each entry's
+/// `instant` is `now_instant` plus the wall-clock distance to its fire time.
+pub fn build_initial_heap_at(
+    jobs: &[DbJob],
+    now_tz: DateTime<Tz>,
+    now_instant: tokio::time::Instant,
+) -> BinaryHeap<Reverse<FireEntry>> {
     let mut heap = BinaryHeap::new();
-    let now_tz = Utc::now().with_timezone(&tz);
 
     for job in jobs {
         match Cron::from_str(&job.resolved_schedule) {
             Ok(cron) => match cron.find_next_occurrence(&now_tz, false) {
                 Ok(next) => {
-                    let until_fire = (next.with_timezone(&Utc) - Utc::now())
+                    let until_fire = next
+                        .signed_duration_since(now_tz)
                         .to_std()
                         .unwrap_or(Duration::ZERO);
-                    let instant = tokio::time::Instant::now() + until_fire;
+                    let instant = now_instant + until_fire;
 
                     tracing::debug!(
                         target: "cronduit.scheduler",
@@ -112,7 +128,26 @@ pub fn requeue_job(
     heap: &mut BinaryHeap<Reverse<FireEntry>>,
     job: &DbJob,
     after: &DateTime<Tz>,
-    _tz: Tz,
+    tz: Tz,
+) {
+    requeue_job_at(
+        heap,
+        job,
+        after,
+        Utc::now().with_timezone(&tz),
+        tokio::time::Instant::now(),
+    );
+}
+
+/// Requeue a job relative to an explicit wall-clock / monotonic pair.
+///
+/// See [`build_initial_heap_at`] for the meaning of `now_tz` / `now_instant`.
+pub fn requeue_job_at(
+    heap: &mut BinaryHeap<Reverse<FireEntry>>,
+    job: &DbJob,
+    after: &DateTime<Tz>,
+    now_tz: DateTime<Tz>,
+    now_instant: tokio::time::Instant,
 ) {
     let cron = match Cron::from_str(&job.resolved_schedule) {
         Ok(c) => c,
@@ -129,10 +164,11 @@ pub fn requeue_job(
 
     match cron.find_next_occurrence(after, false) {
         Ok(next) => {
-            let until_fire = (next.with_timezone(&Utc) - Utc::now())
+            let until_fire = next
+                .signed_duration_since(now_tz)
                 .to_std()
                 .unwrap_or(Duration::ZERO);
-            let instant = tokio::time::Instant::now() + until_fire;
+            let instant = now_instant + until_fire;
 
             heap.push(Reverse(FireEntry {
                 job_id: job.id,
@@ -172,6 +208,75 @@ pub fn fire_due_jobs(
 /// Maximum clock jump window to scan for missed fires (T-02-02: DoS mitigation).
 const MAX_CATCHUP_WINDOW_HOURS: i64 = 24;
 
+/// Wake drift beyond which a wake is treated as a wall-clock jump (D-03).
+const CLOCK_JUMP_THRESHOLD_MINUTES: i64 = 2;
+
+/// Wall-clock time at which a sleep until `sleep_target` is expected to end.
+///
+/// Must be computed for the sleep that is about to happen: comparing a wake
+/// against an earlier sleep's target would count the whole idle gap between
+/// fires as clock drift (cronduit-53x).
+pub fn expected_wake(
+    sleep_target: tokio::time::Instant,
+    now_instant: tokio::time::Instant,
+    now_tz: DateTime<Tz>,
+) -> DateTime<Tz> {
+    let sleep_duration = sleep_target.saturating_duration_since(now_instant);
+    now_tz + chrono::Duration::from_std(sleep_duration).unwrap_or(chrono::Duration::zero())
+}
+
+/// Whether `actual_now` overshoots `expected_wake` by more than the threshold.
+pub fn is_clock_jump(expected_wake: DateTime<Tz>, actual_now: DateTime<Tz>) -> bool {
+    actual_now.signed_duration_since(expected_wake)
+        > chrono::Duration::minutes(CLOCK_JUMP_THRESHOLD_MINUTES)
+}
+
+/// Everything the scheduler loop must spawn after the fire-queue sleep wakes.
+#[derive(Debug)]
+pub struct WakePlan {
+    /// Entries due at this wake (`trigger = "scheduled"`).
+    pub due: Vec<FireEntry>,
+    /// Fires skipped by a forward clock jump (`trigger = "catch-up"`).
+    pub missed: Vec<MissedFire>,
+}
+
+/// Resolve one fire-queue wake into scheduled and catch-up fires.
+///
+/// Pops the due entries, enumerates missed fires when the wake overshot
+/// `expected_wake` (the target of *this* sleep), drops catch-up fires for a
+/// slot that is already due so each slot runs at most once, then requeues.
+/// After a clock jump the remaining heap instants are stale (they were
+/// computed against the pre-jump wall clock), so the heap is rebuilt from
+/// `actual_now`; fires in between are covered by the catch-up runs.
+pub fn plan_wake(
+    heap: &mut BinaryHeap<Reverse<FireEntry>>,
+    jobs: &[DbJob],
+    expected_wake: DateTime<Tz>,
+    actual_now: DateTime<Tz>,
+    now_instant: tokio::time::Instant,
+) -> WakePlan {
+    let due = fire_due_jobs(heap, now_instant);
+
+    let mut missed = check_clock_jump(expected_wake, actual_now, actual_now.timezone(), jobs);
+    missed.retain(|m| {
+        !due.iter().any(|d| {
+            d.job_id == m.job_id && d.fire_time.trunc_subsecs(0) == m.missed_time.trunc_subsecs(0)
+        })
+    });
+
+    if is_clock_jump(expected_wake, actual_now) {
+        *heap = build_initial_heap_at(jobs, actual_now, now_instant);
+    } else {
+        for entry in &due {
+            if let Some(job) = jobs.iter().find(|j| j.id == entry.job_id) {
+                requeue_job_at(heap, job, &entry.fire_time, actual_now, now_instant);
+            }
+        }
+    }
+
+    WakePlan { due, missed }
+}
+
 /// Check for clock jumps and enumerate missed fires.
 ///
 /// D-03: If actual_now - expected_wake > 2 minutes, scan all jobs for
@@ -185,11 +290,10 @@ pub fn check_clock_jump(
     _tz: Tz,
     jobs: &[DbJob],
 ) -> Vec<MissedFire> {
-    let diff = actual_now.signed_duration_since(expected_wake);
-
-    if diff <= chrono::Duration::minutes(2) {
+    if !is_clock_jump(expected_wake, actual_now) {
         return Vec::new();
     }
+    let diff = actual_now.signed_duration_since(expected_wake);
 
     tracing::warn!(
         target: "cronduit.scheduler",
@@ -403,6 +507,192 @@ mod tests {
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].job_name, "past");
         assert_eq!(heap.len(), 1); // "future" still in heap
+    }
+
+    /// Drive the scheduler loop's fire path (`heap.peek` -> `expected_wake` ->
+    /// sleep -> `plan_wake`) against a simulated wall clock, exactly as
+    /// `SchedulerLoop::run` wires it. `wall_at` maps a monotonic instant to
+    /// the wall clock (a forward jump is an offset applied past some instant).
+    /// Returns every (job_id, slot, trigger) the loop would spawn.
+    fn simulate_loop(
+        jobs: &[DbJob],
+        start_instant: tokio::time::Instant,
+        wall_at: impl Fn(tokio::time::Instant) -> DateTime<Tz>,
+        wakes: usize,
+    ) -> Vec<(i64, DateTime<Tz>, &'static str)> {
+        let mut heap = build_initial_heap_at(jobs, wall_at(start_instant), start_instant);
+        let mut now_instant = start_instant;
+        let mut spawned = Vec::new();
+
+        for _ in 0..wakes {
+            let sleep_target = heap.peek().map(|r| r.0.instant).unwrap();
+            let expected = expected_wake(sleep_target, now_instant, wall_at(now_instant));
+            // The monotonic sleep wakes on target; only the wall clock may jump.
+            now_instant = sleep_target;
+            let plan = plan_wake(&mut heap, jobs, expected, wall_at(now_instant), now_instant);
+            for m in plan.missed {
+                spawned.push((m.job_id, m.missed_time, "catch-up"));
+            }
+            for d in plan.due {
+                spawned.push((d.job_id, d.fire_time, "scheduled"));
+            }
+        }
+        spawned
+    }
+
+    fn assert_each_slot_once(spawned: &[(i64, DateTime<Tz>, &'static str)]) {
+        let mut slots: Vec<(i64, DateTime<Tz>)> = spawned
+            .iter()
+            .map(|(id, t, _)| (*id, t.trunc_subsecs(0)))
+            .collect();
+        let total = slots.len();
+        slots.sort();
+        slots.dedup();
+        assert_eq!(
+            slots.len(),
+            total,
+            "a slot was spawned more than once: {spawned:?}"
+        );
+    }
+
+    #[test]
+    fn idle_gaps_between_fires_are_not_clock_jumps() {
+        // cronduit-53x acceptance 1 + 4: hours-long idle gaps between fires on
+        // an undisturbed clock must produce no catch-up runs. The old wiring
+        // compared each wake against the PREVIOUS sleep's target, so the
+        // whole gap counted as drift and the due slot also fired as catch-up.
+        let tz: Tz = "UTC".parse().unwrap();
+        let base = tz.with_ymd_and_hms(2026, 6, 15, 0, 0, 30).unwrap();
+        let start = tokio::time::Instant::now();
+        let wall_at =
+            |i: tokio::time::Instant| base + chrono::Duration::from_std(i - start).unwrap();
+        let jobs = vec![
+            make_db_job(1, "two-hourly", "0 */2 * * *"),
+            make_db_job(2, "daily", "8 0 * * *"),
+        ];
+
+        let spawned = simulate_loop(&jobs, start, wall_at, 12);
+
+        assert_eq!(spawned.len(), 12);
+        assert!(
+            spawned
+                .iter()
+                .all(|(_, _, trigger)| *trigger == "scheduled"),
+            "idle gaps must not trigger catch-up: {spawned:?}"
+        );
+        assert_each_slot_once(&spawned);
+
+        // Sanity: the gaps really are far beyond the jump threshold, so the
+        // previous-wake comparison would have flagged them.
+        let first = spawned[0].1;
+        let second = spawned[1].1;
+        assert!(is_clock_jump(first, second));
+    }
+
+    #[test]
+    fn forward_clock_jump_catches_up_each_missed_slot_once() {
+        // cronduit-53x acceptance 2 + 3 + 4: a real +1h wall-clock jump during
+        // a sleep still catches up the skipped slots; the slot due at the wake
+        // fires once as scheduled, and the stale heap does not refire slots the
+        // catch-up already covered.
+        let tz: Tz = "UTC".parse().unwrap();
+        let base = tz.with_ymd_and_hms(2026, 6, 15, 12, 0, 30).unwrap();
+        let start = tokio::time::Instant::now();
+        let jump_at = start + Duration::from_secs(300);
+        let wall_at = |i: tokio::time::Instant| {
+            let jump = if i >= jump_at {
+                chrono::Duration::hours(1)
+            } else {
+                chrono::Duration::zero()
+            };
+            base + chrono::Duration::from_std(i - start).unwrap() + jump
+        };
+        let jobs = vec![make_db_job(1, "ten-min", "*/10 * * * *")];
+
+        let spawned = simulate_loop(&jobs, start, wall_at, 3);
+
+        assert_each_slot_once(&spawned);
+        let slot = |h, m| tz.with_ymd_and_hms(2026, 6, 15, h, m, 0).unwrap();
+        let catch_up: Vec<_> = spawned
+            .iter()
+            .filter(|(_, _, t)| *t == "catch-up")
+            .map(|(_, t, _)| *t)
+            .collect();
+        assert_eq!(
+            catch_up,
+            vec![
+                slot(12, 20),
+                slot(12, 30),
+                slot(12, 40),
+                slot(12, 50),
+                slot(13, 0)
+            ]
+        );
+        let scheduled: Vec<_> = spawned
+            .iter()
+            .filter(|(_, _, t)| *t == "scheduled")
+            .map(|(_, t, _)| *t)
+            .collect();
+        // 12:10 was due at the wake (on the pre-jump timeline); after the
+        // jump the heap is rebuilt from the real wall clock.
+        assert_eq!(scheduled, vec![slot(12, 10), slot(13, 20), slot(13, 30)]);
+    }
+
+    #[test]
+    fn plan_wake_does_not_double_fire_slot_due_at_wake() {
+        // cronduit-53x acceptance 3: the wake lands exactly on a fire time and
+        // the expected wake sits microseconds before it (the production log
+        // showed missed_time 00:08:00.377373 vs wake 00:08:00.377745). Even
+        // with a jump in progress the due slot must run once, as scheduled.
+        let tz: Tz = "UTC".parse().unwrap();
+        let fire_time = tz.with_ymd_and_hms(2026, 6, 15, 0, 8, 0).unwrap();
+        let now_instant = tokio::time::Instant::now();
+        let mut heap: BinaryHeap<Reverse<FireEntry>> = BinaryHeap::new();
+        heap.push(Reverse(FireEntry {
+            job_id: 1,
+            job_name: "every-min".to_string(),
+            fire_time,
+            instant: now_instant,
+            resolved_schedule: "* * * * *".to_string(),
+        }));
+        let jobs = vec![make_db_job(1, "every-min", "* * * * *")];
+        let expected = fire_time - chrono::Duration::microseconds(372);
+        let actual = fire_time + chrono::Duration::minutes(3);
+
+        let plan = plan_wake(&mut heap, &jobs, expected, actual, now_instant);
+
+        assert_eq!(plan.due.len(), 1);
+        assert_eq!(plan.due[0].fire_time, fire_time);
+        let missed: Vec<_> = plan.missed.iter().map(|m| m.missed_time.minute()).collect();
+        assert_eq!(missed, vec![9, 10]);
+        // Heap rebuilt after the jump: next fire is after `actual`.
+        assert_eq!(heap.len(), 1);
+        assert!(heap.peek().unwrap().0.fire_time > actual);
+    }
+
+    #[test]
+    fn plan_wake_on_time_requeues_without_catch_up() {
+        // Normal wake: no catch-up, due job requeued from its fire time.
+        let tz: Tz = "UTC".parse().unwrap();
+        let fire_time = tz.with_ymd_and_hms(2026, 6, 15, 0, 8, 0).unwrap();
+        let now_instant = tokio::time::Instant::now();
+        let mut heap: BinaryHeap<Reverse<FireEntry>> = BinaryHeap::new();
+        heap.push(Reverse(FireEntry {
+            job_id: 1,
+            job_name: "every-min".to_string(),
+            fire_time,
+            instant: now_instant,
+            resolved_schedule: "* * * * *".to_string(),
+        }));
+        let jobs = vec![make_db_job(1, "every-min", "* * * * *")];
+
+        let plan = plan_wake(&mut heap, &jobs, fire_time, fire_time, now_instant);
+
+        assert_eq!(plan.due.len(), 1);
+        assert!(plan.missed.is_empty());
+        let next = heap.peek().unwrap().0.clone();
+        assert_eq!(next.fire_time, fire_time + chrono::Duration::minutes(1));
+        assert_eq!(next.instant, now_instant + Duration::from_secs(60));
     }
 
     #[test]

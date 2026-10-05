@@ -136,7 +136,7 @@ These fields can be set under `[defaults]` (note that `labels` and `webhook` are
 | `volumes` | docker jobs only | Default volume mounts. Arrays replace — per-job `volumes` does not concatenate with the defaults entry. |
 | `delete` | docker jobs only | Default "remove container after drain" flag. |
 | `timeout` | all job types | Default per-job timeout. |
-| `random_min_gap` | **global only** | Minimum gap between `@random`-scheduled jobs on the same day. This one is **not merged per-job** — it's a global scheduler knob consumed directly by the `@random` resolver. See below. |
+| `random_min_gap` | **global only** | Minimum gap between `@random`-scheduled jobs that can fire on the same day. This one is **not merged per-job** — it's a global scheduler knob consumed directly by the `@random` resolver. See below. |
 
 **No other field is defaults-eligible.** Specifically, these fields are per-job only and will **not** merge from `[defaults]` even if you write them there (the TOML parser will silently accept the unknown key, but `apply_defaults` will not use it):
 
@@ -216,14 +216,21 @@ When a run exceeds its timeout, Cronduit kills the process (for command/script j
 
 ### `[defaults].random_min_gap`
 
-**Global knob, NOT merged per-job.** Minimum gap between `@random`-scheduled jobs on the same day, enforced by the `@random` resolver. Defaults to `0s` if unset.
+**Global knob, NOT merged per-job.** Minimum gap between `@random`-scheduled jobs that can fire on the same day, enforced by the `@random` resolver. Defaults to `0s` if unset.
 
 ```toml
 [defaults]
 random_min_gap = "90m"
 ```
 
-If you have ten jobs with `schedule = "@random * * * *"` and `random_min_gap = "90m"`, the resolver picks ten distinct times on day 1 such that consecutive jobs are at least 90 minutes apart. If the slot is infeasible (too many jobs, too large a gap), the resolver emits a `WARN`-level log with `random_min_gap is infeasible; relaxing gap for overflow jobs` and picks the tightest feasible schedule.
+If you have ten jobs with `schedule = "@random @random * * *"` and `random_min_gap = "90m"`, the resolver picks ten distinct times of day such that consecutive jobs are at least 90 minutes apart.
+
+Precise semantics:
+
+- **Only jobs with one fire time per day are spaced.** The gap applies when the minute and hour fields each resolve to a single number (a literal or `@random`). A schedule like `@random * * * *` fires every hour, so it is resolved but not spaced.
+- **Day-of-week aware.** Two jobs only need to be `random_min_gap` apart if their resolved schedules can fire on the same day. Distances are measured on a 7-day ring, so 23:50 Monday and 00:10 Tuesday are 20 minutes apart.
+- **Weekdays are judged conservatively.** A day-of-week of `*`/`?`, a weekday name, an `L`/`#` modifier, or a restricted day-of-month (cron ORs it with the day-of-week) counts as "can fire every day", so the job must keep the gap from every other spaced job. Numeric weekdays, ranges, lists and steps (`2`, `1-5`, `0,6`, `*/2`) count as exactly those days.
+- **Feasibility is per day.** Jobs whose day-of-week is `@random` (with day-of-month `*`) are spread across the week, so 73 jobs of `@random @random * * @random` need at most 11 per day, and a `90m` gap fits. If the busiest day cannot hold its jobs (`jobs_per_day × gap > 24h`), the resolver emits a `WARN`-level log with `random_min_gap is infeasible; relaxing gap for overflow jobs` and relaxes the gap to `24h / jobs_per_day`. If a job still cannot be placed after 100 random tries, it logs `could not satisfy gap constraint` and takes the best spot it found.
 
 `random_min_gap` is not a per-job field — there is no `[[jobs]].random_min_gap`. It's a property of the scheduler's `@random` resolver as a whole.
 
@@ -493,12 +500,12 @@ These are the killer features for real-world backup and maintenance schedules �
 
 ### `@random` — Cronduit extension
 
-Any field in a 5-field cron expression can be set to `@random`, which Cronduit resolves at startup using a slot-based algorithm. The resolver honors `[defaults].random_min_gap` between consecutive jobs on the same day.
+Any field in a 5-field cron expression can be set to `@random`, which Cronduit resolves at startup using a slot-based algorithm. The resolver honors `[defaults].random_min_gap` between jobs that can fire on the same day (see [`random_min_gap`](#defaultsrandom_min_gap) for the exact rules).
 
 ```toml
 [[jobs]]
 name = "snapshot"
-schedule = "@random * * * *"
+schedule = "@random @random * * *"
 command = "snapshot-cli --target /data"
 ```
 
@@ -686,21 +693,21 @@ random_min_gap = "30m"
 
 [[jobs]]
 name = "snapshot-1"
-schedule = "@random * * * *"
+schedule = "@random @random * * *"
 cmd = ["sh", "-c", "echo snap1"]
 
 [[jobs]]
 name = "snapshot-2"
-schedule = "@random * * * *"
+schedule = "@random @random * * *"
 cmd = ["sh", "-c", "echo snap2"]
 
 [[jobs]]
 name = "snapshot-3"
-schedule = "@random * * * *"
+schedule = "@random @random * * *"
 cmd = ["sh", "-c", "echo snap3"]
 ```
 
-Each day, the resolver picks three distinct minute values at least 30 minutes apart and persists them to the DB. Restarting Cronduit does not re-roll the current day's values — they persist across restarts and only re-roll on the next daily boundary.
+Each day, the resolver picks three distinct times of day at least 30 minutes apart and persists them to the DB. Restarting Cronduit does not re-roll the current day's values — they persist across restarts and only re-roll on the next daily boundary.
 
 ### Last weekday of month backup (Quartz extension)
 
