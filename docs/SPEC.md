@@ -110,7 +110,7 @@ delete = true             # When true, cronduit removes the container after it d
                           # auto_remove — cronduit always sets auto_remove=false to avoid the
                           # moby#8441 race, then explicitly removes after wait_container).
 timeout = "5m"
-random_min_gap = "90m"    # Minimum gap between @random-scheduled jobs on the same day.
+random_min_gap = "90m"    # Minimum gap between @random-scheduled jobs that can fire on the same day.
 ```
 
 All `[defaults]` fields are optional. Per-job blocks override them. A job can opt out entirely with `use_defaults = false`.
@@ -182,7 +182,7 @@ Cronduit uses `croner` 3.0 (DST-aware, Vixie-cron-aligned) for parsing. Supporte
 - **6-field with seconds**: `*/30 * * * * *`
 - **Macros**: `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly` (`@reboot` is intentionally **not** supported — Cronduit has explicit startup hooks)
 - **Quartz extended modifiers**: `L` (last), `#` (nth), `W` (nearest weekday) — e.g., `0 3 ? * 7L` for "3:00 AM on the last Saturday of every month"
-- **Cronduit extension — `@random`**: any cron field can be set to `@random`, which Cronduit resolves at startup using a slot-based algorithm that respects `random_min_gap` between resolved values on the same day. Resolved values are persisted in the database and re-rolled on the next daily boundary.
+- **Cronduit extension — `@random`**: any cron field can be set to `@random`, which Cronduit resolves at startup using a slot-based algorithm that respects `random_min_gap` between resolved values that can fire on the same day (day-of-week aware; see CONFIG.md). Resolved values are persisted in the database and re-rolled on the next daily boundary.
 
 Schedules render in the UI with both the raw expression and a human-readable description (e.g., `Every hour at minute 0`).
 
