@@ -586,6 +586,154 @@ mod tests {
         assert_eq!(result, "@random 14 *");
     }
 
+    fn random_jobs(n: usize, schedule: &str) -> Vec<(String, String, Option<String>)> {
+        (0..n)
+            .map(|i| (format!("job-{i}"), schedule.to_string(), None))
+            .collect()
+    }
+
+    /// Smallest weekly distance between any two jobs that share a fire day.
+    fn min_pairwise_gap(results: &[(String, String)]) -> u32 {
+        let slots: Vec<Vec<u32>> = results
+            .iter()
+            .map(|(_, s)| week_slots(s).expect("resolved schedule has a time of day"))
+            .collect();
+        let mut min = MINUTES_IN_WEEK;
+        for i in 0..slots.len() {
+            for j in (i + 1)..slots.len() {
+                min = min.min(min_distance(&slots[i], &slots[j]));
+            }
+        }
+        min
+    }
+
+    #[test]
+    fn dow_mask_parsing() {
+        assert_eq!(dow_mask("0 3 * * *"), ALL_DAYS);
+        assert_eq!(dow_mask("0 3 * * ?"), ALL_DAYS);
+        assert_eq!(dow_mask("0 3 * * 2"), 0b000_0100);
+        assert_eq!(dow_mask("0 3 * * 7"), 0b000_0001, "7 is Sunday");
+        assert_eq!(dow_mask("0 3 * * 1-5"), 0b011_1110);
+        assert_eq!(dow_mask("0 3 * * 0,6"), 0b100_0001);
+        assert_eq!(dow_mask("0 3 * * */2"), 0b101_0101);
+        assert_eq!(
+            dow_mask("0 3 * * 1/3"),
+            0b001_0010 | 0b000_0001,
+            "1,4,7(=0)"
+        );
+        // Unpinnable weekdays are conservatively treated as every day.
+        assert_eq!(dow_mask("0 3 * * MON"), ALL_DAYS);
+        assert_eq!(dow_mask("0 3 * * 5L"), ALL_DAYS);
+        assert_eq!(dow_mask("0 3 * * @random"), ALL_DAYS);
+        // A restricted day-of-month ORs with the dow, so any day can fire.
+        assert_eq!(dow_mask("0 3 15 * 2"), ALL_DAYS);
+    }
+
+    #[test]
+    fn per_day_load_spreads_random_dow() {
+        // Issue #76 shape: 73 jobs, each free to pick its day-of-week.
+        let raws = vec!["@random @random * * @random"; 73];
+        assert_eq!(max_jobs_per_day(&raws), 11); // ceil(73 / 7)
+        // Wildcard dow pins every job to every day.
+        let raws = vec!["@random @random * * *"; 10];
+        assert_eq!(max_jobs_per_day(&raws), 10);
+        // Fixed loads are filled up to before flexible jobs raise the peak.
+        let mut raws = vec!["@random @random * * 1"; 5];
+        raws.extend(vec!["@random @random * * @random"; 6]);
+        assert_eq!(max_jobs_per_day(&raws), 5);
+        // No single time of day => exempt from the gap and from the count.
+        assert_eq!(max_jobs_per_day(&["@random * * * *"]), 0);
+    }
+
+    #[test]
+    fn random_dow_jobs_fit_without_relaxing() {
+        // Issue #76: 73 x `@random @random * * @random` with a 90m gap used to
+        // be judged infeasible (73 * 90 > 1440) and still exhaust retries.
+        for seed in 0..20 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let jobs = random_jobs(73, "@random @random * * @random");
+            let results =
+                resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+            assert_eq!(results.len(), 73);
+            let gap = min_pairwise_gap(&results);
+            assert!(gap >= 90, "seed {seed}: jobs only {gap} minutes apart");
+        }
+    }
+
+    #[test]
+    fn same_dow_jobs_respect_gap() {
+        let mut rng = seeded_rng();
+        let jobs = random_jobs(8, "@random @random * * 3");
+        let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+        assert_eq!(results.len(), 8);
+        assert!(results.iter().all(|(_, s)| s.ends_with(" 3")));
+        assert!(min_pairwise_gap(&results) >= 90);
+    }
+
+    #[test]
+    fn different_dow_jobs_may_share_time_of_day() {
+        // Seven jobs pinned to the same hour on distinct weekdays: 60 slots per
+        // day can't hold seven 90m-apart jobs, but they never share a day.
+        let mut rng = seeded_rng();
+        let jobs: Vec<(String, String, Option<String>)> = (0..7)
+            .map(|d| (format!("job-{d}"), format!("@random 12 * * {d}"), None))
+            .collect();
+        let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+        assert_eq!(results.len(), 7);
+        assert!(min_pairwise_gap(&results) >= 90);
+    }
+
+    #[test]
+    fn wildcard_dow_conflicts_with_every_day() {
+        // A daily job at 12:00 must keep a Tuesday-only job 90m away too, so
+        // the Tuesday job's persisted 12:30 slot is rejected and re-rolled.
+        let mut rng = seeded_rng();
+        let jobs = vec![
+            (
+                "daily".to_string(),
+                "@random @random * * *".to_string(),
+                Some("0 12 * * *".to_string()),
+            ),
+            (
+                "tuesday".to_string(),
+                "@random @random * * 2".to_string(),
+                Some("30 12 * * 2".to_string()),
+            ),
+        ];
+        let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+        let daily = &results.iter().find(|(n, _)| n == "daily").unwrap().1;
+        let tuesday = &results.iter().find(|(n, _)| n == "tuesday").unwrap().1;
+        assert_eq!(daily, "0 12 * * *");
+        assert_ne!(tuesday, "30 12 * * 2", "existing slot violates the gap");
+        assert!(min_pairwise_gap(&results) >= 90);
+    }
+
+    #[test]
+    fn gap_wraps_across_midnight_between_days() {
+        // 23:50 Monday and 00:10 Tuesday are 20 minutes apart.
+        let mon = week_slots("50 23 * * 1").unwrap();
+        let tue = week_slots("10 0 * * 2").unwrap();
+        assert_eq!(min_distance(&mon, &tue), 20);
+        // Saturday 23:50 and Sunday 00:10 wrap around the week.
+        let sat = week_slots("50 23 * * 6").unwrap();
+        let sun = week_slots("10 0 * * 0").unwrap();
+        assert_eq!(min_distance(&sat, &sun), 20);
+    }
+
+    #[test]
+    fn no_time_of_day_is_resolved_without_gap() {
+        // Previously dropped from the results entirely (hour `*`).
+        let mut rng = seeded_rng();
+        let jobs = random_jobs(2, "@random * * * *");
+        let results = resolve_random_schedules_batch(&jobs, Duration::from_secs(5400), &mut rng);
+        assert_eq!(results.len(), 2);
+        assert!(
+            results
+                .iter()
+                .all(|(_, s)| validate_cron(s) && !is_random_schedule(s))
+        );
+    }
+
     /// Helper: circular distance on a ring of `modulus` size
     fn circular_distance_test(a: u32, b: u32, modulus: u32) -> u32 {
         let diff = a.abs_diff(b);
