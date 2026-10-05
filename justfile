@@ -53,18 +53,18 @@ clean:
     cargo clean
     rm -rf .sqlx/tmp assets/static/app.css bin/tailwindcss .playwright-mcp cronduit.dev.db cronduit.dev.db-wal cronduit.dev.db-shm
 
-# Uses v4.3.0. Config lives in assets/src/app.css via @import "tailwindcss",
+# Uses v4.3.3. Config lives in assets/src/app.css via @import "tailwindcss",
 # @source "../../templates", and @theme — no tailwind.config.js (v4 format).
 [group('build')]
 [doc('Download the standalone Tailwind binary (NO Node) and rebuild app.css')]
 tailwind:
     @mkdir -p assets/static bin
     @if [ ! -x ./bin/tailwindcss ]; then \
-        echo "Downloading standalone Tailwind binary (v4.3.0)..."; \
+        echo "Downloading standalone Tailwind binary (v4.3.3)..."; \
         OS=$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/macos/'); \
         ARCH=$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/'); \
         curl -sSLo ./bin/tailwindcss \
-            "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.0/tailwindcss-${OS}-${ARCH}"; \
+            "https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-${OS}-${ARCH}"; \
         chmod +x ./bin/tailwindcss; \
     fi
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --minify

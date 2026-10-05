@@ -62,7 +62,7 @@ jobs:
           echo "minor=$(echo $TAG | cut -d. -f1-2)" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
         id: changelog
         with:
           config: cliff.toml
@@ -176,7 +176,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=cronduit-release
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           body: ${{ steps.changelog.outputs.content }}
           draft: false
