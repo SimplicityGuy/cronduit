@@ -18,6 +18,11 @@ default:
 [doc('The ORDERED chain CI runs. Local run must predict CI exit code (FOUND-12)')]
 ci: fmt-check clippy openssl-check nextest schema-diff image
 
+[group('meta')]
+[doc('Fast local validation gate (hive validate_cmd): fmt, clippy, rustls guard, unit tests')]
+check: fmt-check clippy openssl-check test-unit
+
+
 # The actual image build and push happens in CI via docker/build-push-action@v6.
 [group('meta')]
 [doc('Tag and push a release. Usage: just release 1.0.0')]
