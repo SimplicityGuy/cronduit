@@ -93,7 +93,6 @@ impl SchedulerLoop {
         let mut jobs_vec: Vec<DbJob> = self.jobs.values().cloned().collect();
         let mut heap = fire::build_initial_heap(&jobs_vec, self.tz);
         let mut join_set: JoinSet<RunResult> = JoinSet::new();
-        let mut last_expected_wake: chrono::DateTime<Tz> = Utc::now().with_timezone(&self.tz);
 
         loop {
             let next_fire = heap.peek().map(|r| r.0.instant);
@@ -102,26 +101,28 @@ impl SchedulerLoop {
                 None => tokio::time::Instant::now() + Duration::from_secs(60),
             };
 
-            // Track expected wake for clock-jump detection (D-03).
-            let sleep_duration =
-                sleep_target.saturating_duration_since(tokio::time::Instant::now());
-            let expected_wake_dt = Utc::now().with_timezone(&self.tz)
-                + chrono::Duration::from_std(sleep_duration).unwrap_or(chrono::Duration::zero());
+            // Expected wake for THIS sleep, for clock-jump detection (D-03).
+            // cronduit-53x: never compare against a previous sleep's target,
+            // or the idle gap between fires is measured as clock drift.
+            let expected_wake_dt = fire::expected_wake(
+                sleep_target,
+                tokio::time::Instant::now(),
+                Utc::now().with_timezone(&self.tz),
+            );
 
             tokio::select! {
                 _ = tokio::time::sleep_until(sleep_target) => {
-                    let now_tz = Utc::now().with_timezone(&self.tz);
-
-                    // Check clock jump (SCHED-03).
-                    let missed = fire::check_clock_jump(
-                        last_expected_wake,
-                        now_tz,
-                        self.tz,
+                    // Check clock jump (SCHED-03), pop due fires, and requeue.
+                    let plan = fire::plan_wake(
+                        &mut heap,
                         &jobs_vec,
+                        expected_wake_dt,
+                        Utc::now().with_timezone(&self.tz),
+                        tokio::time::Instant::now(),
                     );
 
                     // Spawn catch-up runs for missed fires.
-                    for m in &missed {
+                    for m in &plan.missed {
                         if let Some(job) = self.jobs.get(&m.job_id) {
                             let child_cancel = self.cancel.child_token();
                             // Phase 21 FCTX-06 (D-02): catch-up uses the missed
@@ -149,11 +150,8 @@ impl SchedulerLoop {
                         }
                     }
 
-                    last_expected_wake = expected_wake_dt;
-
-                    // Fire due jobs.
-                    let due = fire::fire_due_jobs(&mut heap, tokio::time::Instant::now());
-                    for entry in &due {
+                    // Fire due jobs (already requeued by plan_wake).
+                    for entry in &plan.due {
                         if let Some(job) = self.jobs.get(&entry.job_id) {
                             let child_cancel = self.cancel.child_token();
                             // Phase 21 FCTX-06 (D-02): cron + @random tick paths
@@ -179,9 +177,6 @@ impl SchedulerLoop {
                                 fire_time = %entry.fire_time,
                                 "spawned run"
                             );
-
-                            // Requeue with next fire time.
-                            fire::requeue_job(&mut heap, job, &entry.fire_time, self.tz);
                         }
                     }
                 }

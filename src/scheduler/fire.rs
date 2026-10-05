@@ -5,7 +5,7 @@
 //! D-07: All schedule evaluation uses `[server].timezone` only.
 
 use crate::db::queries::DbJob;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SubsecRound, Utc};
 use chrono_tz::Tz;
 use croner::Cron;
 use std::cmp::{Ordering, Reverse};
@@ -56,17 +56,33 @@ pub struct MissedFire {
 /// For each job, parses the cron expression and finds the next occurrence
 /// after the current time in the configured timezone.
 pub fn build_initial_heap(jobs: &[DbJob], tz: Tz) -> BinaryHeap<Reverse<FireEntry>> {
+    build_initial_heap_at(
+        jobs,
+        Utc::now().with_timezone(&tz),
+        tokio::time::Instant::now(),
+    )
+}
+
+/// Build the fire queue relative to an explicit wall-clock / monotonic pair.
+///
+/// `now_tz` and `now_instant` must describe the same moment; each entry's
+/// `instant` is `now_instant` plus the wall-clock distance to its fire time.
+pub fn build_initial_heap_at(
+    jobs: &[DbJob],
+    now_tz: DateTime<Tz>,
+    now_instant: tokio::time::Instant,
+) -> BinaryHeap<Reverse<FireEntry>> {
     let mut heap = BinaryHeap::new();
-    let now_tz = Utc::now().with_timezone(&tz);
 
     for job in jobs {
         match Cron::from_str(&job.resolved_schedule) {
             Ok(cron) => match cron.find_next_occurrence(&now_tz, false) {
                 Ok(next) => {
-                    let until_fire = (next.with_timezone(&Utc) - Utc::now())
+                    let until_fire = next
+                        .signed_duration_since(now_tz)
                         .to_std()
                         .unwrap_or(Duration::ZERO);
-                    let instant = tokio::time::Instant::now() + until_fire;
+                    let instant = now_instant + until_fire;
 
                     tracing::debug!(
                         target: "cronduit.scheduler",
@@ -112,7 +128,26 @@ pub fn requeue_job(
     heap: &mut BinaryHeap<Reverse<FireEntry>>,
     job: &DbJob,
     after: &DateTime<Tz>,
-    _tz: Tz,
+    tz: Tz,
+) {
+    requeue_job_at(
+        heap,
+        job,
+        after,
+        Utc::now().with_timezone(&tz),
+        tokio::time::Instant::now(),
+    );
+}
+
+/// Requeue a job relative to an explicit wall-clock / monotonic pair.
+///
+/// See [`build_initial_heap_at`] for the meaning of `now_tz` / `now_instant`.
+pub fn requeue_job_at(
+    heap: &mut BinaryHeap<Reverse<FireEntry>>,
+    job: &DbJob,
+    after: &DateTime<Tz>,
+    now_tz: DateTime<Tz>,
+    now_instant: tokio::time::Instant,
 ) {
     let cron = match Cron::from_str(&job.resolved_schedule) {
         Ok(c) => c,
@@ -129,10 +164,11 @@ pub fn requeue_job(
 
     match cron.find_next_occurrence(after, false) {
         Ok(next) => {
-            let until_fire = (next.with_timezone(&Utc) - Utc::now())
+            let until_fire = next
+                .signed_duration_since(now_tz)
                 .to_std()
                 .unwrap_or(Duration::ZERO);
-            let instant = tokio::time::Instant::now() + until_fire;
+            let instant = now_instant + until_fire;
 
             heap.push(Reverse(FireEntry {
                 job_id: job.id,
@@ -172,6 +208,75 @@ pub fn fire_due_jobs(
 /// Maximum clock jump window to scan for missed fires (T-02-02: DoS mitigation).
 const MAX_CATCHUP_WINDOW_HOURS: i64 = 24;
 
+/// Wake drift beyond which a wake is treated as a wall-clock jump (D-03).
+const CLOCK_JUMP_THRESHOLD_MINUTES: i64 = 2;
+
+/// Wall-clock time at which a sleep until `sleep_target` is expected to end.
+///
+/// Must be computed for the sleep that is about to happen: comparing a wake
+/// against an earlier sleep's target would count the whole idle gap between
+/// fires as clock drift (cronduit-53x).
+pub fn expected_wake(
+    sleep_target: tokio::time::Instant,
+    now_instant: tokio::time::Instant,
+    now_tz: DateTime<Tz>,
+) -> DateTime<Tz> {
+    let sleep_duration = sleep_target.saturating_duration_since(now_instant);
+    now_tz + chrono::Duration::from_std(sleep_duration).unwrap_or(chrono::Duration::zero())
+}
+
+/// Whether `actual_now` overshoots `expected_wake` by more than the threshold.
+pub fn is_clock_jump(expected_wake: DateTime<Tz>, actual_now: DateTime<Tz>) -> bool {
+    actual_now.signed_duration_since(expected_wake)
+        > chrono::Duration::minutes(CLOCK_JUMP_THRESHOLD_MINUTES)
+}
+
+/// Everything the scheduler loop must spawn after the fire-queue sleep wakes.
+#[derive(Debug)]
+pub struct WakePlan {
+    /// Entries due at this wake (`trigger = "scheduled"`).
+    pub due: Vec<FireEntry>,
+    /// Fires skipped by a forward clock jump (`trigger = "catch-up"`).
+    pub missed: Vec<MissedFire>,
+}
+
+/// Resolve one fire-queue wake into scheduled and catch-up fires.
+///
+/// Pops the due entries, enumerates missed fires when the wake overshot
+/// `expected_wake` (the target of *this* sleep), drops catch-up fires for a
+/// slot that is already due so each slot runs at most once, then requeues.
+/// After a clock jump the remaining heap instants are stale (they were
+/// computed against the pre-jump wall clock), so the heap is rebuilt from
+/// `actual_now`; fires in between are covered by the catch-up runs.
+pub fn plan_wake(
+    heap: &mut BinaryHeap<Reverse<FireEntry>>,
+    jobs: &[DbJob],
+    expected_wake: DateTime<Tz>,
+    actual_now: DateTime<Tz>,
+    now_instant: tokio::time::Instant,
+) -> WakePlan {
+    let due = fire_due_jobs(heap, now_instant);
+
+    let mut missed = check_clock_jump(expected_wake, actual_now, actual_now.timezone(), jobs);
+    missed.retain(|m| {
+        !due.iter().any(|d| {
+            d.job_id == m.job_id && d.fire_time.trunc_subsecs(0) == m.missed_time.trunc_subsecs(0)
+        })
+    });
+
+    if is_clock_jump(expected_wake, actual_now) {
+        *heap = build_initial_heap_at(jobs, actual_now, now_instant);
+    } else {
+        for entry in &due {
+            if let Some(job) = jobs.iter().find(|j| j.id == entry.job_id) {
+                requeue_job_at(heap, job, &entry.fire_time, actual_now, now_instant);
+            }
+        }
+    }
+
+    WakePlan { due, missed }
+}
+
 /// Check for clock jumps and enumerate missed fires.
 ///
 /// D-03: If actual_now - expected_wake > 2 minutes, scan all jobs for
@@ -185,11 +290,10 @@ pub fn check_clock_jump(
     _tz: Tz,
     jobs: &[DbJob],
 ) -> Vec<MissedFire> {
-    let diff = actual_now.signed_duration_since(expected_wake);
-
-    if diff <= chrono::Duration::minutes(2) {
+    if !is_clock_jump(expected_wake, actual_now) {
         return Vec::new();
     }
+    let diff = actual_now.signed_duration_since(expected_wake);
 
     tracing::warn!(
         target: "cronduit.scheduler",
