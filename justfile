@@ -69,6 +69,15 @@ tailwind:
     fi
     ./bin/tailwindcss -i assets/src/app.css -o assets/static/app.css --minify
 
+# Called by `bh` when it provisions a worktree. Deliberately does NOT compile the
+# crate (many worktrees share one disk-constrained host). The only bootstrap needed
+# is the gitignored bin/tailwindcss; `tailwind` downloads it if missing (no-op
+# otherwise) and rebuilds the tracked app.css, whose minified output is
+# deterministic, so a clean checkout stays clean. rustup targets are skipped.
+[group('build')]
+[doc('Cheap, idempotent worktree bootstrap: fetch Tailwind binary + build CSS (no cargo)')]
+setup: tailwind
+
 # -------------------- docker images --------------------
 #
 # Docker image build. Three variants:
