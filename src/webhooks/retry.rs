@@ -617,14 +617,17 @@ mod tests {
             Duration::from_secs(30),
             Duration::from_secs(300),
         ];
-        // For sleep before attempt 2 (next_attempt=2), prev_slot=1, cap=360s.
-        // Retry-After: 350s exceeds the jitter floor of schedule[2]*0.8 = 240s
-        // and is within cap, so the result must be exactly 350s.
+        // For sleep before attempt 2 (next_attempt=2), cap = cap_for_slot(2) = 360s.
+        // The result is min(cap, max(jitter(300s), 350s)). jitter(300s) spans
+        // [240s, 360s), so it can fall below OR above the 350s Retry-After:
+        //   - jitter floor (240s) < 350s: Retry-After is honored as a floor, so d >= 350s.
+        //   - jitter ceiling (360s) > 350s: a high jitter draw wins, but the cap
+        //     bounds it, so d <= 360s.
+        // The exact value is therefore random in [350s, 360s]; assert the contract.
         let d = compute_sleep_delay(2, &schedule, Some(Duration::from_secs(350)));
-        assert_eq!(
-            d,
-            Duration::from_secs(350),
-            "Retry-After: 350 (within cap_for_slot(1)=360 and > jitter floor) must be honored exactly"
+        assert!(
+            d >= Duration::from_secs(350) && d <= Duration::from_secs(360),
+            "Retry-After: 350 must be honored as a floor and capped at cap_for_slot(2)=360s; got {d:?}"
         );
     }
 
