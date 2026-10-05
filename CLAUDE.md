@@ -73,7 +73,7 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 | **sqlx-cli** | Offline query prepare | Run `cargo sqlx prepare` pre-commit so CI doesn't need a live DB for `query!` macro checks. | HIGH |
 | **testcontainers** | 0.27.2 | Docker-backed integration tests | Spin up real `alpine`/`postgres` containers inside tests. Only run on the integration tier (feature gate + CI job). | HIGH |
 | **testcontainers-modules** | 0.15.0 | Prebuilt Postgres module | Saves writing `GenericImage` setup for the `sqlx`-Postgres test suite. | HIGH |
-| **tailwindcss (standalone binary)** | 3.4.x | CSS build | The **standalone** Tailwind binary (no Node) fits the single-binary philosophy. Wire it through a `build.rs` or a dedicated `make css` step that writes to `assets/static/app.css`. | HIGH |
+| **tailwindcss (standalone binary)** | 4.3.3 | CSS build | The **standalone** Tailwind binary (no Node) fits the single-binary philosophy. `just tailwind` downloads it and builds `assets/src/app.css` → `assets/static/app.css --minify`. Config is CSS-based (v4): `@import "tailwindcss"` / `@source` / `@theme` in `assets/src/app.css`, no `tailwind.config.js`. | HIGH |
 | **htmx** | 2.0.x (CDN or vendored) | Live updates | Vendor into `assets/vendor/htmx.min.js` and embed via `rust-embed`. Don't load from a CDN — breaks the single-binary promise. | HIGH |
 ## Critical Decision 1 — Templating: askama vs maud
 ### Why askama
@@ -248,7 +248,7 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 - Scrape `/metrics` from Prometheus; no code change.
 - Still a single instance (no HA in v1/v2).
 - `rust-embed` with `debug-embed = false` (default) reads from disk in debug builds → edit + refresh.
-- Run Tailwind CLI in `--watch` mode in a second terminal writing to `assets/static/app.css`.
+- Run `just dev-ui` (Tailwind standalone CLI in `--watch` mode) to rebuild `assets/static/app.css` from `assets/src/app.css` on edits.
 - Don't need `cargo-watch` for template-only changes thanks to disk reads.
 ## Confidence Assessment
 | Area | Confidence | Basis |
