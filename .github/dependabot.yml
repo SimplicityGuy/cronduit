@@ -1,0 +1,110 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+    assignees:
+      - "SimplicityGuy"
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      actions-version:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "rust"
+    assignees:
+      - "SimplicityGuy"
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      cargo-version:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/tests"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+    assignees:
+      - "SimplicityGuy"
+    groups:
+      docker-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      docker-version:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker-compose"
+    directories:
+      - "/examples"
+      - "/tests"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+    assignees:
+      - "SimplicityGuy"
+    groups:
+      docker-compose-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      docker-compose-version:
+        applies-to: version-updates
+        patterns:
+          - "*"
