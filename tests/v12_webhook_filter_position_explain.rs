@@ -180,7 +180,7 @@ async fn filter_position_query_uses_idx_job_runs_job_id_start_sqlite() {
     // representative `states` slice (operator-supplied; padded to 6 by
     // the production helper, but the EXPLAIN-time analysis is the same).
     let explain_sql = format!("EXPLAIN QUERY PLAN {FP_SQL_SQLITE}");
-    let rows = sqlx::query(&explain_sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(explain_sql.as_str()))
         .bind(job_id)
         .bind(&current_ts)
         .bind("failed")
@@ -298,7 +298,7 @@ async fn filter_position_query_uses_idx_job_runs_job_id_start_postgres() {
 
     let current_ts = (base + chrono::Duration::minutes(SEED_ROWS + 1000)).to_rfc3339();
     let explain_sql = format!("EXPLAIN (FORMAT JSON) {FP_SQL_POSTGRES}");
-    let row = sqlx::query(&explain_sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(explain_sql.as_str()))
         .bind(job_id)
         .bind(&current_ts)
         .bind("failed")

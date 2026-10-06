@@ -80,7 +80,7 @@ async fn introspect_sqlite(pool: &SqlitePool) -> Schema {
         let tbl: String = row.get(0);
 
         // Columns
-        let col_rows = sqlx::query(&format!("PRAGMA table_info('{tbl}')"))
+        let col_rows = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info('{tbl}')")))
             .fetch_all(pool)
             .await
             .unwrap();
@@ -102,7 +102,7 @@ async fn introspect_sqlite(pool: &SqlitePool) -> Schema {
         schema.tables.insert(tbl.clone(), col_set);
 
         // Indexes (skip autoindex entries)
-        let idx_rows = sqlx::query(&format!("PRAGMA index_list('{tbl}')"))
+        let idx_rows = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA index_list('{tbl}')")))
             .fetch_all(pool)
             .await
             .unwrap();

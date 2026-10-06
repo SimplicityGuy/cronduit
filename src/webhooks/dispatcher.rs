@@ -236,7 +236,7 @@ impl WebhookDispatcher for HttpDispatcher {
             .map_err(|e| WebhookError::SerializationFailed(format!("payload to_vec: {e}")))?;
 
         // 8. Build headers — Standard Webhooks v1 spec (D-09, D-11).
-        let webhook_id = ulid::Ulid::new().to_string();
+        let webhook_id = ulid::Ulid::generate().to_string();
         let webhook_ts = chrono::Utc::now().timestamp(); // 10-digit Unix seconds (Pitfall D)
 
         let mut req = self
@@ -396,7 +396,7 @@ mod tests {
             rng.fill_bytes(&mut body);
             let sig = sign_v1(
                 &SecretString::from("k"),
-                &ulid::Ulid::new().to_string(),
+                &ulid::Ulid::generate().to_string(),
                 chrono::Utc::now().timestamp(),
                 &body,
             );
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn webhook_id_is_26char_ulid() {
-        let id = ulid::Ulid::new().to_string();
+        let id = ulid::Ulid::generate().to_string();
         assert_eq!(id.len(), 26, "ULID string form is 26 chars");
         // Crockford base32 — no I, L, O, U.
         for c in id.chars() {

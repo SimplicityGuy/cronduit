@@ -164,7 +164,8 @@ pub async fn disable_missing_jobs(pool: &DbPool, active_names: &[String]) -> any
                 "UPDATE jobs SET enabled = 0, enabled_override = NULL WHERE enabled = 1 AND name NOT IN ({})",
                 placeholders.join(", ")
             );
-            let mut query = sqlx::query(&sql);
+            // SAFETY (AssertSqlSafe): the only interpolated text is `?N` placeholders built from integer indices; values go through bind().
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
             for name in active_names {
                 query = query.bind(name);
             }
@@ -217,7 +218,8 @@ pub async fn bulk_set_override(
                 "UPDATE jobs SET enabled_override = ?1 WHERE id IN ({})",
                 placeholders.join(", ")
             );
-            let mut q = sqlx::query(&sql).bind(new_override);
+            // SAFETY (AssertSqlSafe): the only interpolated text is `?N` placeholders built from integer indices; values go through bind().
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(new_override);
             for id in ids {
                 q = q.bind(id);
             }
@@ -927,7 +929,8 @@ pub async fn get_dashboard_jobs(
     match pool.reader() {
         PoolRef::Sqlite(p) => {
             let rows = {
-                let mut q = sqlx::query(&base_sql);
+                // SAFETY (AssertSqlSafe): order_clause is a whitelist match of constants, tag predicates are `?N` placeholders from integer indices, untagged_clause is a constant; user input only flows through bind().
+                let mut q = sqlx::query(sqlx::AssertSqlSafe(base_sql));
                 if has_filter {
                     let pattern = format!("%{}%", filter.unwrap().to_lowercase());
                     q = q.bind(pattern);
@@ -997,7 +1000,8 @@ pub async fn get_dashboard_jobs(
                 )
             };
             let rows = {
-                let mut q = sqlx::query(&pg_sql);
+                // SAFETY (AssertSqlSafe): same fragments as the SQLite path (whitelisted ORDER BY, `$N` placeholders from integer indices, constants); user input only flows through bind().
+                let mut q = sqlx::query(sqlx::AssertSqlSafe(pg_sql));
                 if has_filter {
                     let pattern = format!("%{}%", filter.unwrap().to_lowercase());
                     q = q.bind(pattern);
