@@ -132,7 +132,7 @@ async fn explain_uses_index_sqlite() {
     let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
     let window_start = "2020-01-01T00:00:00Z";
 
-    let rows = sqlx::query(&explain_sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(explain_sql.as_str()))
         .bind(window_start)
         .fetch_all(pool_ref)
         .await
@@ -261,7 +261,7 @@ async fn explain_uses_index_postgres() {
     // selectivity given a btree index on the filtered column.
     let selective_window = (base + chrono::Duration::minutes(9_000)).to_rfc3339();
 
-    let row = sqlx::query(&explain_sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(explain_sql.as_str()))
         .bind(&selective_window)
         .fetch_one(pool_ref)
         .await

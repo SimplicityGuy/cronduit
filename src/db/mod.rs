@@ -275,7 +275,7 @@ impl DbPool {
                         continue;
                     }
                     // Execute the migration SQL.
-                    sqlx::query(&migration.sql).execute(write).await?;
+                    sqlx::query(migration.sql.clone()).execute(write).await?;
                     // Record the bookkeeping row so sqlx's second call in
                     // `migrate()` picks up only the remaining files (file 3).
                     sqlx::query(
@@ -318,7 +318,7 @@ impl DbPool {
                     if applied > 0 {
                         continue;
                     }
-                    sqlx::query(&migration.sql).execute(pool).await?;
+                    sqlx::query(migration.sql.clone()).execute(pool).await?;
                     sqlx::query(
                         "INSERT INTO _sqlx_migrations \
                          ( version, description, success, checksum, execution_time ) \

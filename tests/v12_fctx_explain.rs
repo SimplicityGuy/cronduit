@@ -176,7 +176,7 @@ async fn explain_uses_index_sqlite() {
 
     // Run EXPLAIN QUERY PLAN against the production CTE SQL.
     let explain_sql = format!("EXPLAIN QUERY PLAN {FCTX_SQL_SQLITE}");
-    let rows = sqlx::query(&explain_sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(explain_sql.as_str()))
         .bind(job_id)
         .fetch_all(pool_ref)
         .await
@@ -302,7 +302,7 @@ async fn explain_uses_index_postgres() {
 
     // Run EXPLAIN (FORMAT JSON) against the production CTE SQL.
     let explain_sql = format!("EXPLAIN (FORMAT JSON) {FCTX_SQL_POSTGRES}");
-    let row = sqlx::query(&explain_sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(explain_sql.as_str()))
         .bind(job_id)
         .fetch_one(pool_ref)
         .await
@@ -459,7 +459,7 @@ async fn explain_uses_index_sqlite_post_scheduled_for() {
     tx.commit().await.expect("commit");
 
     let explain_sql = format!("EXPLAIN QUERY PLAN {FCTX_SQL_SQLITE}");
-    let rows = sqlx::query(&explain_sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(explain_sql.as_str()))
         .bind(job_id)
         .fetch_all(pool_ref)
         .await
@@ -581,7 +581,7 @@ async fn explain_uses_index_postgres_post_scheduled_for() {
         .expect("analyze jobs");
 
     let explain_sql = format!("EXPLAIN (FORMAT JSON) {FCTX_SQL_POSTGRES}");
-    let row = sqlx::query(&explain_sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(explain_sql.as_str()))
         .bind(job_id)
         .fetch_one(pool_ref)
         .await
