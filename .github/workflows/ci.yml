@@ -26,12 +26,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       - run: just fmt-check
       - run: just clippy
       # `just openssl-check` depends on `just install-targets` and loops over
@@ -74,12 +74,12 @@ jobs:
     env:
       SQLX_OFFLINE: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.arch }}
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest,cargo-zigbuild
@@ -115,10 +115,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: extractions/setup-just@v2
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: extractions/setup-just@v4
 
       # PR path: build both platforms, load no push
       - name: just image (PR -- build only)
@@ -150,7 +150,7 @@ jobs:
           - docker-compose.yml
           - docker-compose.secure.yml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install jq
         run: |
@@ -161,10 +161,10 @@ jobs:
           jq --version
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build local cronduit:ci image from PR checkout
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -393,18 +393,18 @@ jobs:
       matrix:
         lang: [python, go, node]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: matrix.lang == 'python'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.x'
       - if: matrix.lang == 'go'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: 'stable'
       - if: matrix.lang == 'node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
       - run: just uat-webhook-receiver-${{ matrix.lang }}-verify-fixture
