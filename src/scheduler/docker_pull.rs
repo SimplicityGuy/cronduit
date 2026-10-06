@@ -170,23 +170,44 @@ pub async fn image_exists_locally(
 /// Returns `Ok(Some(digest))` if the digest was found (locally or after pull),
 /// `Ok(None)` if available but digest could not be determined.
 pub async fn ensure_image(docker: &Docker, image: &str) -> Result<Option<String>, PullError> {
-    // Check local first.
-    match image_exists_locally(docker, image).await {
-        Ok(Some(digest)) => {
-            tracing::debug!(
-                target: "cronduit.docker.pull",
-                image,
-                digest = %digest,
-                "image already available locally"
-            );
-            return Ok(Some(digest));
-        }
-        Ok(None) => {
-            // Not local -- pull it.
-        }
-        Err(e) => {
-            // Docker error inspecting -- treat as transient.
-            return Err(PullError::Transient(e.to_string()));
+    // Check local first. The Docker endpoint may not be accepting connections
+    // yet (e.g. cronduit started alongside a docker-socket-proxy sidecar), so
+    // retry transient inspect errors with the same backoff as image pulls.
+    let backoffs: [u64; 3] = [1, 2, 4];
+    let max_attempts: u32 = 4;
+    let mut attempt = 1;
+    loop {
+        match image_exists_locally(docker, image).await {
+            Ok(Some(digest)) => {
+                tracing::debug!(
+                    target: "cronduit.docker.pull",
+                    image,
+                    digest = %digest,
+                    "image already available locally"
+                );
+                return Ok(Some(digest));
+            }
+            Ok(None) => {
+                // Not local -- pull it.
+                break;
+            }
+            Err(e) => {
+                if attempt >= max_attempts {
+                    return Err(PullError::Transient(e.to_string()));
+                }
+                let backoff_secs = backoffs.get((attempt - 1) as usize).copied().unwrap_or(4);
+                tracing::warn!(
+                    target: "cronduit.docker.pull",
+                    image,
+                    attempt,
+                    max_attempts,
+                    reason = %e,
+                    backoff_secs,
+                    "image inspect failed, retrying"
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                attempt += 1;
+            }
         }
     }
 
