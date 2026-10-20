@@ -14,7 +14,7 @@ This file does not duplicate setup instructions. Start here:
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the scheduler, executor, persistence, and web layers fit together.
 - **[docs/SPEC.md](docs/SPEC.md)** — the behavioral specification: what Cronduit must do and why.
 
-Toolchain: stable Rust, edition 2024, `rust-version = 1.94.1` (see `Cargo.toml`). The repo uses [`just`](https://github.com/casey/just) as the single source of truth for every build, lint, test, and DB task — `just --list` shows the full menu. CI invokes the same `just` recipes you run locally, so `just ci` predicts the CI exit code.
+Toolchain: stable Rust, edition 2024, `rust-version = 1.99.1` (see `Cargo.toml`). The repo uses [`just`](https://github.com/casey/just) as the single source of truth for every build, lint, test, and DB task — `just --list` shows the full menu. CI invokes the same `just` recipes you run locally, so `just ci` predicts the CI exit code.
 
 ## Contribution workflow
 

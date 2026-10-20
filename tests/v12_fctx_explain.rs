@@ -43,11 +43,14 @@
 //! config_hash)` is explicit — Phase 11 DB-10 made `job_run_number`
 //! NOT NULL so the column list is load-bearing.
 
+#[path = "support/postgres.rs"]
+mod postgres;
+
+use crate::postgres::Postgres;
 use cronduit::db::queries::{self, PoolRef};
 use cronduit::db::{DbBackend, DbPool};
 use sqlx::Row;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers::runners::AsyncRunner;
 
 // ---------------------------------------------------------------------------
 // Locked CTE SQL — verbatim from CONTEXT.md D-05.

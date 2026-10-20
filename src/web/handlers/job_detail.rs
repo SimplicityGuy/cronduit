@@ -541,7 +541,7 @@ fn build_exit_histogram_view(card: &exit_buckets::HistogramCard) -> ExitHistogra
         })
         .collect();
     // Stable sort preserves display-order tie-break.
-    nonzero.sort_by(|a, b| b.1.cmp(&a.1));
+    nonzero.sort_by_key(|a| std::cmp::Reverse(a.1));
     let top_segments: Vec<String> = nonzero
         .iter()
         .take(4)

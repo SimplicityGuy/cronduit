@@ -1,9 +1,12 @@
 //! DB-02 / DB-03 smoke test: DbPool handles postgres:// URLs and migrations
 //! run idempotently against a real Postgres via testcontainers.
 
+#[path = "support/postgres.rs"]
+mod postgres;
+
+use crate::postgres::Postgres;
 use cronduit::db::{DbBackend, DbPool};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers::runners::AsyncRunner;
 
 #[tokio::test]
 async fn db_pool_connects_and_migrates_against_postgres() {

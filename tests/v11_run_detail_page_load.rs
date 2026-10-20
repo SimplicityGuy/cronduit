@@ -121,7 +121,7 @@ async fn renders_static_backfill() {
         body.contains("log-lines") || body.contains("Log Output"),
         "rendered page must include the log viewer scaffold (is_running={}); body tail: {}",
         body.contains("Waiting for output"),
-        &body.chars().rev().take(300).collect::<String>()
+        body.chars().rev().take(300).collect::<String>()
     );
 
     // Additional guarantee: the first persisted line is observable somewhere
@@ -264,13 +264,13 @@ async fn header_renders_runnum_with_id_suffix() {
     assert!(
         body.contains("Run #1"),
         "header primary must read 'Run #1' (job_run_number); first 400 chars: {}",
-        &body.chars().take(400).collect::<String>()
+        body.chars().take(400).collect::<String>()
     );
     let id_suffix = format!("(id {})", run_id);
     assert!(
         body.contains(&id_suffix),
         "header muted suffix must read '(id {})'; first 400 chars: {}",
         run_id,
-        &body.chars().take(400).collect::<String>()
+        body.chars().take(400).collect::<String>()
     );
 }

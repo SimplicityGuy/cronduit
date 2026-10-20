@@ -18,11 +18,14 @@
 //! Harness pattern is verbatim from `tests/dashboard_jobs_pg.rs` (the
 //! testcontainers Postgres template established by quick task 260421-nn3).
 
+#[path = "support/postgres.rs"]
+mod postgres;
+
+use crate::postgres::Postgres;
 use cronduit::db::queries;
 use cronduit::db::{DbBackend, DbPool};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::ContainerAsync;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers::ContainerAsync;
+use testcontainers::runners::AsyncRunner;
 
 /// Acquire an ephemeral Postgres pool with all migrations applied.
 /// The returned `ContainerAsync` MUST be held alive until the test finishes —

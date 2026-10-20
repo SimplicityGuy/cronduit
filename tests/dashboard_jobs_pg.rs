@@ -7,10 +7,13 @@
 //! Row correctness / ORDER BY / EXPLAIN semantics are out of scope — the
 //! bug is a SQL-syntax-level error; `Ok(_)` trivially proves the fix.
 
+#[path = "support/postgres.rs"]
+mod postgres;
+
+use crate::postgres::Postgres;
 use cronduit::db::queries;
 use cronduit::db::{DbBackend, DbPool};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers::runners::AsyncRunner;
 
 #[tokio::test]
 async fn get_dashboard_jobs_postgres_smoke() {

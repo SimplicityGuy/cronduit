@@ -12,6 +12,10 @@
 
 mod common;
 
+#[cfg(feature = "integration")]
+#[path = "support/postgres.rs"]
+mod postgres;
+
 use std::io;
 use std::sync::{Arc, Mutex};
 
@@ -482,8 +486,8 @@ async fn migration_03_postgres_not_null() {
     // Integration-gated: spin up a Postgres testcontainer, run DbPool::migrate,
     // and assert that a NULL-job_run_number insert is rejected. Follows the
     // testcontainer pattern used in tests/schema_parity.rs.
+    use crate::postgres::Postgres as PgImage;
     use testcontainers::runners::AsyncRunner;
-    use testcontainers_modules::postgres::Postgres as PgImage;
 
     let node = PgImage::default()
         .start()

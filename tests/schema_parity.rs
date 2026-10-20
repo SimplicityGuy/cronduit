@@ -15,12 +15,15 @@
 //! `migrations/postgres/` must simply stay in lock-step. See Plan 11-02
 //! and Plan 11-04 for the per-backend migration pair.
 
+#[path = "support/postgres.rs"]
+mod postgres;
+
+use crate::postgres::Postgres;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{PgPool, Row, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers::runners::AsyncRunner;
 
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 struct Column {

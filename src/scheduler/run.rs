@@ -587,7 +587,7 @@ async fn log_writer_task(
                 // preserve insert order inside a single tx, so zipping the
                 // returned `Vec<i64>` with `batch` in input order assigns
                 // each line its own persisted id.
-                for (line, id) in batch.into_iter().zip(ids.into_iter()) {
+                for (line, id) in batch.into_iter().zip(ids) {
                     let _ = broadcast_tx.send(LogLine {
                         id: Some(id),
                         ..line

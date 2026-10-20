@@ -2,7 +2,7 @@
 name = "cronduit"
 version = "1.2.2"
 edition = "2024"
-rust-version = "1.94.1"
+rust-version = "1.99.1"
 description = "Self-hosted Docker-native cron scheduler with a web UI"
 license = "MIT"
 repository = "https://github.com/SimplicityGuy/cronduit"
@@ -18,8 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.52", features = ["full"] }
-tokio-util = { version = "0.7.18", features = ["rt"] }
+tokio = { version = "1.54", features = ["full"] }
+tokio-util = { version = "0.7.20", features = ["rt"] }
 
 # HTTP / web placeholder
 axum = { version = "0.8.9", default-features = false, features = ["tokio", "http1", "http2", "json", "macros", "query", "form"] }
@@ -40,9 +40,9 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 ] }
 
 # Config parsing
-serde = { version = "1.0.228", features = ["derive"] }
-toml = "1.1.2"
-humantime = "2.3.0"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
+humantime = "2.4.0"
 humantime-serde = "1.1.1"
 
 # Cron
@@ -62,8 +62,8 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 ] }
 
 # Errors
-anyhow = "1.0.102"
-thiserror = "2.0.18"
+anyhow = "1.0.104"
+thiserror = "2.0.21"
 
 # Async trait macro — required for `dyn WebhookDispatcher` (Phase 15 D-01).
 # Already transitive via testcontainers + axum-htmx (Cargo.lock:237);
@@ -74,11 +74,11 @@ async-trait = "0.1"
 secrecy = { version = "0.10.3", features = ["serde"] }
 
 # Time
-chrono = { version = "0.4.44", default-features = false, features = ["std", "serde", "clock"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std", "serde", "clock"] }
 chrono-tz = "0.10.4"
 
 # Docker API client (DOCKER-01)
-bollard = "0.20"
+bollard = "0.21"
 futures-util = "0.3"
 
 # Process execution
@@ -111,7 +111,7 @@ askama = "0.16"
 askama_web = { version = "0.16", features = ["axum-0.8"] }
 
 # Embedded assets (UI-01, D-17)
-rust-embed = "8.11"
+rust-embed = "8.13"
 
 # HTMX helpers (D-10)
 axum-htmx = { version = "0.8", features = ["serde"] }
@@ -152,15 +152,14 @@ notify = "8.2"
 integration = []
 
 [dev-dependencies]
-testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+testcontainers = "0.28.0"
 assert_cmd = "2"
 predicates = "3"
 tower = { version = "0.5", features = ["util"] }
 # Phase 10 plan 10-05: T-V11-STOP-04 uses tokio::time::pause + advance for
 # deterministic race tests. The `test-util` feature is NOT included in tokio's
 # `full` feature set, so enable it here for dev builds only.
-tokio = { version = "1.51", features = ["full", "test-util"] }
+tokio = { version = "1.54", features = ["full", "test-util"] }
 
 # Phase 18 — wiremock-based integration tests for HttpDispatcher (RESEARCH Validation Architecture).
 wiremock = "0.6"

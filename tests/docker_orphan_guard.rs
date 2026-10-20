@@ -25,6 +25,10 @@
 //! tests behind a cfg override), the Postgres branch of `mark_run_orphaned`
 //! gains the same regression lock as the SQLite branch.
 
+#[cfg(feature = "integration")]
+#[path = "support/postgres.rs"]
+mod postgres;
+
 use chrono::Utc;
 use cronduit::db::DbPool;
 use cronduit::db::queries::{self, PoolRef};
@@ -285,9 +289,9 @@ async fn mark_orphan_running_to_error() {
 #[cfg(feature = "integration")]
 mod postgres_tests {
     use super::*;
-    use testcontainers_modules::postgres::Postgres;
-    use testcontainers_modules::testcontainers::ContainerAsync;
-    use testcontainers_modules::testcontainers::runners::AsyncRunner;
+    use crate::postgres::Postgres;
+    use testcontainers::ContainerAsync;
+    use testcontainers::runners::AsyncRunner;
 
     async fn setup_postgres_pool() -> (DbPool, ContainerAsync<Postgres>) {
         let container = Postgres::default()

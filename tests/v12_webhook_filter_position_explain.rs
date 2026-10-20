@@ -33,11 +33,14 @@
 //! before EXPLAIN to force the planner to consult real row counts
 //! (RESEARCH Pitfall 4 mitigation).
 
+#[path = "support/postgres.rs"]
+mod postgres;
+
+use crate::postgres::Postgres;
 use cronduit::db::queries::{self, PoolRef};
 use cronduit::db::{DbBackend, DbPool};
 use sqlx::Row;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers::runners::AsyncRunner;
 
 // ---------------------------------------------------------------------------
 // Locked filter-position CTE SQL — verbatim from

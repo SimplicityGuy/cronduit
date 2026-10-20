@@ -304,7 +304,7 @@ async fn data_max_id_rendered() {
         body.contains(&needle),
         "data-max-id must equal {} (last inserted log id); first 800 chars: {}",
         max,
-        &body.chars().take(800).collect::<String>()
+        body.chars().take(800).collect::<String>()
     );
 }
 
@@ -342,7 +342,7 @@ async fn run_history_renders_run_number_and_title_attr() {
     assert!(
         body.contains("title=\"global id:"),
         "row-level global id tooltip must be present; body tail: {}",
-        &body.chars().rev().take(400).collect::<String>()
+        body.chars().rev().take(400).collect::<String>()
     );
     // Each inserted global id should appear on its row's tooltip.
     for id in &run_ids {

@@ -11,7 +11,7 @@ For runtime configuration see [docs/CONFIG.md](CONFIG.md); for a Docker-first wa
 
 | Tool | Version | Why |
 |------|---------|-----|
-| Rust toolchain | `1.94.1` (pinned) | Edition 2024. Pinned by `rust-toolchain.toml`; `rustup` auto-installs it on first `cargo` invocation. Bundles `rustfmt` + `clippy`. |
+| Rust toolchain | `1.99.1` (pinned) | Edition 2024. Pinned by `rust-toolchain.toml`; `rustup` auto-installs it on first `cargo` invocation. Bundles `rustfmt` + `clippy`. |
 | `just` | 1.x | Task runner. Every workflow in this doc is a `just` recipe. Install via `cargo install just`, Homebrew, or your package manager. |
 | `cargo-nextest` | latest | CI test runner (`just nextest`). Install via `cargo install cargo-nextest` or `taiki-e/install-action` (CI). |
 | Docker | recent | Required for integration tests, image builds (`just image*`), and the compose stack. The scheduler also talks to the host Docker socket at runtime. |
@@ -22,10 +22,10 @@ The Rust version is pinned in two places that must stay aligned:
 
 ```toml
 # rust-toolchain.toml
-channel = "1.94.1"
+channel = "1.99.1"
 
 # Cargo.toml
-rust-version = "1.94.1"
+rust-version = "1.99.1"
 ```
 
 Cross-compile targets `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` are declared in `rust-toolchain.toml` and installed on demand by `just install-targets` (a dependency of `just openssl-check`). Never run `rustup target add` by hand — use the recipe so local and CI stay identical.

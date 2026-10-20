@@ -12,7 +12,7 @@
 # trixie, so no install-line changes are needed.
 
 # ---- builder ----
-FROM --platform=$BUILDPLATFORM rust:1.99.0-slim-trixie AS builder
+FROM --platform=$BUILDPLATFORM rust:1.99.1-slim-trixie AS builder
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
@@ -32,7 +32,7 @@ RUN set -eux; \
     tar -xJf /tmp/zig.tar.xz -C /opt; \
     rm /tmp/zig.tar.xz; \
     ln -s /opt/zig-linux-${ARCH}-${ZIG_VERSION}/zig /usr/local/bin/zig; \
-    cargo install --locked cargo-zigbuild --version ^0.22
+    cargo install --locked cargo-zigbuild --version ^0.23
 
 RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
