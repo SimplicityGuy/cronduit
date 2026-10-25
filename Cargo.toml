@@ -107,7 +107,7 @@ regex = "1"
 once_cell = "1"
 
 # Templates (UI-02)
-askama = "0.16"
+askama = { version = "0.16", default-features = false, features = ["derive", "std", "urlencode"] }
 askama_web = { version = "0.16", features = ["axum-0.8"] }
 
 # Embedded assets (UI-01, D-17)
