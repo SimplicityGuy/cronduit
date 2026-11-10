@@ -1,4 +1,7 @@
-<!-- GSD:project-start source:PROJECT.md -->
+# Cronduit agent guidance
+
+**Workflow: Beadhive only.** Follow the Beadhive workflow section below before changing files.
+
 ## Project
 
 **Cronduit**
@@ -21,9 +24,7 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 - **Design fidelity**: Web UI must match `design/DESIGN_SYSTEM.md` (Cronduit terminal-green brand), not ship in default Tailwind look.
 - **Documentation**: All diagrams in any project artifact (planning docs, README, PR descriptions, code comments) must be authored as mermaid code blocks. No ASCII art diagrams.
 - **Workflow**: All changes land via pull request on a feature branch. No direct commits to `main`.
-<!-- GSD:project-end -->
 
-<!-- GSD:stack-start source:research/STACK.md -->
 ## Technology Stack
 
 ## TL;DR (decisions the roadmap can lock)
@@ -71,8 +72,7 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 | **cargo-nextest** | Faster test runner | 2-3x faster than `cargo test`, better output. Install on CI via `taiki-e/install-action`. | HIGH |
 | **cargo-deny** | Supply-chain gate | License + advisory + duplicate checks. Matters for an OSS release. | MEDIUM |
 | **sqlx-cli** | Offline query prepare | Run `cargo sqlx prepare` pre-commit so CI doesn't need a live DB for `query!` macro checks. | HIGH |
-| **testcontainers** | 0.27.2 | Docker-backed integration tests | Spin up real `alpine`/`postgres` containers inside tests. Only run on the integration tier (feature gate + CI job). | HIGH |
-| **testcontainers-modules** | 0.15.0 | Prebuilt Postgres module | Saves writing `GenericImage` setup for the `sqlx`-Postgres test suite. | HIGH |
+| **Bollard test fixtures** | 0.20 | Docker-backed integration tests | Shared Rust helpers in `tests/support/` own isolated Alpine/Postgres containers, readiness, and cleanup. | HIGH |
 | **tailwindcss (standalone binary)** | 4.3.3 | CSS build | The **standalone** Tailwind binary (no Node) fits the single-binary philosophy. `just tailwind` downloads it and builds `assets/src/app.css` → `assets/static/app.css --minify`. Config is CSS-based (v4): `@import "tailwindcss"` / `@source` / `@theme` in `assets/src/app.css`, no `tailwind.config.js`. | HIGH |
 | **htmx** | 2.0.x (CDN or vendored) | Live updates | Vendor into `assets/vendor/htmx.min.js` and embed via `rust-embed`. Don't load from a CDN — breaks the single-binary promise. | HIGH |
 ## Critical Decision 1 — Templating: askama vs maud
@@ -154,8 +154,8 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 ## Test Stack
 ### Layer 1 — Unit tests (`cargo test`)
 ### Layer 2 — Integration tests (`cargo test --features integration`)
-- **Postgres tests:** `testcontainers-modules::postgres::Postgres` → run full schema migrations → `sqlx::query!` tests against real DB. SQLite tests use an in-memory DB, no container needed.
-- **Bollard tests:** use `testcontainers-rs` to confirm we can spawn/inspect/remove a container through the exact code path the scheduler uses. Test `network_mode = "none"` and `network_mode = "host"` — the critical ones for the feature promise.
+- **Postgres tests:** shared Bollard Postgres fixtures → run full schema migrations → `sqlx::query!` tests against real DB. SQLite tests use an in-memory DB, no container needed.
+- **Bollard tests:** use the shared Bollard fixtures to confirm we can spawn/inspect/remove a container through the exact code path the scheduler uses. Test `network_mode = "none"` and `network_mode = "host"` — the critical ones for the feature promise.
 - **`container:<name>` test:** start a sidecar container (e.g., a plain `alpine sleep`), then spawn a second container with `network_mode = "container:<name>"`, confirm it joins the namespace. This is the marquee feature — we *must* test it.
 ### Layer 3 — `cargo nextest`
 - uses: taiki-e/install-action@nextest
@@ -237,7 +237,7 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 | `bollard 0.20.x` | `tokio 1.x`, `hyper 1.x` | 0.20 moved to hyper 1; don't mix with old middleware expecting hyper 0.14. |
 | `askama 0.15` | `askama_web 0.15` | **Must** match major.minor. `askama_axum` is defunct. |
 | `rust-embed 8.x` | Rust 1.75+ | `debug-embed` feature toggles disk reads in debug builds. |
-| `testcontainers 0.27` | `testcontainers-modules 0.15` | These pairs track each other; always bump together. |
+| Bollard test fixtures | Existing `bollard 0.20.x` | Keep resource ownership, endpoint handling, readiness, and failure cleanup in `tests/support/`. |
 | `metrics 0.24` | `metrics-exporter-prometheus 0.18` | The exporter lags the facade by a version; always verify. |
 | `croner 3.x` | `chrono 0.4.x` (optional feature) | Enable the `chrono` integration feature for `DateTime`-aware `next_after`. |
 ## Stack Patterns by Variant
@@ -270,44 +270,27 @@ Cronduit is a self-hosted cron job scheduler with a web UI, built for Docker-nat
 - **`askama_axum` crate description** on crates.io — verbatim: *"Integration crates like `askama_axum` were removed from askama 0.13."*
 - **`serde_yaml` crate description** on crates.io — version `0.9.34+deprecated`.
 - **Cronduit SPEC.md** and **PROJECT.md** — context for locked decisions (Rust, bollard, sqlx, Tailwind, SSR), soft-locked TOML, the `@random` + `random_min_gap` requirement, the `container:<name>` network mode promise that drives the bollard + integration-test decisions.
-<!-- GSD:stack-end -->
 
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
 
 Conventions not yet established. Will populate as patterns emerge during development.
-<!-- GSD:conventions-end -->
 
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
 ## Architecture
 
 Architecture not yet mapped. Follow existing patterns found in the codebase.
-<!-- GSD:architecture-end -->
 
-<!-- GSD:skills-start source:skills/ -->
 ## Project Skills
 
 No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, or `.github/skills/` with a `SKILL.md` index file.
-<!-- GSD:skills-end -->
 
-<!-- GSD:workflow-start source:GSD defaults -->
-## GSD Workflow Enforcement
+## Beadhive workflow
 
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
+This repository uses Beadhive only. Do not invoke GSD commands or require GSD planning artifacts before editing. Historical `.planning/` documents are reference material, not the current workflow.
 
-Use these entry points:
-- `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd-debug` for investigation and bug fixing
-- `/gsd-execute-phase` for planned phase work
-
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
-
-
-
-<!-- GSD:profile-start -->
-## Developer Profile
-
-> Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
+- Read the applicable Beadhive role skill and `bh:work`. Track implementation in a bead, read it with `bh work brief`, and start through `bh work claim`; work only in the claimed worktree.
+- Use `bh work show` / `bh work refine` for reviewable history, `bh work check` for the configured validation gate, and `bh work submit` for handoff. Submission is not approval or completion.
+- Follow the reviewer and merger roles for approval and integration. All changes land through a pull request on a feature branch; never commit or push directly to `main`.
+- `just check` is the fast hive gate. Dependency/security changes also require `just deny`, `just nextest`, `just schema-diff`, and the relevant Docker-backed integration checks. Preserve the rustls/OpenSSL guard and security gates; do not suppress findings to make CI green.
+- Docker tests must use isolated, explicitly owned containers and clean them up on failure. Never stop or remove unrelated containers or use a live application database as a test target.
+- Honor announced Beads API maintenance holds. Do not issue new `bd`/`bh` calls or auto-restart paused `bd serve` processes until the maintenance owner announces restoration. Never stop shared Dolt as part of repository work.
+- Follow the global per-harness model routing instructions: classify beads by complexity, read the harness routing file when launching a seat, and do not put a model field or model label on a bead unless the operator explicitly names one.
