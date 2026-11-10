@@ -15,12 +15,13 @@
 //! `migrations/postgres/` must simply stay in lock-step. See Plan 11-02
 //! and Plan 11-04 for the per-backend migration pair.
 
+#[path = "support/containers.rs"]
+mod containers;
+
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{PgPool, Row, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 struct Column {
@@ -232,20 +233,14 @@ async fn sqlite_and_postgres_schemas_match_structurally() {
         .await
         .expect("sqlite migrate");
 
-    // 2. Postgres via testcontainers
-    let pg_container = Postgres::default()
-        .start()
+    // 2. Postgres via the Bollard fixture
+    let pg_container = containers::TestContainer::postgres()
         .await
-        .expect("start postgres container");
-    let host = pg_container.get_host().await.expect("get host");
-    let port = pg_container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("get port");
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+        .expect("start isolated Postgres fixture");
+    let url = pg_container.url();
     let pg = PgPoolOptions::new()
         .max_connections(4)
-        .connect(&url)
+        .connect(url)
         .await
         .expect("pg connect");
     sqlx::migrate!("./migrations/postgres")

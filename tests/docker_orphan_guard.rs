@@ -25,6 +25,9 @@
 //! tests behind a cfg override), the Postgres branch of `mark_run_orphaned`
 //! gains the same regression lock as the SQLite branch.
 
+#[path = "support/containers.rs"]
+mod containers;
+
 use chrono::Utc;
 use cronduit::db::DbPool;
 use cronduit::db::queries::{self, PoolRef};
@@ -275,29 +278,17 @@ async fn mark_orphan_running_to_error() {
 // Postgres coverage (feature-gated)
 // -----------------------------------------------------------------------------
 //
-// The Cronduit workspace does not currently declare an `integration` cargo
-// feature; the gate below is kept verbatim per 10-06-PLAN.md acceptance
-// criteria (`grep -c '#\[cfg(feature = "integration")\]'` >= 1) so that when
-// such a feature is added — or when CI invokes the tests behind a cfg
-// override — the Postgres branch of `mark_run_orphaned` gains the same
-// regression lock as the SQLite branch. Until then the block compiles out and
-// the SQLite tests alone carry the SCHED-13 regression lock.
+// Enable `integration` for the matching Postgres regression cases.
 #[cfg(feature = "integration")]
 mod postgres_tests {
     use super::*;
-    use testcontainers_modules::postgres::Postgres;
-    use testcontainers_modules::testcontainers::ContainerAsync;
-    use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
-    async fn setup_postgres_pool() -> (DbPool, ContainerAsync<Postgres>) {
-        let container = Postgres::default()
-            .start()
+    async fn setup_postgres_pool() -> (DbPool, containers::TestContainer) {
+        let container = containers::TestContainer::postgres()
             .await
-            .expect("start postgres container");
-        let host = container.get_host().await.unwrap();
-        let port = container.get_host_port_ipv4(5432).await.unwrap();
-        let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
-        let pool = DbPool::connect(&url).await.expect("postgres pool");
+            .expect("start isolated Postgres fixture");
+        let url = container.url();
+        let pool = DbPool::connect(url).await.expect("postgres pool");
         pool.migrate().await.expect("run migrations");
         (pool, container)
     }

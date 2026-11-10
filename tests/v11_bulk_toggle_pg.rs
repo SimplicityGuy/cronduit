@@ -1,7 +1,7 @@
 //! Phase 14 Wave 0 — red-bar Postgres parity tests for the bulk toggle feature.
 //!
 //! Mirrors the DB-layer tests in `tests/v11_bulk_toggle.rs` but exercises the
-//! Postgres backend via `testcontainers-modules::postgres::Postgres`. Same
+//! Postgres backend via `shared Bollard fixture`. Same
 //! red-bar contract: every test fails to compile (or runtime-fails) until
 //! Plans 02 (migration + struct) and 03 (queries) land.
 //!
@@ -16,29 +16,23 @@
 //! | get_overridden_jobs_alphabetical_pg         | 03   | get_overridden_jobs_alphabetical |
 //!
 //! Harness pattern is verbatim from `tests/dashboard_jobs_pg.rs` (the
-//! testcontainers Postgres template established by quick task 260421-nn3).
+//! Bollard Postgres template established by quick task 260421-nn3).
+
+#[path = "support/containers.rs"]
+mod containers;
 
 use cronduit::db::queries;
 use cronduit::db::{DbBackend, DbPool};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::ContainerAsync;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 /// Acquire an ephemeral Postgres pool with all migrations applied.
-/// The returned `ContainerAsync` MUST be held alive until the test finishes —
+/// The returned `TestContainer` MUST be held alive until the test finishes —
 /// dropping it tears down the container and breaks the pool.
-async fn pg_pool() -> (ContainerAsync<Postgres>, DbPool) {
-    let container = Postgres::default()
-        .start()
+async fn pg_pool() -> (containers::TestContainer, DbPool) {
+    let container = containers::TestContainer::postgres()
         .await
-        .expect("start postgres container");
-    let host = container.get_host().await.expect("container host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("container port");
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
-    let pool = DbPool::connect(&url).await.expect("DbPool::connect");
+        .expect("start isolated Postgres fixture");
+    let url = container.url();
+    let pool = DbPool::connect(url).await.expect("DbPool::connect");
     assert_eq!(pool.backend(), DbBackend::Postgres);
     pool.migrate().await.expect("run migrations");
     (container, pool)

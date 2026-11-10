@@ -57,7 +57,7 @@ jobs:
 
   # Test matrix: arch dimension only.
   # Both SQLite and Postgres backends are exercised in every cell via
-  # testcontainers-modules::postgres (integration tests in tests/schema_parity.rs
+  # the shared Bollard fixtures (integration tests in tests/schema_parity.rs
   # and tests/db_pool_postgres.rs boot a real Postgres container). A per-cell
   # `db` dimension would be cosmetic -- see ci.yml design notes in
   # .planning/phases/01-foundation-security-posture-persistence-base/01-RESEARCH.md S10.
@@ -86,14 +86,14 @@ jobs:
       - name: Install cross-compile targets (arm64 cells only)
         if: matrix.arch == 'arm64'
         run: just install-targets
-      # Pre-pull testcontainers images from Google's public Docker Hub mirror
+      # Pre-pull test fixture images from Google's public Docker Hub mirror
       # and retag locally. Avoids the anonymous Docker Hub pull rate limit
       # (100/6h per IP) that intermittently breaks the test matrix, since both
       # amd64 and arm64 cells run on ubuntu-latest and pull the same images.
       # mirror.gcr.io has much higher anonymous rate limits and is transparent
-      # to testcontainers-rs because bollard finds the retagged image locally
+      # to the test fixtures because Bollard finds the retagged image locally
       # before attempting an upstream pull.
-      - name: Pre-pull testcontainers images via mirror.gcr.io
+      - name: Pre-pull test fixture images via mirror.gcr.io
         run: |
           set -euo pipefail
           for image in postgres:11-alpine alpine:latest; do
