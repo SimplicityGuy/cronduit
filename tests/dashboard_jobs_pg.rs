@@ -7,26 +7,21 @@
 //! Row correctness / ORDER BY / EXPLAIN semantics are out of scope — the
 //! bug is a SQL-syntax-level error; `Ok(_)` trivially proves the fix.
 
+#[path = "support/containers.rs"]
+mod containers;
+
 use cronduit::db::queries;
 use cronduit::db::{DbBackend, DbPool};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 #[tokio::test]
 async fn get_dashboard_jobs_postgres_smoke() {
     // Mirror of tests/v13_timeline_explain.rs::explain_uses_index_postgres.
-    let container = Postgres::default()
-        .start()
+    let container = containers::TestContainer::postgres()
         .await
-        .expect("start postgres container");
-    let host = container.get_host().await.expect("container host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("container port");
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+        .expect("start isolated Postgres fixture");
+    let url = container.url();
 
-    let pool = DbPool::connect(&url).await.expect("DbPool::connect");
+    let pool = DbPool::connect(url).await.expect("DbPool::connect");
     assert_eq!(pool.backend(), DbBackend::Postgres);
     pool.migrate().await.expect("run migrations");
 

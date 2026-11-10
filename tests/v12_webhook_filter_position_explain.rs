@@ -27,17 +27,18 @@
 //!
 //! ## Postgres test notes
 //!
-//! Mirrors the FCTX-07 EXPLAIN test gating: a fresh testcontainer with
+//! Mirrors the FCTX-07 EXPLAIN test gating: a fresh fixture with
 //! no statistics may pick `Seq Scan` regardless of index availability.
 //! Test 2 seeds 10,000 rows AND runs `ANALYZE job_runs` + `ANALYZE jobs`
 //! before EXPLAIN to force the planner to consult real row counts
 //! (RESEARCH Pitfall 4 mitigation).
 
+#[path = "support/containers.rs"]
+mod containers;
+
 use cronduit::db::queries::{self, PoolRef};
 use cronduit::db::{DbBackend, DbPool};
 use sqlx::Row;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 // ---------------------------------------------------------------------------
 // Locked filter-position CTE SQL — verbatim from
@@ -220,18 +221,12 @@ async fn filter_position_query_uses_idx_job_runs_job_id_start_sqlite() {
 #[tokio::test]
 #[ignore]
 async fn filter_position_query_uses_idx_job_runs_job_id_start_postgres() {
-    let container = Postgres::default()
-        .start()
+    let container = containers::TestContainer::postgres()
         .await
-        .expect("start postgres container");
-    let host = container.get_host().await.expect("container host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("container port");
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+        .expect("start isolated Postgres fixture");
+    let url = container.url();
 
-    let pool = DbPool::connect(&url).await.expect("DbPool::connect");
+    let pool = DbPool::connect(url).await.expect("DbPool::connect");
     assert_eq!(pool.backend(), DbBackend::Postgres);
     pool.migrate().await.expect("run migrations");
 

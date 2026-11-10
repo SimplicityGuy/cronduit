@@ -17,7 +17,7 @@
 //!
 //! ## Postgres test notes
 //!
-//! A fresh testcontainer with no statistics may pick `Seq Scan` regardless of
+//! A fresh fixture with no statistics may pick `Seq Scan` regardless of
 //! index availability. Test 2 seeds ~1000 rows AND runs `ANALYZE job_runs`
 //! before EXPLAIN to force the planner to consult real row counts. If CI still
 //! shows flake on the Index Scan detection, downgrade the assertion to a
@@ -32,11 +32,12 @@
 //! end_time, duration_ms, exit_code)` is explicit — Phase 11 `DB-10` made
 //! `job_run_number` `NOT NULL` so the column list is load-bearing.
 
+#[path = "support/containers.rs"]
+mod containers;
+
 use cronduit::db::queries::{self, PoolRef};
 use cronduit::db::{DbBackend, DbPool};
 use sqlx::Row;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 // ---------------------------------------------------------------------------
 // Test 1 — SQLite EXPLAIN QUERY PLAN asserts index usage on job_runs
@@ -157,19 +158,13 @@ async fn explain_uses_index_sqlite() {
 
 #[tokio::test]
 async fn explain_uses_index_postgres() {
-    // Start a real Postgres via testcontainers. Follows tests/db_pool_postgres.rs.
-    let container = Postgres::default()
-        .start()
+    // Start a real Postgres via the Bollard fixture. Follows tests/db_pool_postgres.rs.
+    let container = containers::TestContainer::postgres()
         .await
-        .expect("start postgres container");
-    let host = container.get_host().await.expect("container host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("container port");
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+        .expect("start isolated Postgres fixture");
+    let url = container.url();
 
-    let pool = DbPool::connect(&url).await.expect("DbPool::connect");
+    let pool = DbPool::connect(url).await.expect("DbPool::connect");
     assert_eq!(pool.backend(), DbBackend::Postgres);
     pool.migrate().await.expect("run migrations");
 
@@ -224,7 +219,7 @@ async fn explain_uses_index_postgres() {
     }
     tx.commit().await.expect("commit seed");
 
-    // REQUIRED: fresh testcontainer statistics default to guessing cardinality,
+    // REQUIRED: fresh fixture statistics default to guessing cardinality,
     // which often picks Seq Scan even when an index exists. ANALYZE forces the
     // planner to consult real row counts.
     sqlx::query("ANALYZE job_runs")
@@ -302,8 +297,8 @@ async fn explain_uses_index_postgres() {
     // job_runs relation.
     //
     // Documented fallback (plan 06 Task 1 caveat): if the Postgres planner on
-    // a fresh testcontainer still chooses Seq Scan despite the selective
-    // window + ANALYZE (which can happen on some testcontainer images /
+    // a fresh fixture still chooses Seq Scan despite the selective
+    // window + ANALYZE (which can happen on some fixture images /
     // postgres versions under pathological cost estimates), accept the
     // weaker structural evidence that `idx_job_runs_start_time` appears
     // anywhere in the rendered plan JSON — proves the index was at least

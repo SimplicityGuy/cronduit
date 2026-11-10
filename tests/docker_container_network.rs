@@ -6,6 +6,9 @@
 //!
 //! Run with: `cargo test --test docker_container_network -- --ignored --nocapture`
 
+#[path = "support/containers.rs"]
+mod containers;
+
 use std::time::Duration;
 
 use bollard::Docker;
@@ -14,8 +17,6 @@ use cronduit::scheduler::control::RunControl;
 use cronduit::scheduler::docker::execute_docker;
 use cronduit::scheduler::docker_preflight::{PreflightError, preflight_network};
 use cronduit::scheduler::log_pipeline;
-use testcontainers::runners::AsyncRunner;
-use testcontainers::{GenericImage, ImageExt};
 use tokio_util::sync::CancellationToken;
 
 /// Connect to the local Docker daemon. Panics if unavailable.
@@ -26,21 +27,18 @@ async fn docker_client() -> Docker {
 
 /// DOCKER-10 Marquee Test: container:<name> network mode end-to-end.
 ///
-/// 1. Start a "target" container via testcontainers (alpine sleep).
+/// 1. Start a "target" container via the Bollard fixture (alpine sleep).
 /// 2. Run a Cronduit Docker job with network = "container:<target_id>".
 /// 3. Verify execute_docker succeeds (pre-flight passes, container starts
 ///    in the target's network namespace, exits 0).
-/// 4. testcontainers handles target cleanup automatically.
+/// 4. the Bollard fixture handles target cleanup automatically.
 #[tokio::test]
 #[ignore]
 async fn test_container_network_mode() {
     // Start a long-running target container that we'll attach to.
-    let target = GenericImage::new("alpine", "latest")
-        .with_entrypoint("sleep")
-        .with_cmd(vec!["300"])
-        .start()
+    let target = containers::TestContainer::alpine()
         .await
-        .expect("failed to start target container via testcontainers");
+        .expect("start isolated Alpine fixture");
 
     let target_id = target.id().to_string();
     eprintln!("[marquee test] target container ID: {target_id}");
@@ -96,7 +94,7 @@ async fn test_container_network_mode() {
         stdout_lines
     );
 
-    // Target container cleanup is handled by testcontainers on drop.
+    // Target container cleanup is handled by the Bollard fixture on drop.
     eprintln!("[marquee test] PASSED: container:<name> network mode works end-to-end");
 }
 
@@ -110,12 +108,9 @@ async fn test_container_network_target_stopped() {
     let docker = docker_client().await;
 
     // Start a target container.
-    let target = GenericImage::new("alpine", "latest")
-        .with_entrypoint("sleep")
-        .with_cmd(vec!["300"])
-        .start()
+    let target = containers::TestContainer::alpine()
         .await
-        .expect("failed to start target container");
+        .expect("start isolated Alpine fixture");
 
     let target_id = target.id().to_string();
     eprintln!("[stopped-target test] target container ID: {target_id}");
@@ -181,4 +176,78 @@ async fn test_container_network_target_stopped() {
     );
 
     eprintln!("[stopped-target test] PASSED: pre-flight correctly rejects stopped target");
+}
+
+/// Exercise host and none modes through the same production executor. Repeated
+/// host runs share the daemon's network namespace; none gets only loopback in
+/// its own namespace. This catches silently dropping the requested network mode.
+#[tokio::test]
+#[ignore]
+async fn test_host_and_none_network_modes() {
+    let docker = docker_client().await;
+    let mut namespaces = Vec::new();
+    for (run_id, mode) in [(102, "host"), (103, "host"), (104, "none")] {
+        let config = serde_json::json!({
+            "image": "alpine:latest", "network": mode,
+            "cmd": ["sh", "-c", "readlink /proc/self/ns/net; ls -1 /sys/class/net"]
+        })
+        .to_string();
+        let (sender, receiver) = log_pipeline::channel(256);
+        let cancel = CancellationToken::new();
+        let control = RunControl::new(cancel.clone());
+        let result = execute_docker(
+            &docker,
+            &config,
+            "network-mode-regression",
+            run_id,
+            Duration::from_secs(30),
+            cancel,
+            sender,
+            &control,
+        )
+        .await;
+        assert_eq!(
+            result.exec.status,
+            RunStatus::Success,
+            "{mode}: {:?}",
+            result.exec
+        );
+        let stdout: Vec<_> = receiver
+            .drain_batch(256)
+            .into_iter()
+            .filter(|line| line.stream == "stdout")
+            .map(|line| line.line)
+            .collect();
+        assert!(
+            stdout.first().is_some_and(|line| line.starts_with("net:[")),
+            "{mode}: {stdout:?}"
+        );
+        if mode == "none" {
+            assert_eq!(&stdout[1..], ["lo"]);
+        }
+        namespaces.push(stdout[0].clone());
+        assert!(
+            matches!(
+                docker
+                    .inspect_container(
+                        result.container_id.as_deref().expect("created container"),
+                        None::<bollard::query_parameters::InspectContainerOptions>
+                    )
+                    .await,
+                Err(bollard::errors::Error::DockerResponseServerError {
+                    status_code: 404,
+                    ..
+                })
+            ),
+            "executor should remove its {mode} container"
+        );
+    }
+    assert_eq!(
+        namespaces[0], namespaces[1],
+        "host runs must share the host network namespace"
+    );
+    assert_ne!(
+        namespaces[0], namespaces[2],
+        "none must have an isolated network namespace"
+    );
 }

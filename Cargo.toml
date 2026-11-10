@@ -66,7 +66,7 @@ anyhow = "1.0.102"
 thiserror = "2.0.18"
 
 # Async trait macro — required for `dyn WebhookDispatcher` (Phase 15 D-01).
-# Already transitive via testcontainers + axum-htmx (Cargo.lock:237);
+# Already transitive via axum-htmx;
 # promoted to direct so the trait shape is documented at the crate boundary.
 async-trait = "0.1"
 
@@ -148,12 +148,12 @@ notify = "8.2"
 # `#[cfg(feature = "integration")]`). Declared here so that `cfg` checks do
 # not trip the `unexpected_cfgs` lint under `clippy -D warnings`. Enable with
 # `cargo test --features integration` on hosts where a Docker daemon is
-# available for testcontainers-backed Postgres tests.
+# available for the shared Bollard Postgres fixtures.
 integration = []
 
 [dev-dependencies]
-testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+# Retain rustls Docker TLS support previously enabled by testcontainers, in tests only.
+bollard = { version = "0.20", features = ["ssl"] }
 assert_cmd = "2"
 predicates = "3"
 tower = { version = "0.5", features = ["util"] }

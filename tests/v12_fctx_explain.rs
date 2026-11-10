@@ -26,7 +26,7 @@
 //!
 //! ## Postgres test notes
 //!
-//! A fresh testcontainer with no statistics may pick `Seq Scan`
+//! A fresh fixture with no statistics may pick `Seq Scan`
 //! regardless of index availability. Test 2 seeds 10,000 rows AND runs
 //! `ANALYZE job_runs` + `ANALYZE jobs` before EXPLAIN to force the
 //! planner to consult real row counts (RESEARCH Pitfall 4 mitigation).
@@ -43,11 +43,12 @@
 //! config_hash)` is explicit — Phase 11 DB-10 made `job_run_number`
 //! NOT NULL so the column list is load-bearing.
 
+#[path = "support/containers.rs"]
+mod containers;
+
 use cronduit::db::queries::{self, PoolRef};
 use cronduit::db::{DbBackend, DbPool};
 use sqlx::Row;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 // ---------------------------------------------------------------------------
 // Locked CTE SQL — verbatim from CONTEXT.md D-05.
@@ -215,20 +216,14 @@ async fn explain_uses_index_sqlite() {
 #[tokio::test]
 #[ignore]
 async fn explain_uses_index_postgres() {
-    // Start a real Postgres via testcontainers. Mirrors
+    // Start a real Postgres via the Bollard fixture. Mirrors
     // tests/v13_timeline_explain.rs::explain_uses_index_postgres.
-    let container = Postgres::default()
-        .start()
+    let container = containers::TestContainer::postgres()
         .await
-        .expect("start postgres container");
-    let host = container.get_host().await.expect("container host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("container port");
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+        .expect("start isolated Postgres fixture");
+    let url = container.url();
 
-    let pool = DbPool::connect(&url).await.expect("DbPool::connect");
+    let pool = DbPool::connect(url).await.expect("DbPool::connect");
     assert_eq!(pool.backend(), DbBackend::Postgres);
     pool.migrate().await.expect("run migrations");
 
@@ -287,7 +282,7 @@ async fn explain_uses_index_postgres() {
     }
     tx.commit().await.expect("commit seed");
 
-    // REQUIRED per RESEARCH Pitfall 4: fresh testcontainer statistics default
+    // REQUIRED per RESEARCH Pitfall 4: fresh fixture statistics default
     // to guessing cardinality, which often picks Seq Scan even when an index
     // exists. ANALYZE forces the planner to consult real row counts. Both
     // tables — `job_runs` (the queried surface) and `jobs` (the FK target).
@@ -343,8 +338,8 @@ async fn explain_uses_index_postgres() {
     // Primary assertion (D-08): the plan contains an index-based scan node.
     //
     // Documented fallback (matches v13_timeline_explain.rs precedent): if the
-    // Postgres planner on a fresh testcontainer still chooses Seq Scan despite
-    // the seed volume + ANALYZE (which can happen on some testcontainer
+    // Postgres planner on a fresh fixture still chooses Seq Scan despite
+    // the seed volume + ANALYZE (which can happen on some fixture
     // images / postgres versions under pathological cost estimates), accept
     // the weaker structural evidence that `idx_job_runs_job_id_start` appears
     // anywhere in the rendered plan JSON — proves the index was at least
@@ -495,25 +490,19 @@ async fn explain_uses_index_sqlite_post_scheduled_for() {
 //
 // Postgres pair of test 3. Same rationale as the sqlite case: locks the
 // FCTX-06 invariant under Phase 21 D-18. Same `#[ignore]` gating as the
-// existing `explain_uses_index_postgres` test (testcontainers-backed,
+// existing `explain_uses_index_postgres` test (Bollard-backed,
 // Docker-required; runs in the CI Postgres lane via
 // `cargo nextest run --run-ignored=all`).
 
 #[tokio::test]
 #[ignore]
 async fn explain_uses_index_postgres_post_scheduled_for() {
-    let container = Postgres::default()
-        .start()
+    let container = containers::TestContainer::postgres()
         .await
-        .expect("start postgres container");
-    let host = container.get_host().await.expect("container host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("container port");
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+        .expect("start isolated Postgres fixture");
+    let url = container.url();
 
-    let pool = DbPool::connect(&url).await.expect("DbPool::connect");
+    let pool = DbPool::connect(url).await.expect("DbPool::connect");
     assert_eq!(pool.backend(), DbBackend::Postgres);
     // Applies the post-Phase-21 migration set, including
     // `migrations/postgres/20260503_000009_scheduled_for_add.up.sql`.

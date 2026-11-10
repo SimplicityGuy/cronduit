@@ -10,6 +10,9 @@
 // replace the assertion with real logic when they land.
 #![allow(clippy::assertions_on_constants)]
 
+#[path = "support/containers.rs"]
+mod containers;
+
 mod common;
 
 use std::io;
@@ -479,21 +482,16 @@ async fn migration_03_sqlite_indexes_preserved() {
 #[cfg(feature = "integration")]
 #[tokio::test]
 async fn migration_03_postgres_not_null() {
-    // Integration-gated: spin up a Postgres testcontainer, run DbPool::migrate,
+    // Integration-gated: spin up a Postgres fixture, run DbPool::migrate,
     // and assert that a NULL-job_run_number insert is rejected. Follows the
-    // testcontainer pattern used in tests/schema_parity.rs.
-    use testcontainers::runners::AsyncRunner;
-    use testcontainers_modules::postgres::Postgres as PgImage;
+    // fixture pattern used in tests/schema_parity.rs.
 
-    let node = PgImage::default()
-        .start()
+    let node = containers::TestContainer::postgres()
         .await
-        .expect("start postgres testcontainer");
-    let host = node.get_host().await.expect("host");
-    let port = node.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@{host}:{port}/postgres");
+        .expect("start isolated Postgres fixture");
+    let url = node.url();
 
-    let pool = DbPool::connect(&url).await.expect("connect postgres");
+    let pool = DbPool::connect(url).await.expect("connect postgres");
     pool.migrate().await.expect("apply migrations");
 
     let pg_pool = match pool.writer() {
