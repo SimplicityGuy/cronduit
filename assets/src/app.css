@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @source "../../templates";
+/* Vendored database sources must not contribute UI utility classes. */
+@source not "../../vendor";
 
 @theme {
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'Cascadia Code', 'Consolas', monospace;
