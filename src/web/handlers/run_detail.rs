@@ -117,6 +117,8 @@ pub struct RunDetailView {
     pub duration_ms: Option<i64>,
     pub exit_code: Option<i32>,
     pub error_message: Option<String>,
+    /// True when `error_message` starts with `docker::OOM_ERROR_PREFIX`.
+    pub is_oom: bool,
     /// Phase 16 FOUND-14: image digest captured post-start by
     /// `inspect_container`. `None` for command/script jobs (no image) and for
     /// pre-v1.2 docker rows. Consumed by Phase 21 FCTX panel IMAGE DIGEST row
@@ -174,6 +176,9 @@ pub struct FctxView {
     pub has_duration_samples: bool,
     pub duration_value: Option<String>,
     pub fire_skew_value: Option<String>,
+    /// OOM row: `Some` when the run was OOM-killed (error_message carries
+    /// `docker::OOM_ERROR_PREFIX`); distinct from a plain non-zero exit.
+    pub oom_value: Option<String>,
 }
 
 pub struct LogLineView {
@@ -445,6 +450,12 @@ async fn build_fctx_view(
         }
     };
 
+    let oom_value = run
+        .error_message
+        .as_ref()
+        .filter(|m| m.starts_with(crate::scheduler::docker::OOM_ERROR_PREFIX))
+        .cloned();
+
     FctxView {
         consecutive_failures: ctx.consecutive_failures,
         summary_meta,
@@ -457,6 +468,7 @@ async fn build_fctx_view(
         has_duration_samples,
         duration_value,
         fire_skew_value,
+        oom_value,
     }
 }
 
@@ -556,6 +568,10 @@ pub async fn run_detail(
             duration_display: format_duration_ms(run.duration_ms),
             duration_ms: run.duration_ms,
             exit_code: run.exit_code,
+            is_oom: run
+                .error_message
+                .as_deref()
+                .is_some_and(|m| m.starts_with(crate::scheduler::docker::OOM_ERROR_PREFIX)),
             error_message: run.error_message,
             // Phase 16 + 21: pass-through from DbRunDetail. Populated for the
             // FCTX panel (build_fctx_view in plan 21-04 task 2/3); the template

@@ -61,7 +61,18 @@ pub struct DockerJobConfig {
     /// validators at config-load mean this is always operator-safe content.
     #[serde(default)]
     pub labels: Option<HashMap<String, String>>,
+    /// Memory limit (human size, e.g. `"16g"`). Validated at config load.
+    #[serde(default)]
+    pub memory: Option<String>,
+    /// CPU limit in CPUs (e.g. `8`, `1.5`). Validated at config load.
+    #[serde(default)]
+    pub cpus: Option<f64>,
 }
+
+/// Prefix of the run `error_message` recorded when Docker reports the
+/// container was OOM-killed (`State.OOMKilled`). The run-detail page and the
+/// failure-context panel key off this prefix to render a distinct OOM signal.
+pub const OOM_ERROR_PREFIX: &str = "OOM-killed:";
 
 /// Result of a Docker job execution, extending `ExecResult` with container metadata.
 #[derive(Debug)]
@@ -179,8 +190,28 @@ pub async fn execute_docker(
     // Build env vars as KEY=VALUE strings.
     let env_vec: Vec<String> = config.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
 
+    // Resource limits (docker-only). `memory_swap` equal to `memory` means no
+    // swap allowance beyond the limit.
+    let memory_bytes = match config
+        .memory
+        .as_deref()
+        .map(crate::config::resources::parse_memory_bytes)
+    {
+        Some(Ok(b)) => Some(b),
+        Some(Err(e)) => return config_error_result(&sender, format!("invalid memory: {e}")),
+        None => None,
+    };
+    let nano_cpus = match config.cpus.map(crate::config::resources::cpus_to_nano) {
+        Some(Ok(n)) => Some(n),
+        Some(Err(e)) => return config_error_result(&sender, e),
+        None => None,
+    };
+
     // Build HostConfig with network_mode, volumes, and auto_remove=false.
     let host_config = HostConfig {
+        memory: memory_bytes,
+        memory_swap: memory_bytes,
+        nano_cpus,
         network_mode: config.network.clone(),
         binds: config.volumes.clone(),
         auto_remove: Some(false), // CRITICAL: DOCKER-06
@@ -352,9 +383,42 @@ pub async fn execute_docker(
             let status = if code == 0 { RunStatus::Success } else { RunStatus::Failed };
 
             let _ = log_handle.await;
+
+            // Distinguish an OOM kill from a plain non-zero exit via
+            // State.OOMKilled (must be read before the container is removed).
+            let mut error_message = None;
+            if status == RunStatus::Failed {
+                let oomed = match docker.inspect_container(&container_id, None).await {
+                    Ok(info) => info
+                        .state
+                        .as_ref()
+                        .and_then(|s| s.oom_killed)
+                        .unwrap_or(false),
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "cronduit.docker",
+                            container_id = %container_id,
+                            error = %e,
+                            "failed to inspect container for OOM state"
+                        );
+                        false
+                    }
+                };
+                if oomed {
+                    let limit = match config.memory.as_deref() {
+                        Some(m) => format!("memory limit ({m})"),
+                        None => "memory available to it".to_string(),
+                    };
+                    let msg = format!(
+                        "{OOM_ERROR_PREFIX} container exceeded its {limit} and was killed by the kernel"
+                    );
+                    sender.send(make_log_line("system", format!("[{msg}]")));
+                    error_message = Some(msg);
+                }
+            }
             sender.close();
 
-            ExecResult { exit_code: Some(code), status, error_message: None }
+            ExecResult { exit_code: Some(code), status, error_message }
         }
 
         _ = tokio::time::sleep(timeout) => {
@@ -458,6 +522,23 @@ pub async fn execute_docker(
         // empty `info.image` flows as `None` rather than `Some("")`.
         image_digest,
         container_id: Some(container_id.clone()),
+    }
+}
+
+fn config_error_result(sender: &LogSender, msg: String) -> DockerExecResult {
+    sender.send(make_log_line(
+        "system",
+        format!("[docker config error: {msg}]"),
+    ));
+    sender.close();
+    DockerExecResult {
+        exec: ExecResult {
+            exit_code: None,
+            status: RunStatus::Error,
+            error_message: Some(format!("failed to parse docker config: {msg}")),
+        },
+        image_digest: None,
+        container_id: None,
     }
 }
 
