@@ -52,6 +52,30 @@ struct JobExecConfig {
     script: Option<String>,
 }
 
+/// `success_exit_codes` extracted from `config_json` (None = default `[0]`).
+#[derive(Deserialize, Default)]
+struct SuccessCodesConfig {
+    #[serde(default)]
+    success_exit_codes: Option<Vec<i64>>,
+}
+
+/// Promote a `Failed` result to `Success` when its real exit code is listed
+/// in the job's `success_exit_codes`. Timeout / Stopped / Shutdown / Error are
+/// never promoted, and the exit code itself is left untouched so it is still
+/// recorded, displayed and bucketed as-is.
+fn apply_success_exit_codes(
+    mut result: command::ExecResult,
+    codes: Option<&[i64]>,
+) -> command::ExecResult {
+    if matches!(result.status, RunStatus::Failed)
+        && let (Some(code), Some(codes)) = (result.exit_code, codes)
+        && codes.contains(&i64::from(code))
+    {
+        result.status = RunStatus::Success;
+    }
+    result
+}
+
 /// Execute a job run through its full lifecycle (scheduler-driven path).
 ///
 /// Used by the cron-tick dispatch + catch-up + the legacy
@@ -354,6 +378,13 @@ async fn continue_run(
             }
         }
     };
+
+    // Per-job `success_exit_codes`: promote a listed non-zero exit to success.
+    let success_codes: Option<Vec<i64>> =
+        serde_json::from_str::<SuccessCodesConfig>(&job.config_json)
+            .unwrap_or_default()
+            .success_exit_codes;
+    let exec_result = apply_success_exit_codes(exec_result, success_codes.as_deref());
 
     // 5. Ensure sender is closed (executor should have closed it, but be safe).
     sender.close();
@@ -1080,5 +1111,140 @@ mod tests {
         }
 
         pool.close().await;
+    }
+
+    fn exec(status: RunStatus, code: Option<i32>) -> command::ExecResult {
+        command::ExecResult {
+            exit_code: code,
+            status,
+            error_message: None,
+        }
+    }
+
+    #[test]
+    fn apply_success_exit_codes_only_promotes_failed_with_listed_code() {
+        let codes = [0_i64, 75];
+        let r = apply_success_exit_codes(exec(RunStatus::Failed, Some(75)), Some(&codes));
+        assert_eq!(r.status, RunStatus::Success);
+        assert_eq!(r.exit_code, Some(75), "real exit code must be preserved");
+        // Unlisted code stays failed.
+        let r = apply_success_exit_codes(exec(RunStatus::Failed, Some(3)), Some(&codes));
+        assert_eq!(r.status, RunStatus::Failed);
+        // Unset keeps today's behaviour.
+        let r = apply_success_exit_codes(exec(RunStatus::Failed, Some(75)), None);
+        assert_eq!(r.status, RunStatus::Failed);
+        // Timeout / stopped / error / shutdown never promoted, even if a code is present.
+        for st in [
+            RunStatus::Timeout,
+            RunStatus::Stopped,
+            RunStatus::Error,
+            RunStatus::Shutdown,
+        ] {
+            let r = apply_success_exit_codes(exec(st, Some(75)), Some(&codes));
+            assert_ne!(r.status, RunStatus::Success);
+        }
+        // No exit code (spawn failure) is never promoted.
+        let r = apply_success_exit_codes(exec(RunStatus::Failed, None), Some(&codes));
+        assert_eq!(r.status, RunStatus::Failed);
+    }
+
+    async fn run_with_codes(
+        job_type: &str,
+        name: &str,
+        config_json: &str,
+    ) -> (String, Option<i32>, crate::webhooks::RunFinalized) {
+        let pool = setup_pool().await;
+        let job = insert_test_job(&pool, name, job_type, config_json).await;
+        let (tx, mut rx) = crate::webhooks::channel_with_capacity(8);
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            CancellationToken::new(),
+            test_active_runs(),
+            tx,
+            None,
+        )
+        .await;
+        let code = match pool.reader() {
+            PoolRef::Sqlite(p) => {
+                let row = sqlx::query("SELECT exit_code FROM job_runs WHERE id = ?1")
+                    .bind(result.run_id)
+                    .fetch_one(p)
+                    .await
+                    .unwrap();
+                row.get::<Option<i32>, _>("exit_code")
+            }
+            _ => unreachable!(),
+        };
+        let event = rx.try_recv().expect("webhook event emitted");
+        pool.close().await;
+        (result.status, code, event)
+    }
+
+    #[tokio::test]
+    async fn command_job_listed_exit_code_is_success() {
+        let (status, code, ev) = run_with_codes(
+            "command",
+            "sec-cmd-listed",
+            r#"{"command":"sh -c 'exit 75'","success_exit_codes":[0,75]}"#,
+        )
+        .await;
+        assert_eq!(status, "success");
+        assert_eq!(code, Some(75));
+        // Webhook event carries success (so states=["failed"] won't fire) + real code.
+        assert_eq!(ev.status, "success");
+        assert_eq!(ev.exit_code, Some(75));
+    }
+
+    #[tokio::test]
+    async fn command_job_unlisted_exit_code_still_fails() {
+        let (status, code, ev) = run_with_codes(
+            "command",
+            "sec-cmd-unlisted",
+            r#"{"command":"sh -c 'exit 3'","success_exit_codes":[0,75]}"#,
+        )
+        .await;
+        assert_eq!(status, "failed");
+        assert_eq!(code, Some(3));
+        assert_eq!(ev.status, "failed");
+    }
+
+    #[tokio::test]
+    async fn command_job_unset_keeps_default_behaviour() {
+        let (status, code, _) = run_with_codes(
+            "command",
+            "sec-cmd-unset",
+            r#"{"command":"sh -c 'exit 75'"}"#,
+        )
+        .await;
+        assert_eq!(status, "failed");
+        assert_eq!(code, Some(75));
+    }
+
+    #[tokio::test]
+    async fn script_job_listed_exit_code_is_success() {
+        let (status, code, ev) = run_with_codes(
+            "script",
+            "sec-script-listed",
+            r#"{"script":"exit 75","success_exit_codes":[0,75]}"#,
+        )
+        .await;
+        assert_eq!(status, "success");
+        assert_eq!(code, Some(75));
+        assert_eq!(ev.status, "success");
+    }
+
+    #[tokio::test]
+    async fn script_job_unlisted_exit_code_still_fails() {
+        let (status, code, _) = run_with_codes(
+            "script",
+            "sec-script-unlisted",
+            r#"{"script":"exit 4","success_exit_codes":[0,75]}"#,
+        )
+        .await;
+        assert_eq!(status, "failed");
+        assert_eq!(code, Some(4));
     }
 }

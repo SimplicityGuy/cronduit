@@ -47,6 +47,9 @@ pub fn compute_config_hash(job: &JobConfig) -> String {
     if let Some(l) = &job.labels {
         map.insert("labels", serde_json::json!(l));
     }
+    if let Some(codes) = &job.success_exit_codes {
+        map.insert("success_exit_codes", serde_json::json!(codes));
+    }
     // DO NOT include `env` -- its values are SecretString and must not be hashed/logged.
     // DO NOT include `tags` (Phase 22 / D-01) -- tags are organizational
     // metadata, not docker-execution input. A tag-only edit must NOT
@@ -88,6 +91,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         }
     }
 
@@ -143,6 +147,7 @@ mod tests {
                 cmd: None,
                 tags: Vec::new(),
                 webhook: None,
+                success_exit_codes: None,
             }
         }
 
@@ -165,6 +170,7 @@ mod tests {
                 timeout: None,
                 random_min_gap: None,
                 webhook: None,
+                success_exit_codes: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -188,6 +194,7 @@ mod tests {
                 timeout: None,
                 random_min_gap: None,
                 webhook: None,
+                success_exit_codes: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -211,6 +218,7 @@ mod tests {
                 timeout: None,
                 random_min_gap: None,
                 webhook: None,
+                success_exit_codes: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -234,6 +242,7 @@ mod tests {
                 timeout: Some(std::time::Duration::from_secs(300)),
                 random_min_gap: None,
                 webhook: None,
+                success_exit_codes: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -257,6 +266,7 @@ mod tests {
                 timeout: None,
                 random_min_gap: None,
                 webhook: None,
+                success_exit_codes: None,
             };
             let b = apply_defaults(b, Some(&defaults));
             assert_eq!(
@@ -364,5 +374,14 @@ mod tests {
             hash_a, hash_c,
             "empty tags vs populated tags must hash identically (D-01)"
         );
+    }
+
+    #[test]
+    fn hash_differs_on_success_exit_codes() {
+        let mut j = mk_job();
+        let a = compute_config_hash(&j);
+        j.success_exit_codes = Some(vec![0, 75]);
+        let b = compute_config_hash(&j);
+        assert_ne!(a, b);
     }
 }

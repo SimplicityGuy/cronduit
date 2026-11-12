@@ -86,6 +86,7 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         // + empty) → dedup with WARN (folded into check_tag_charset_and_reserved).
         check_tag_charset_and_reserved(job, path, errors);
         check_tag_count_per_job(job, path, errors); // Phase 22 / D-08
+        check_success_exit_codes(job, path, errors);
     }
     // Phase 22 / TAG-05 — fleet-level substring-collision pass (D-03).
     // MUST run AFTER the per-job loop so the tag set has already been
@@ -128,6 +129,51 @@ fn check_one_of_job_type(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigEr
                 job.name
             ),
         });
+    }
+}
+
+/// `success_exit_codes` must be non-empty, every entry an integer in 0..=255,
+/// and free of duplicates. Runs on the post-merge job, so a bad
+/// `[defaults].success_exit_codes` is reported against each job inheriting it.
+fn check_success_exit_codes(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(codes) = &job.success_exit_codes else {
+        return;
+    };
+    let mut push = |msg: String| {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}` success_exit_codes {msg} (may be inherited from [defaults].success_exit_codes)",
+                job.name
+            ),
+        });
+    };
+    if codes.is_empty() {
+        push("must not be empty (omit the field to use the default [0])".to_string());
+        return;
+    }
+    let bad: Vec<String> = codes
+        .iter()
+        .filter(|c| !(0..=255).contains(*c))
+        .map(|c| c.to_string())
+        .collect();
+    if !bad.is_empty() {
+        push(format!(
+            "contains out-of-range value(s) {}; each code must be an integer 0-255",
+            bad.join(", ")
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut dups: Vec<String> = Vec::new();
+    for c in codes {
+        if !seen.insert(*c) && !dups.contains(&c.to_string()) {
+            dups.push(c.to_string());
+        }
+    }
+    if !dups.is_empty() {
+        push(format!("contains duplicate value(s) {}", dups.join(", ")));
     }
 }
 
@@ -1000,6 +1046,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         }
     }
 
@@ -1472,6 +1519,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: wh,
+            success_exit_codes: None,
         }
     }
 
@@ -1996,6 +2044,7 @@ mod tests {
             cmd: None,
             tags,
             webhook: None,
+            success_exit_codes: None,
         }
     }
 
@@ -2436,5 +2485,29 @@ tags = ["backup"]
                 .any(|e| e.message.contains("is a substring of")),
             "substring-collision must be raised: got {errors:?}"
         );
+    }
+
+    #[test]
+    fn success_exit_codes_validation() {
+        let check = |codes: Option<Vec<i64>>| {
+            let mut job = stub_job("* * * * *");
+            job.success_exit_codes = codes;
+            let mut e = Vec::new();
+            check_success_exit_codes(&job, Path::new("x"), &mut e);
+            e
+        };
+        assert!(check(None).is_empty());
+        assert!(check(Some(vec![0, 75])).is_empty());
+        assert!(check(Some(vec![0, 255])).is_empty());
+        let e = check(Some(vec![]));
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("must not be empty"));
+        let e = check(Some(vec![0, 256, -1]));
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("256, -1"), "{}", e[0].message);
+        assert!(e[0].message.contains("0-255"));
+        let e = check(Some(vec![75, 0, 75]));
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("duplicate"), "{}", e[0].message);
     }
 }

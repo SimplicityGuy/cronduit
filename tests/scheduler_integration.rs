@@ -76,6 +76,7 @@ fn make_job(
         cmd: None,
         tags: Vec::new(),
         webhook: None,
+        success_exit_codes: None,
     }
 }
 
