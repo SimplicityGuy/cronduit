@@ -17,12 +17,13 @@ use super::RunResult;
 use super::command::{self, RunStatus};
 
 /// Closed-enum failure reasons for the cronduit_run_failures_total metric (D-05).
-/// Cardinality fixed at 6 values -- never add unbounded labels.
+/// Cardinality fixed at 7 values -- never add unbounded labels.
 pub enum FailureReason {
     ImagePullFailed,
     NetworkTargetUnavailable,
     Timeout,
     ExitNonzero,
+    Oom,
     Abandoned,
     Unknown,
 }
@@ -34,6 +35,7 @@ impl FailureReason {
             Self::NetworkTargetUnavailable => "network_target_unavailable",
             Self::Timeout => "timeout",
             Self::ExitNonzero => "exit_nonzero",
+            Self::Oom => "oom",
             Self::Abandoned => "abandoned",
             Self::Unknown => "unknown",
         }
@@ -558,14 +560,20 @@ fn finalize_args_from_docker_result(
     )
 }
 
-/// Classify a run failure into one of the 6 FailureReason variants (D-05).
+/// Classify a run failure into one of the 7 FailureReason variants (D-05).
 ///
 /// Maps error_message strings from docker_preflight, docker_pull, and docker_orphan
 /// to the closed enum. Unknown errors default to `Unknown`.
 fn classify_failure_reason(status: &str, error_msg: Option<&str>) -> FailureReason {
     match status {
         "timeout" => FailureReason::Timeout,
-        "failed" => FailureReason::ExitNonzero,
+        "failed" => match error_msg {
+            // OOM-killed docker runs finalize as `failed` with a marked message.
+            Some(msg) if msg.starts_with(crate::scheduler::docker::OOM_ERROR_PREFIX) => {
+                FailureReason::Oom
+            }
+            _ => FailureReason::ExitNonzero,
+        },
         "error" => match error_msg {
             Some(msg) if msg.starts_with("network_target_unavailable:") => {
                 FailureReason::NetworkTargetUnavailable
@@ -645,6 +653,42 @@ mod tests {
     use crate::scheduler::command::ExecResult;
     use crate::scheduler::docker::DockerExecResult;
     use sqlx::Row;
+
+    #[test]
+    fn classify_failure_reason_labels_oom() {
+        let oom = format!(
+            "{} container exceeded its memory",
+            crate::scheduler::docker::OOM_ERROR_PREFIX
+        );
+        assert_eq!(
+            classify_failure_reason("failed", Some(&oom)).as_label(),
+            "oom"
+        );
+        assert_eq!(
+            classify_failure_reason("failed", None).as_label(),
+            "exit_nonzero"
+        );
+        assert_eq!(
+            classify_failure_reason("failed", Some("other")).as_label(),
+            "exit_nonzero"
+        );
+    }
+
+    #[test]
+    fn failure_reason_labels_closed_set() {
+        let all = [
+            FailureReason::ImagePullFailed,
+            FailureReason::NetworkTargetUnavailable,
+            FailureReason::Timeout,
+            FailureReason::ExitNonzero,
+            FailureReason::Oom,
+            FailureReason::Abandoned,
+            FailureReason::Unknown,
+        ];
+        let labels: std::collections::HashSet<_> = all.iter().map(|r| r.as_label()).collect();
+        assert_eq!(labels.len(), 7);
+        assert!(labels.iter().all(|l| !l.trim().is_empty()));
+    }
 
     /// Phase 16 FOUND-14 / Code-review WR-02 — wiring lock.
     ///

@@ -74,6 +74,18 @@ pub struct DockerJobConfig {
 /// failure-context panel key off this prefix to render a distinct OOM signal.
 pub const OOM_ERROR_PREFIX: &str = "OOM-killed:";
 
+/// Build the OOM failure message, naming the configured limit when there is one.
+pub(crate) fn oom_message(memory: Option<&str>) -> String {
+    match memory {
+        Some(m) => format!(
+            "{OOM_ERROR_PREFIX} container exceeded its memory limit ({m}) and was killed by the kernel"
+        ),
+        None => format!(
+            "{OOM_ERROR_PREFIX} container ran out of available memory and was killed by the kernel"
+        ),
+    }
+}
+
 /// Result of a Docker job execution, extending `ExecResult` with container metadata.
 #[derive(Debug)]
 pub struct DockerExecResult {
@@ -405,13 +417,7 @@ pub async fn execute_docker(
                     }
                 };
                 if oomed {
-                    let limit = match config.memory.as_deref() {
-                        Some(m) => format!("memory limit ({m})"),
-                        None => "memory available to it".to_string(),
-                    };
-                    let msg = format!(
-                        "{OOM_ERROR_PREFIX} container exceeded its {limit} and was killed by the kernel"
-                    );
+                    let msg = oom_message(config.memory.as_deref());
                     sender.send(make_log_line("system", format!("[{msg}]")));
                     error_message = Some(msg);
                 }
@@ -606,6 +612,17 @@ async fn cleanup_container(docker: &Docker, container_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oom_message_wording() {
+        let limited = oom_message(Some("512m"));
+        assert!(limited.starts_with(OOM_ERROR_PREFIX));
+        assert!(limited.contains("memory limit (512m)"));
+        let unlimited = oom_message(None);
+        assert!(unlimited.starts_with(OOM_ERROR_PREFIX));
+        assert!(unlimited.contains("ran out of available memory"));
+        assert!(!unlimited.contains("memory available to it"));
+    }
 
     #[test]
     fn test_docker_job_config_deserialize() {

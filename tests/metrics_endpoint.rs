@@ -137,7 +137,7 @@ mod metrics_tests {
     #[test]
     #[ignore = "not yet implemented"]
     fn failure_reason_labels_are_bounded_enum() {
-        // Assert: FailureReason enum has exactly 6 variants
+        // Assert: FailureReason enum has exactly 7 variants
         // Assert: each variant produces a valid label string
         // Assert: no variant produces an empty or whitespace label
         todo!("Implement failure reason label validation test")
@@ -150,6 +150,7 @@ mod metrics_tests {
         // Assert: classify_failure_reason("failed", None) => ExitNonzero
         // Assert: classify_failure_reason("error", Some("image pull failed:...")) => ImagePullFailed
         // Assert: classify_failure_reason("error", Some("network_target_unavailable: vpn")) => NetworkTargetUnavailable
+        // Assert: classify_failure_reason("failed", Some("OOM-killed: ...")) => Oom
         // Assert: classify_failure_reason("error", Some("orphaned at restart")) => Abandoned
         // Assert: classify_failure_reason("error", Some("unknown error")) => Unknown
         todo!("Implement failure classification test")

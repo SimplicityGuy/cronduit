@@ -412,7 +412,7 @@ Setting `container_name` on multiple jobs that might run concurrently will cause
 
 #### `[[jobs]].memory`
 
-- **Type:** string (human size) — `"512m"`, `"16g"`, `"1.5g"`, or a bare byte count. Units are binary (1k = 1024 bytes).
+- **Type:** string (human size) — `"512m"`, `"16g"`, `"1.5g"`, or a bare byte count. Units are binary (1k = 1024 bytes); accepted suffixes follow Docker: `b`, `k`, `m`, `g`, `t`, `p`, each optionally with `i` and/or `b` (`16g`, `16gb`, `16gi`, `16gib`).
 - **Optional.** Falls back to `[defaults].memory`; per-job wins. Unset = no limit (today's behaviour).
 - **Docker jobs only.** Setting it on a `command` or `script` job is rejected at config load.
 - **Example:** `memory = "16g"`

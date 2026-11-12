@@ -428,10 +428,10 @@ Cronduit exposes **six** metric families, all eagerly described at boot so `/met
 | `cronduit_jobs_total` | Gauge | -- | Number of currently configured jobs |
 | `cronduit_runs_total` | Counter | `job`, `status` | Total runs by job and status (`success`, `failed`, `timeout`, `cancelled`) |
 | `cronduit_run_duration_seconds` | Histogram | `job` | Run duration with homelab-tuned buckets (1s to 1h) |
-| `cronduit_run_failures_total` | Counter | `job`, `reason` | Failures by reason (`image_pull_failed`, `network_target_unavailable`, `timeout`, `exit_nonzero`, `abandoned`, `unknown`) |
+| `cronduit_run_failures_total` | Counter | `job`, `reason` | Failures by reason (`image_pull_failed`, `network_target_unavailable`, `timeout`, `exit_nonzero`, `oom`, `abandoned`, `unknown`) |
 | `cronduit_docker_reachable` | Gauge | -- | Docker daemon preflight result: `1` reachable, `0` unreachable. See [Troubleshooting](#troubleshooting) below. |
 
-Cardinality is bounded: `job` labels scale with your job count (typically 5-50), `status` is a 4-value closed enum, and `reason` is a 6-value closed enum.
+Cardinality is bounded: `job` labels scale with your job count (typically 5-50), `status` is a 4-value closed enum, and `reason` is a 7-value closed enum.
 
 ### Prometheus Setup
 
