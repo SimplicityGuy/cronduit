@@ -39,10 +39,16 @@ split_commits = true
 commit_preprocessors = [
     # Strip the GitHub squash-merge bullet so `* feat(x): y` parses as `feat(x): y`.
     { pattern = "(?m)^\\* ", replace = "" },
-    # Drop trailer lines (Co-Authored-By, Claude-Session, Refs, ...) so they don't leak into notes.
-    { pattern = "(?mi)^(co-authored-by|claude-session|signed-off-by|reviewed-by|refs|closes|fixes|resolves):.*$", replace = "" },
     { pattern = "^(Phase \\d+: .*)", replace = "feat: $1" },
     { pattern = "^(Milestone .*)", replace = "feat: $1" },
+    # split_commits treats every body line as a commit, and a line that looks like
+    # `word: ...` but has an unknown type inherits the parent commit's group. So
+    # keep only known conventional types: mark them, drop every other
+    # `word:`/`word(scope):` line (trailers like Co-Authored-By and Claude-Session,
+    # wrapped prose like `telemetry::foo ...`), then remove the marker.
+    { pattern = "(?m)^((feat|fix|refactor|perf|test|docs|ci|chore|style|build|revert)(\\([^)\\n]*\\))?!?:)", replace = "@@cc@@$1" },
+    { pattern = "(?m)^[A-Za-z][\\w.-]*(\\([^)\\n]*\\))?!?:.*$", replace = "" },
+    { pattern = "(?m)^@@cc@@", replace = "" },
 ]
 commit_parsers = [
     { message = "^feat", group = "Features" },
