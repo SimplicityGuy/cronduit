@@ -2,7 +2,8 @@
 //!
 //! Status-discriminator-wins classifier (CONTEXT D-08):
 //!   status="success", exit 0  -> None        (handled by success-rate stat per EXIT-03)
-//!   status="success", exit!=0 -> bucketed by its real code (operator `success_exit_codes` hit)
+//!   status="success", exit!=0 -> Bucket::BucketAccepted (operator `success_exit_codes` hit;
+//!                                 a success, so never mixed into the failure-coloured buckets)
 //!   status="stopped"          -> Bucket::Stopped  (regardless of exit_code 137 — cronduit's SIGKILL path)
 //!   exit_code IS NULL         -> Bucket::Null  (timeout / cancelled-without-code)
 //!   exit_code == Some(1)      -> Bucket::Bucket1
@@ -37,6 +38,8 @@ pub enum ExitBucket {
     Bucket255,
     BucketNull,
     BucketStopped,
+    /// status="success" with a non-zero exit code accepted via `success_exit_codes`.
+    BucketAccepted,
 }
 
 /// Single top-N entry for the EXIT-05 "Most frequent codes" sub-table.
@@ -65,7 +68,7 @@ pub struct HistogramCard {
 /// - `status == "success"` with exit code 0/None returns `None` (success does not
 ///   occupy a bucket — it's reported via the success-rate stat per EXIT-03). A
 ///   success with a non-zero exit code (a `success_exit_codes` hit) is bucketed
-///   by its real code.
+///   `BucketAccepted` (it is a success, not a failure range).
 /// - `status == "stopped"` always returns `Some(BucketStopped)` regardless of
 ///   exit_code. This is cronduit's operator-stop path; the SIGKILL-induced exit
 ///   code 137 is incidental, NOT a classifier signal (EXIT-04).
@@ -76,15 +79,14 @@ pub struct HistogramCard {
 pub fn categorize(status: &str, exit_code: Option<i32>) -> Option<ExitBucket> {
     // A plain success (exit 0 / no code) occupies no bucket. A success with a
     // non-zero exit code is an operator-declared `success_exit_codes` hit; it
-    // IS bucketed so e.g. exit 75 stays distinguishable from exit 0.
-    if status == "success" && matches!(exit_code, None | Some(0)) {
-        return None;
-    }
-    if status == "stopped" {
-        return Some(ExitBucket::BucketStopped);
-    }
+    // gets its own non-error bucket so it stays distinguishable from exit 0
+    // without sharing a bar with genuine failures of the same code range.
     if status == "success" {
-        return categorize("failed", exit_code);
+        return if matches!(exit_code, None | Some(0)) {
+            None
+        } else {
+            Some(ExitBucket::BucketAccepted)
+        };
     }
     if status == "stopped" {
         return Some(ExitBucket::BucketStopped);
@@ -232,6 +234,39 @@ mod tests {
             categorize("failed", Some(999)),
             Some(ExitBucket::BucketNull)
         );
+    }
+
+    #[test]
+    fn accepted_nonzero_success_not_in_error_bucket() {
+        assert_eq!(
+            categorize("success", Some(75)),
+            Some(ExitBucket::BucketAccepted)
+        );
+        assert_eq!(
+            categorize("success", Some(1)),
+            Some(ExitBucket::BucketAccepted)
+        );
+        assert_eq!(categorize("success", Some(0)), None);
+        // A real failure in the same range still lands in the error bucket.
+        assert_eq!(
+            categorize("failed", Some(64)),
+            Some(ExitBucket::Bucket10to126)
+        );
+    }
+
+    #[test]
+    fn aggregate_separates_accepted_from_failures() {
+        let rows: Vec<(String, Option<i32>, Option<String>)> = vec![
+            ("success".into(), Some(75), None),
+            ("success".into(), Some(75), None),
+            ("success".into(), Some(0), None),
+            ("failed".into(), Some(64), None),
+            ("failed".into(), Some(64), None),
+        ];
+        let card = aggregate(&rows);
+        assert_eq!(card.success_count, 3);
+        assert_eq!(card.buckets.get(&ExitBucket::BucketAccepted), Some(&2));
+        assert_eq!(card.buckets.get(&ExitBucket::Bucket10to126), Some(&2));
     }
 
     #[test]

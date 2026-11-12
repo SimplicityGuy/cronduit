@@ -584,7 +584,7 @@
   .cd-exit-stat-label { font-size: var(--cd-text-xs); font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--cd-text-secondary); }
   .cd-exit-stat-value { font-size: var(--cd-text-xl); font-weight: 700; letter-spacing: -0.02em; color: var(--cd-status-active); }
   .cd-exit-stat-meta { font-size: var(--cd-text-sm); color: var(--cd-text-secondary); }
-  .cd-exit-chart { display: grid; grid-template-columns: repeat(10, 1fr); gap: var(--cd-space-2); min-width: 640px; padding: var(--cd-space-4); background: var(--cd-bg-surface-sunken); border-radius: var(--cd-radius-md); overflow-x: auto; }
+  .cd-exit-chart { display: grid; grid-template-columns: repeat(11, 1fr); gap: var(--cd-space-2); min-width: 704px; padding: var(--cd-space-4); background: var(--cd-bg-surface-sunken); border-radius: var(--cd-radius-md); overflow-x: auto; }
   .cd-exit-bucket { display: flex; flex-direction: column; align-items: center; gap: var(--cd-space-2); }
   .cd-exit-bar-wrap { width: 100%; height: calc(var(--cd-space-8) * 4); display: flex; align-items: flex-end; position: relative; }
   .cd-exit-bar { width: 100%; min-height: var(--cd-space-1); border-radius: var(--cd-radius-sm) var(--cd-radius-sm) 0 0; position: relative; transition: filter 0.1s ease; cursor: pointer; }
@@ -597,6 +597,7 @@
   .cd-exit-bar--err-muted { background: var(--cd-status-error-bg); border: 1px solid var(--cd-status-error); }
   .cd-exit-bar--warn { background: var(--cd-status-disabled); }
   .cd-exit-bar--stopped { background: var(--cd-status-stopped); }
+  .cd-exit-bar--accepted { background: var(--cd-status-active-bg); border: 1px solid var(--cd-status-active); }
   .cd-exit-bar--null { background: var(--cd-status-cancelled); }
   .cd-exit-bucket-label { font-size: var(--cd-text-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--cd-text-secondary); text-align: center; white-space: nowrap; }
   .cd-exit-caption { font-size: var(--cd-text-sm); color: var(--cd-text-secondary); margin-top: var(--cd-space-2); }
