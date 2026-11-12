@@ -221,6 +221,7 @@ Run failures are classified into a closed enum that surfaces in the `cronduit_ru
 | `network_target_unavailable` | `container:<name>` target missing, or named network not found |
 | `timeout` | Per-job `timeout` exceeded |
 | `exit_nonzero` | Process or container exited with non-zero status |
+| `oom` | Docker container was OOM-killed by the kernel (`State.OOMKilled`) |
 | `abandoned` | Run was orphaned across a Cronduit restart |
 | `unknown` | Reserved fallback (should never appear in practice) |
 
