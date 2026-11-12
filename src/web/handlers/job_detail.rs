@@ -199,9 +199,9 @@ pub struct ExitHistogramView {
     /// Raw row count fed to the aggregator. Used in the empty-state copy
     /// (`"have N"`) and the "Last N runs (window: 100)" caption.
     pub sample_count: usize,
-    /// 10 entries — one per ExitBucket variant in UI-SPEC display order:
+    /// 11 entries — one per ExitBucket variant in UI-SPEC display order:
     /// Bucket1, Bucket2, Bucket3to9, Bucket10to126, Bucket127, Bucket128to143,
-    /// Bucket144to254, Bucket255, BucketNull, BucketStopped.
+    /// Bucket144to254, Bucket255, BucketNull, BucketStopped, BucketAccepted.
     pub buckets: Vec<BucketRender>,
     /// Success-rate percent, 0..=100 (display-only; only meaningful when
     /// `has_min_samples` is true).
@@ -282,7 +282,7 @@ fn pretty_json(raw: &str) -> String {
 /// Single source of truth for the iteration order in
 /// `build_exit_histogram_view`. Top-to-bottom matches the visual top-to-bottom
 /// in the histogram card markup.
-const EXIT_BUCKET_DISPLAY_ORDER: [ExitBucket; 10] = [
+const EXIT_BUCKET_DISPLAY_ORDER: [ExitBucket; 11] = [
     ExitBucket::Bucket1,
     ExitBucket::Bucket2,
     ExitBucket::Bucket3to9,
@@ -293,6 +293,7 @@ const EXIT_BUCKET_DISPLAY_ORDER: [ExitBucket; 10] = [
     ExitBucket::Bucket255,
     ExitBucket::BucketNull,
     ExitBucket::BucketStopped,
+    ExitBucket::BucketAccepted,
 ];
 
 /// Bucket → (color_class, dot_token) per UI-SPEC § Color (locked).
@@ -307,6 +308,8 @@ fn bucket_classes(bucket: ExitBucket) -> (&'static str, &'static str) {
         ExitBucket::Bucket127 | ExitBucket::Bucket128to143 => ("warn", "status-disabled"),
         ExitBucket::BucketStopped => ("stopped", "status-stopped"),
         ExitBucket::BucketNull => ("null", "status-cancelled"),
+        // Accepted non-zero success: success-family colour, never the error palette.
+        ExitBucket::BucketAccepted => ("accepted", "status-active"),
     }
 }
 
@@ -323,6 +326,7 @@ fn bucket_short_label(bucket: ExitBucket) -> &'static str {
         ExitBucket::Bucket255 => "255",
         ExitBucket::BucketNull => "none",
         ExitBucket::BucketStopped => "stopped",
+        ExitBucket::BucketAccepted => "accepted",
     }
 }
 
@@ -342,6 +346,9 @@ fn bucket_aria_template(bucket: ExitBucket) -> &'static str {
         ExitBucket::Bucket255 => "Exit code 255: out of range — {N} runs",
         ExitBucket::BucketNull => {
             "No exit code recorded — {N} runs (e.g., timeout or stopped without code captured)"
+        }
+        ExitBucket::BucketAccepted => {
+            "Accepted non-zero exit codes (success_exit_codes) — {N} runs. Counted as success, NOT a failure."
         }
         ExitBucket::BucketStopped => {
             "Stopped via UI (SIGKILL by cronduit, exit 137) — {N} runs. NOT a crash."
@@ -372,6 +379,8 @@ fn bucket_exit_code_predicate(bucket: ExitBucket, code: i32) -> bool {
         // BucketStopped has its own tooltip-detail override; per-code
         // last_seen is not used.
         ExitBucket::BucketStopped => false,
+        // BucketAccepted has its own tooltip-detail override.
+        ExitBucket::BucketAccepted => false,
     }
 }
 
@@ -438,7 +447,7 @@ fn format_relative_time_or_never(rfc3339: Option<&str>) -> String {
 ///
 /// Field-by-field decisions:
 /// - `has_min_samples`/`sample_count`/`success_count`: forwarded from the card.
-/// - `buckets`: 10 entries in `EXIT_BUCKET_DISPLAY_ORDER`. `height_pct`
+/// - `buckets`: 11 entries in `EXIT_BUCKET_DISPLAY_ORDER`. `height_pct`
 ///   server-clamped to 0..=100 per research § Security Domain V5; pct is an
 ///   `i64` computed in Rust + `.clamp(0, 100)`. Operator input never flows
 ///   here.
@@ -458,7 +467,7 @@ fn build_exit_histogram_view(card: &exit_buckets::HistogramCard) -> ExitHistogra
     //    state instead of the bars.
     let max_count: usize = card.buckets.values().copied().max().unwrap_or(0);
 
-    // 2. Build the 10-entry Vec<BucketRender> in display order.
+    // 2. Build the 11-entry Vec<BucketRender> in display order.
     let buckets: Vec<BucketRender> = EXIT_BUCKET_DISPLAY_ORDER
         .iter()
         .map(|bucket| {
@@ -485,6 +494,11 @@ fn build_exit_histogram_view(card: &exit_buckets::HistogramCard) -> ExitHistogra
                 "Stopped via UI — cronduit sent SIGKILL. Distinct from \"signal-killed\" \
                  (128-143) which captures external SIGTERM / SIGSEGV / etc."
                     .to_string()
+            } else if matches!(bucket, ExitBucket::BucketAccepted) {
+                format!(
+                    "{count} runs · non-zero exit codes accepted as success via \
+                     success_exit_codes. Not failures."
+                )
             } else {
                 let last_seen = card
                     .top_codes
