@@ -506,3 +506,118 @@ async fn test_concurrent_runs_same_job() {
     .await
     .unwrap();
 }
+
+/// A command job that times out with `success_exit_codes` set must stay
+/// `timeout`: promotion only applies to `failed` runs with a listed code.
+#[tokio::test]
+async fn test_timeout_with_success_exit_codes_stays_timeout() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let pool = setup_test_db().await;
+        let mut job_cfg = make_job(
+            "test-timeout-sec",
+            "* * * * *",
+            Some("sh -c 'sleep 60'"),
+            None,
+            Some(Duration::from_secs(1)),
+        );
+        job_cfg.success_exit_codes = Some(vec![0, 75, 124, 137, 143]);
+        let config = test_config_with_jobs(vec![job_cfg]);
+        let job = sync_and_get_job(&pool, &config, "test-timeout-sec").await;
+
+        let (tx, mut rx) = cronduit::webhooks::channel_with_capacity(8);
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            CancellationToken::new(),
+            test_active_runs(),
+            tx,
+            None,
+        )
+        .await;
+
+        assert_eq!(result.status, "timeout");
+        let event = rx.try_recv().expect("webhook event emitted");
+        assert_eq!(event.status, "timeout");
+
+        pool.close().await;
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// Drive a real run promoted to success via `success_exit_codes` through the
+/// webhook dispatcher with `states = ["failed"]`: no delivery may occur.
+#[tokio::test]
+async fn test_promoted_success_run_does_not_fire_failed_webhook() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let pool = setup_test_db().await;
+        let mut job_cfg = make_job(
+            "test-promoted-webhook",
+            "* * * * *",
+            Some("sh -c 'exit 75'"),
+            None,
+            Some(Duration::from_secs(10)),
+        );
+        job_cfg.success_exit_codes = Some(vec![0, 75]);
+        let config = test_config_with_jobs(vec![job_cfg]);
+        let job = sync_and_get_job(&pool, &config, "test-promoted-webhook").await;
+        let job_id = job.id;
+
+        let (tx, mut rx) = cronduit::webhooks::channel_with_capacity(8);
+        let result = run_job(
+            pool.clone(),
+            None,
+            job,
+            "scheduled".to_string(),
+            CancellationToken::new(),
+            test_active_runs(),
+            tx,
+            None,
+        )
+        .await;
+        assert_eq!(result.status, "success");
+
+        let event = rx.try_recv().expect("webhook event emitted");
+        assert_eq!(event.status, "success");
+        assert_eq!(event.exit_code, Some(75));
+
+        let mut webhooks = HashMap::new();
+        webhooks.insert(
+            job_id,
+            cronduit::config::WebhookConfig {
+                url: server.uri(),
+                states: vec!["failed".into()],
+                secret: Some(SecretString::from("k")),
+                unsigned: false,
+                fire_every: 0,
+            },
+        );
+        let dispatcher =
+            cronduit::webhooks::HttpDispatcher::new(pool.clone(), Arc::new(webhooks)).unwrap();
+        cronduit::webhooks::WebhookDispatcher::deliver(&dispatcher, &event)
+            .await
+            .unwrap();
+
+        let received = server.received_requests().await.unwrap();
+        assert!(
+            received.is_empty(),
+            "promoted-success run with states=[\"failed\"] must not fire; got {} requests",
+            received.len()
+        );
+
+        pool.close().await;
+    })
+    .await
+    .expect("test timed out");
+}
