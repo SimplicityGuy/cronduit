@@ -65,7 +65,7 @@
   {% match run.error_message %}
     {% when Some with (err) %}
   <div class="mt-4" style="padding:var(--cd-space-4);background:var(--cd-status-error-bg);border:1px solid var(--cd-status-error);border-radius:8px">
-    <span style="font-size:var(--cd-text-xs);color:var(--cd-status-error);text-transform:uppercase;letter-spacing:0.1em;font-weight:700">Error</span>
+    <span style="font-size:var(--cd-text-xs);color:var(--cd-status-error);text-transform:uppercase;letter-spacing:0.1em;font-weight:700">{% if run.is_oom %}Out of memory{% else %}Error{% endif %}</span>
     <div style="font-size:var(--cd-text-base);color:var(--cd-status-error);margin-top:2px">{{ err }}</div>
   </div>
     {% when None %}
@@ -81,6 +81,16 @@
     <span class="cd-fctx-summary-meta">{{ fctx.summary_meta }}</span>
   </summary>
   <div class="cd-fctx-body">
+
+    <!-- OOM row — only when Docker reported State.OOMKilled -->
+    {% match fctx.oom_value %}
+      {% when Some with (val) %}
+        <div class="cd-fctx-row">
+          <div class="cd-fctx-row-label">OOM</div>
+          <div class="cd-fctx-row-value">{{ val }}</div>
+        </div>
+      {% when None %}
+    {% endmatch %}
 
     <!-- Row 1: TIME DELTAS — always renders for failed/timeout -->
     <div class="cd-fctx-row">

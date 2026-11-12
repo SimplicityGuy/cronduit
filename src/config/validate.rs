@@ -68,6 +68,7 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         check_one_of_job_type(job, path, errors);
         check_cmd_only_on_docker_jobs(job, path, errors);
         check_network_mode(job, path, errors);
+        check_resource_limits(job, path, errors);
         check_schedule(job, path, errors);
         // Phase 17 / SEED-001 — operator labels (LBL-03, LBL-04, LBL-06, D-02)
         check_label_reserved_namespace(job, path, errors);
@@ -86,11 +87,49 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         // + empty) → dedup with WARN (folded into check_tag_charset_and_reserved).
         check_tag_charset_and_reserved(job, path, errors);
         check_tag_count_per_job(job, path, errors); // Phase 22 / D-08
+        check_success_exit_codes(job, path, errors);
     }
     // Phase 22 / TAG-05 — fleet-level substring-collision pass (D-03).
     // MUST run AFTER the per-job loop so the tag set has already been
     // normalized + dedup'd per-job (D-04 lock).
     check_tag_substring_collision(&cfg.jobs, path, errors);
+}
+
+/// Validate `memory` / `cpus`: docker jobs only, and well-formed values.
+fn check_resource_limits(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.memory.is_none() && job.cpus.is_none() {
+        return;
+    }
+    let mut push = |message: String| {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message,
+        });
+    };
+    if job.image.is_none() {
+        let kind = if job.command.is_some() {
+            "command"
+        } else {
+            "script"
+        };
+        push(format!(
+            "[[jobs]] `{}`: `memory` and `cpus` are only valid on docker jobs (job with `image = \"...\"` set); this is a {kind} job and has no container to limit. Remove them, or switch the job to a docker job by setting `image`.",
+            job.name
+        ));
+        return;
+    }
+    if let Some(m) = &job.memory
+        && let Err(e) = super::resources::parse_memory_bytes(m)
+    {
+        push(format!("[[jobs]] `{}`: invalid `memory`: {e}", job.name));
+    }
+    if let Some(c) = job.cpus
+        && let Err(e) = super::resources::cpus_to_nano(c)
+    {
+        push(format!("[[jobs]] `{}`: invalid {e}", job.name));
+    }
 }
 
 fn check_timezone(tz: &str, path: &Path, errors: &mut Vec<ConfigError>) {
@@ -128,6 +167,51 @@ fn check_one_of_job_type(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigEr
                 job.name
             ),
         });
+    }
+}
+
+/// `success_exit_codes` must be non-empty, every entry an integer in 0..=255,
+/// and free of duplicates. Runs on the post-merge job, so a bad
+/// `[defaults].success_exit_codes` is reported against each job inheriting it.
+fn check_success_exit_codes(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    let Some(codes) = &job.success_exit_codes else {
+        return;
+    };
+    let mut push = |msg: String| {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message: format!(
+                "[[jobs]] `{}` success_exit_codes {msg} (may be inherited from [defaults].success_exit_codes)",
+                job.name
+            ),
+        });
+    };
+    if codes.is_empty() {
+        push("must not be empty (omit the field to use the default [0])".to_string());
+        return;
+    }
+    let bad: Vec<String> = codes
+        .iter()
+        .filter(|c| !(0..=255).contains(*c))
+        .map(|c| c.to_string())
+        .collect();
+    if !bad.is_empty() {
+        push(format!(
+            "contains out-of-range value(s) {}; each code must be an integer 0-255",
+            bad.join(", ")
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut dups: Vec<String> = Vec::new();
+    for c in codes {
+        if !seen.insert(*c) && !dups.contains(&c.to_string()) {
+            dups.push(c.to_string());
+        }
+    }
+    if !dups.is_empty() {
+        push(format!("contains duplicate value(s) {}", dups.join(", ")));
     }
 }
 
@@ -982,6 +1066,39 @@ mod tests {
         assert!(!NETWORK_RE.is_match(""));
     }
 
+    #[test]
+    fn resource_limits_rejected_on_non_docker_job() {
+        let mut job = stub_job("*/5 * * * *");
+        job.memory = Some("1g".into());
+        let mut e = Vec::new();
+        check_resource_limits(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("only valid on docker jobs"));
+
+        let mut job = stub_job("*/5 * * * *");
+        job.cpus = Some(2.0);
+        let mut e = Vec::new();
+        check_resource_limits(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+    }
+
+    #[test]
+    fn resource_limits_validated_on_docker_job() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine".into());
+        job.memory = Some("16g".into());
+        job.cpus = Some(8.0);
+        let mut e = Vec::new();
+        check_resource_limits(&job, Path::new("x"), &mut e);
+        assert!(e.is_empty());
+
+        job.memory = Some("lots".into());
+        job.cpus = Some(0.0);
+        check_resource_limits(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 2);
+    }
+
     fn stub_job(schedule: &str) -> JobConfig {
         JobConfig {
             name: "test-job".into(),
@@ -993,6 +1110,8 @@ mod tests {
             env: Default::default(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -1000,6 +1119,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         }
     }
 
@@ -1465,6 +1585,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -1472,6 +1594,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: wh,
+            success_exit_codes: None,
         }
     }
 
@@ -1989,6 +2112,8 @@ mod tests {
             env: Default::default(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -1996,6 +2121,7 @@ mod tests {
             cmd: None,
             tags,
             webhook: None,
+            success_exit_codes: None,
         }
     }
 
@@ -2436,5 +2562,29 @@ tags = ["backup"]
                 .any(|e| e.message.contains("is a substring of")),
             "substring-collision must be raised: got {errors:?}"
         );
+    }
+
+    #[test]
+    fn success_exit_codes_validation() {
+        let check = |codes: Option<Vec<i64>>| {
+            let mut job = stub_job("* * * * *");
+            job.success_exit_codes = codes;
+            let mut e = Vec::new();
+            check_success_exit_codes(&job, Path::new("x"), &mut e);
+            e
+        };
+        assert!(check(None).is_empty());
+        assert!(check(Some(vec![0, 75])).is_empty());
+        assert!(check(Some(vec![0, 255])).is_empty());
+        let e = check(Some(vec![]));
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("must not be empty"));
+        let e = check(Some(vec![0, 256, -1]));
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("256, -1"), "{}", e[0].message);
+        assert!(e[0].message.contains("0-255"));
+        let e = check(Some(vec![75, 0, 75]));
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("duplicate"), "{}", e[0].message);
     }
 }

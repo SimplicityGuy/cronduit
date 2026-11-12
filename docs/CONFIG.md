@@ -135,7 +135,10 @@ These fields can be set under `[defaults]` (note that `labels` and `webhook` are
 | `network` | docker jobs only | Default network mode. |
 | `volumes` | docker jobs only | Default volume mounts. Arrays replace — per-job `volumes` does not concatenate with the defaults entry. |
 | `delete` | docker jobs only | Default "remove container after drain" flag. |
+| `memory` | docker jobs only | Default container memory limit (e.g. `"4g"`). |
+| `cpus` | docker jobs only | Default CPU limit (number of CPUs). |
 | `timeout` | all job types | Default per-job timeout. |
+| `success_exit_codes` | all job types | Default list of exit codes treated as success. Per-job value replaces it. |
 | `random_min_gap` | **global only** | Minimum gap between `@random`-scheduled jobs that can fire on the same day. This one is **not merged per-job** — it's a global scheduler knob consumed directly by the `@random` resolver. See below. |
 
 **No other field is defaults-eligible.** Specifically, these fields are per-job only and will **not** merge from `[defaults]` even if you write them there (the TOML parser will silently accept the unknown key, but `apply_defaults` will not use it):
@@ -268,6 +271,27 @@ Per-job timeout. When the run exceeds this duration, Cronduit kills the process 
 
 Setting `timeout = "0s"` is **not** a way to say "unlimited" — it means "time out immediately". To express "unlimited", omit the field and omit it from `[defaults]`.
 
+#### `[[jobs]].success_exit_codes`
+
+- **Optional.** Falls back to `[defaults].success_exit_codes`, then to `[0]` (today's behaviour).
+- **Type:** array of integers, each `0`-`255`. Must be non-empty and contain no duplicates; invalid values are rejected at config load with an error naming the job.
+- **Applies to:** command, script and docker jobs.
+- **Example:** `success_exit_codes = [0, 75]`
+
+Exit codes in the list finalize the run as `status=success`, so the run does not count as a failure in the UI, the failure-context panel, `cronduit_run_failures_total`, or webhooks filtered on `states = ["failed"]`. The real exit code is still recorded and shown on the run and job views, and the exit-code histogram still buckets it by its actual value (75 is distinguishable from 0).
+
+Only a normal process/container exit is affected. `timeout`, `stopped`, `cancelled` and spawn/pull errors stay non-success regardless of this list, and exit codes not in the list still fail (and still fire `failed` webhooks).
+
+Use case: a long nightly job that exits `75` (`EX_TEMPFAIL`) when it pauses cleanly at its deadline and resumes the next night.
+
+```toml
+[[jobs]]
+name = "similar-artists"
+schedule = "0 1 * * *"
+command = "/usr/local/bin/similar-artists"
+success_exit_codes = [0, 75]
+```
+
 #### `[[jobs]].use_defaults`
 
 - **Optional.** Default: `true` (i.e., `[defaults]` applies if present).
@@ -385,6 +409,24 @@ Volume binds are passed verbatim to bollard. Both host-path binds (`/mnt/data:/d
 When set, Cronduit spawns the container with the given name. Useful when another container needs to reference this one by name (e.g., `network = "container:nightly-backup"` from a different job). Without `container_name`, Docker auto-generates a random name.
 
 Setting `container_name` on multiple jobs that might run concurrently will cause a conflict — the second container fails to spawn. Pick a unique name or omit the field.
+
+#### `[[jobs]].memory`
+
+- **Type:** string (human size) — `"512m"`, `"16g"`, `"1.5g"`, or a bare byte count. Units are binary (1k = 1024 bytes).
+- **Optional.** Falls back to `[defaults].memory`; per-job wins. Unset = no limit (today's behaviour).
+- **Docker jobs only.** Setting it on a `command` or `script` job is rejected at config load.
+- **Example:** `memory = "16g"`
+
+Applied to the container as the Docker memory limit, with `memory_swap` set to the same value so the job cannot swap past the cap. When the kernel OOM-kills the container (`State.OOMKilled`), the run is recorded as failed with an `OOM-killed: ...` error, shown as "Out of memory" on the run detail page and as an `OOM` row in the Failure context panel, distinct from a plain non-zero exit.
+
+#### `[[jobs]].cpus`
+
+- **Type:** number (integer or float) — `8`, `1.5`. Must be greater than zero.
+- **Optional.** Falls back to `[defaults].cpus`; per-job wins. Unset = no limit.
+- **Docker jobs only.** Rejected on `command` and `script` jobs at config load.
+- **Example:** `cpus = 8`
+
+Applied as the container's `nano_cpus` (like Compose `cpus`).
 
 #### `[[jobs]].cmd`
 

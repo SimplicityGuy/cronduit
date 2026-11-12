@@ -824,3 +824,46 @@ async fn soft_fail_hides_panel() {
         "degraded response must NOT include the FCTX panel CSS class (no body to render)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// OOM-killed docker run renders distinct label and FCTX OOM row
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn oom_killed_run_renders_oom_label_and_fctx_row() {
+    let (app, pool) = build_test_app().await;
+    let job_id = seed_test_job(&pool, "oom-job", "docker", "cfg-A").await;
+    let failed = seed_run_with_scheduled_for(
+        &pool,
+        job_id,
+        "failed",
+        1,
+        Some("2026-04-27T00:01:00Z"),
+        Some(137),
+        None,
+        "cfg-A",
+    )
+    .await;
+    let msg = format!(
+        "{} container exceeded its memory limit (16m) and was killed by the kernel",
+        cronduit::scheduler::docker::OOM_ERROR_PREFIX
+    );
+    let p = match pool.writer() {
+        PoolRef::Sqlite(p) => p,
+        _ => panic!("sqlite-only test"),
+    };
+    sqlx::query("UPDATE job_runs SET error_message = ?1 WHERE id = ?2")
+        .bind(&msg)
+        .bind(failed)
+        .execute(p)
+        .await
+        .expect("set error_message");
+
+    let (status, body) = fetch_run_detail(app, job_id, failed).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Out of memory"), "OOM label must render");
+    assert!(
+        body.contains("class=\"cd-fctx-row-label\">OOM<"),
+        "FCTX OOM row must render"
+    );
+}

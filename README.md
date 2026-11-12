@@ -214,9 +214,17 @@ delete = true               # When true, cronduit removes the container after wa
                             # avoid the moby#8441 race that loses exit codes; the explicit remove
                             # happens after the run is fully recorded.
 timeout = "5m"              # Default job timeout
+success_exit_codes = [0]    # Exit codes (0-255) recorded as success; per-job value replaces this.
+                            # e.g. [0, 75] treats EX_TEMPFAIL as success; the real code is still shown.
+# memory = "4g"             # Optional docker-only memory cap (swap disabled); per-job `memory` wins.
+# cpus = 2                  # Optional docker-only CPU cap (number of CPUs); per-job `cpus` wins.
 random_min_gap = "90m"      # Minimum gap between @random-scheduled jobs that can fire on the same day.
                             # Optional -- omit to allow @random jobs to land back-to-back.
 ```
+
+### Resource limits (docker jobs)
+
+Docker jobs can cap their container with `memory` (human size such as `"512m"`, `"16g"`) and `cpus` (number of CPUs, e.g. `8` or `1.5`), either per job or in `[defaults]`. `memory` sets the container memory limit with swap disabled (`memory_swap` equal to `memory`); `cpus` sets `nano_cpus`. Both are rejected on `command`/`script` jobs at config load. If the kernel OOM-kills a container, the run detail page and its Failure context panel show an explicit out-of-memory message instead of a bare non-zero exit. See [docs/CONFIG.md](./docs/CONFIG.md#jobsmemory).
 
 ### Labels
 

@@ -98,6 +98,15 @@ pub(crate) fn serialize_config_json(job: &JobConfig) -> String {
     if let Some(l) = &job.labels {
         map.insert("labels".into(), serde_json::json!(l));
     }
+    if let Some(codes) = &job.success_exit_codes {
+        map.insert("success_exit_codes".into(), serde_json::json!(codes));
+    }
+    if let Some(m) = &job.memory {
+        map.insert("memory".into(), serde_json::json!(m));
+    }
+    if let Some(c) = &job.cpus {
+        map.insert("cpus".into(), serde_json::json!(c));
+    }
     // T-02-03: Only store env key names, never values.
     if !job.env.is_empty() {
         let keys: Vec<&str> = job.env.keys().map(|k| k.as_str()).collect();
@@ -290,6 +299,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -297,6 +308,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         }
     }
 
@@ -461,6 +473,8 @@ mod tests {
                 env,
                 volumes: None,
                 labels: None,
+                memory: None,
+                cpus: None,
                 network: None,
                 container_name: None,
                 timeout: None,
@@ -468,6 +482,7 @@ mod tests {
                 cmd: None,
                 tags: Vec::new(),
                 webhook: None,
+                success_exit_codes: None,
             }],
         };
 
