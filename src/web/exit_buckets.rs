@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(categorize("success", None), None);
         assert_eq!(
             categorize("success", Some(75)),
-            Some(ExitBucket::Bucket10to126)
+            Some(ExitBucket::BucketAccepted)
         );
         let rows = vec![
             ("success".to_string(), Some(0), Some("t1".to_string())),
@@ -385,7 +385,8 @@ mod tests {
         ];
         let card = aggregate(&rows);
         assert_eq!(card.success_count, 3);
-        assert_eq!(card.buckets.get(&ExitBucket::Bucket10to126), Some(&2));
+        assert_eq!(card.buckets.get(&ExitBucket::BucketAccepted), Some(&2));
+        assert_eq!(card.buckets.get(&ExitBucket::Bucket10to126), None);
         assert_eq!(card.buckets.get(&ExitBucket::Bucket1), Some(&1));
         assert_eq!(card.top_codes[0].code, 75);
         assert_eq!(card.top_codes[0].count, 2);
