@@ -153,6 +153,11 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
     let metrics_handle = crate::telemetry::setup_metrics();
     metrics::gauge!("cronduit_scheduler_up").set(1.0);
 
+    // Zero-seed cronduit_runs_total / cronduit_run_failures_total per configured
+    // job so the first failure is visible to increase(). Reloads re-seed in
+    // scheduler::reload.
+    crate::telemetry::seed_job_metrics(sync_result.jobs.iter().map(|j| j.name.as_str()));
+
     // Phase 20 / WH-11 (D-23, RESEARCH §4.6): per-job × per-status seed for the
     // labeled webhook family. Forces Prometheus to render zero-baseline rows
     // for every configured job × {success, failed, dropped} combo so operator

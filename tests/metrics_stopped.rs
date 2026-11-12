@@ -4,7 +4,7 @@
 //! Two invariants locked here:
 //!
 //! 1. `metrics_pre_declares_stopped_label` (T-V11-STOP-16) — the Prometheus
-//!    exporter renders `cronduit_runs_total{status="stopped"}` from boot,
+//!    exporter renders `cronduit_runs_total{job="...",status="stopped"}` from seeding,
 //!    BEFORE any run has finalized as stopped. PITFALLS §1.6: label values
 //!    that never fire are absent from /metrics text output without an
 //!    explicit pre-declaration.
@@ -39,26 +39,25 @@ use tokio_util::sync::CancellationToken;
 #[tokio::test]
 async fn metrics_pre_declares_stopped_label() {
     let handle = setup_metrics();
+    // cronduit-dkt: seeds are per job (the old status-only series never moved
+    // and were removed). Seeding a job must render every terminal status,
+    // including `stopped`, from boot.
+    cronduit::telemetry::seed_job_metrics(["metrics-stopped-seed-T16"]);
     let body = handle.render();
 
-    assert!(
-        body.contains(r#"cronduit_runs_total{status="stopped"}"#),
-        "T-V11-STOP-16 (PITFALLS §1.6): setup_metrics() must pre-declare the \
-         cronduit_runs_total{{status=\"stopped\"}} label so Prometheus alerts \
-         that reference the stopped status do not go silent before the first \
-         operator stop. /metrics body was:\n{body}"
-    );
-
-    // Good hygiene: also pre-declare the other terminal statuses so the
-    // /metrics shape is stable from boot. These are locked for the metric
-    // name pattern, not for exact counts — they may later be incremented by
-    // real runs in the same process.
-    for status in ["success", "failed", "timeout", "cancelled", "error"] {
-        let needle = format!("cronduit_runs_total{{status=\"{status}\"}}");
+    for status in [
+        "success",
+        "failed",
+        "timeout",
+        "cancelled",
+        "error",
+        "stopped",
+    ] {
+        let needle =
+            format!(r#"cronduit_runs_total{{job="metrics-stopped-seed-T16",status="{status}"}} 0"#);
         assert!(
             body.contains(&needle),
-            "setup_metrics() must pre-declare cronduit_runs_total{{status=\"{status}\"}}; \
-             /metrics body was:\n{body}"
+            "must pre-declare {needle}; /metrics body was:\n{body}"
         );
     }
 }

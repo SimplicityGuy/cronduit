@@ -301,9 +301,9 @@ The `metrics` facade + `metrics-exporter-prometheus`. Six families, eagerly desc
 |---|---|---|---|
 | `cronduit_scheduler_up` | Gauge | — | `1` once the scheduler loop is running. Sentinel for liveness. |
 | `cronduit_jobs_total` | Gauge | — | Number of currently configured jobs. |
-| `cronduit_runs_total` | Counter | `job`, `status` | Total runs by job and status (`success`, `failed`, `timeout`, `cancelled`). |
+| `cronduit_runs_total` | Counter | `job`, `status` | Total runs by job and status (`success`, `failed`, `timeout`, `cancelled`, `error`, `stopped`). Zero-seeded per configured job at boot and on reload. |
 | `cronduit_run_duration_seconds` | Histogram | `job` | Run duration with homelab-tuned buckets (1s to 1h). |
-| `cronduit_run_failures_total` | Counter | `job`, `reason` | Failures by closed-enum reason (see Failure Reasons table). |
+| `cronduit_run_failures_total` | Counter | `job`, `reason` | Failures by closed-enum reason (see Failure Reasons table). Zero-seeded per configured job at boot and on reload. |
 | `cronduit_docker_reachable` | Gauge | — | Docker daemon preflight result: `1` reachable, `0` unreachable. |
 
 Cardinality is bounded: `job` scales with your job count (typically 5–50); `status` and `reason` are closed enums.

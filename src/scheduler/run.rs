@@ -29,6 +29,17 @@ pub enum FailureReason {
 }
 
 impl FailureReason {
+    /// Every variant, for zero-seeding the per-job failure series.
+    pub const ALL: [FailureReason; 7] = [
+        Self::ImagePullFailed,
+        Self::NetworkTargetUnavailable,
+        Self::Timeout,
+        Self::ExitNonzero,
+        Self::Oom,
+        Self::Abandoned,
+        Self::Unknown,
+    ];
+
     pub fn as_label(&self) -> &'static str {
         match self {
             Self::ImagePullFailed => "image_pull_failed",
