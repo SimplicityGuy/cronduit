@@ -50,6 +50,12 @@ pub fn compute_config_hash(job: &JobConfig) -> String {
     if let Some(codes) = &job.success_exit_codes {
         map.insert("success_exit_codes", serde_json::json!(codes));
     }
+    if let Some(m) = &job.memory {
+        map.insert("memory", serde_json::json!(m));
+    }
+    if let Some(c) = &job.cpus {
+        map.insert("cpus", serde_json::json!(c));
+    }
     // DO NOT include `env` -- its values are SecretString and must not be hashed/logged.
     // DO NOT include `tags` (Phase 22 / D-01) -- tags are organizational
     // metadata, not docker-execution input. A tag-only edit must NOT
@@ -84,6 +90,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -140,6 +148,8 @@ mod tests {
                 env: BTreeMap::new(),
                 volumes: None,
                 labels: None,
+                memory: None,
+                cpus: None,
                 network: None,
                 container_name: None,
                 timeout: None,
@@ -166,6 +176,8 @@ mod tests {
                 network: None,
                 volumes: None,
                 labels: None,
+                memory: None,
+                cpus: None,
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
@@ -190,6 +202,8 @@ mod tests {
                 network: Some("container:vpn".into()),
                 volumes: None,
                 labels: None,
+                memory: None,
+                cpus: None,
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
@@ -214,6 +228,8 @@ mod tests {
                 network: None,
                 volumes: Some(vec!["/host:/container".to_string()]),
                 labels: None,
+                memory: None,
+                cpus: None,
                 delete: None,
                 timeout: None,
                 random_min_gap: None,
@@ -238,6 +254,8 @@ mod tests {
                 network: None,
                 volumes: None,
                 labels: None,
+                memory: None,
+                cpus: None,
                 delete: None,
                 timeout: Some(std::time::Duration::from_secs(300)),
                 random_min_gap: None,
@@ -262,6 +280,8 @@ mod tests {
                 network: None,
                 volumes: None,
                 labels: None,
+                memory: None,
+                cpus: None,
                 delete: Some(true),
                 timeout: None,
                 random_min_gap: None,

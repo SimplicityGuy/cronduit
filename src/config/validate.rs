@@ -68,6 +68,7 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
         check_one_of_job_type(job, path, errors);
         check_cmd_only_on_docker_jobs(job, path, errors);
         check_network_mode(job, path, errors);
+        check_resource_limits(job, path, errors);
         check_schedule(job, path, errors);
         // Phase 17 / SEED-001 — operator labels (LBL-03, LBL-04, LBL-06, D-02)
         check_label_reserved_namespace(job, path, errors);
@@ -92,6 +93,43 @@ pub fn run_all_checks(cfg: &Config, path: &Path, raw: &str, errors: &mut Vec<Con
     // MUST run AFTER the per-job loop so the tag set has already been
     // normalized + dedup'd per-job (D-04 lock).
     check_tag_substring_collision(&cfg.jobs, path, errors);
+}
+
+/// Validate `memory` / `cpus`: docker jobs only, and well-formed values.
+fn check_resource_limits(job: &JobConfig, path: &Path, errors: &mut Vec<ConfigError>) {
+    if job.memory.is_none() && job.cpus.is_none() {
+        return;
+    }
+    let mut push = |message: String| {
+        errors.push(ConfigError {
+            file: path.into(),
+            line: 0,
+            col: 0,
+            message,
+        });
+    };
+    if job.image.is_none() {
+        let kind = if job.command.is_some() {
+            "command"
+        } else {
+            "script"
+        };
+        push(format!(
+            "[[jobs]] `{}`: `memory` and `cpus` are only valid on docker jobs (job with `image = \"...\"` set); this is a {kind} job and has no container to limit. Remove them, or switch the job to a docker job by setting `image`.",
+            job.name
+        ));
+        return;
+    }
+    if let Some(m) = &job.memory
+        && let Err(e) = super::resources::parse_memory_bytes(m)
+    {
+        push(format!("[[jobs]] `{}`: invalid `memory`: {e}", job.name));
+    }
+    if let Some(c) = job.cpus
+        && let Err(e) = super::resources::cpus_to_nano(c)
+    {
+        push(format!("[[jobs]] `{}`: invalid {e}", job.name));
+    }
 }
 
 fn check_timezone(tz: &str, path: &Path, errors: &mut Vec<ConfigError>) {
@@ -1028,6 +1066,39 @@ mod tests {
         assert!(!NETWORK_RE.is_match(""));
     }
 
+    #[test]
+    fn resource_limits_rejected_on_non_docker_job() {
+        let mut job = stub_job("*/5 * * * *");
+        job.memory = Some("1g".into());
+        let mut e = Vec::new();
+        check_resource_limits(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].message.contains("only valid on docker jobs"));
+
+        let mut job = stub_job("*/5 * * * *");
+        job.cpus = Some(2.0);
+        let mut e = Vec::new();
+        check_resource_limits(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 1);
+    }
+
+    #[test]
+    fn resource_limits_validated_on_docker_job() {
+        let mut job = stub_job("*/5 * * * *");
+        job.command = None;
+        job.image = Some("alpine".into());
+        job.memory = Some("16g".into());
+        job.cpus = Some(8.0);
+        let mut e = Vec::new();
+        check_resource_limits(&job, Path::new("x"), &mut e);
+        assert!(e.is_empty());
+
+        job.memory = Some("lots".into());
+        job.cpus = Some(0.0);
+        check_resource_limits(&job, Path::new("x"), &mut e);
+        assert_eq!(e.len(), 2);
+    }
+
     fn stub_job(schedule: &str) -> JobConfig {
         JobConfig {
             name: "test-job".into(),
@@ -1039,6 +1110,8 @@ mod tests {
             env: Default::default(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -1512,6 +1585,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -2037,6 +2112,8 @@ mod tests {
             env: Default::default(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,

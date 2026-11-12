@@ -7,6 +7,7 @@ pub mod defaults;
 pub mod errors;
 pub mod hash;
 pub mod interpolate;
+pub mod resources;
 pub mod validate;
 
 use secrecy::SecretString;
@@ -96,6 +97,16 @@ pub struct DefaultsConfig {
     #[serde(default)]
     pub labels: Option<std::collections::HashMap<String, String>>,
     pub delete: Option<bool>,
+    /// Docker memory limit (human size, e.g. `"16g"`, `"512m"`). Docker jobs
+    /// only (rejected on command/script jobs). Applied as
+    /// `HostConfig.memory` with `memory_swap` set equal so the container
+    /// cannot swap past the limit. Unset = no limit.
+    #[serde(default)]
+    pub memory: Option<String>,
+    /// Docker CPU limit (float number of CPUs, e.g. `8` or `1.5`). Docker jobs
+    /// only. Applied as `HostConfig.nano_cpus`. Unset = no limit.
+    #[serde(default)]
+    pub cpus: Option<f64>,
     #[serde(default, with = "humantime_serde::option")]
     pub timeout: Option<Duration>,
     #[serde(default, with = "humantime_serde::option")]
@@ -142,6 +153,16 @@ pub struct JobConfig {
     pub labels: Option<std::collections::HashMap<String, String>>,
     pub network: Option<String>,
     pub container_name: Option<String>,
+    /// Docker memory limit (human size, e.g. `"16g"`, `"512m"`). Docker jobs
+    /// only (rejected on command/script jobs). Applied as
+    /// `HostConfig.memory` with `memory_swap` set equal so the container
+    /// cannot swap past the limit. Unset = no limit.
+    #[serde(default)]
+    pub memory: Option<String>,
+    /// Docker CPU limit (float number of CPUs, e.g. `8` or `1.5`). Docker jobs
+    /// only. Applied as `HostConfig.nano_cpus`. Unset = no limit.
+    #[serde(default)]
+    pub cpus: Option<f64>,
     #[serde(default, with = "humantime_serde::option")]
     pub timeout: Option<Duration>,
     /// Cronduit-side container removal toggle. Merged from `[defaults].delete`

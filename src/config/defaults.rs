@@ -151,6 +151,19 @@ pub fn apply_defaults(mut job: JobConfig, defaults: Option<&DefaultsConfig>) -> 
     {
         job.delete = Some(v);
     }
+    // Resource limits: docker-only, per-job wins (same rule as `network`).
+    if !is_non_docker
+        && job.memory.is_none()
+        && let Some(v) = &defaults.memory
+    {
+        job.memory = Some(v.clone());
+    }
+    if !is_non_docker
+        && job.cpus.is_none()
+        && let Some(v) = defaults.cpus
+    {
+        job.cpus = Some(v);
+    }
     // Labels merge per LBL-02 / SEED-001:
     //   * use_defaults = false      → already short-circuited above
     //                                  (per-job labels stay; defaults discarded).
@@ -225,6 +238,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -242,6 +257,8 @@ mod tests {
             network: Some("container:vpn".into()),
             volumes: Some(vec!["/host/a:/a".into(), "/host/b:/b".into()]),
             labels: None,
+            memory: None,
+            cpus: None,
             delete: Some(true),
             timeout: Some(Duration::from_secs(300)),
             random_min_gap: Some(Duration::from_secs(90 * 60)),
@@ -258,6 +275,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -276,6 +295,8 @@ mod tests {
             network: Some("container:vpn".into()),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -294,6 +315,8 @@ mod tests {
             network: None,
             volumes: Some(vec!["/host/a:/a".into(), "/host/b:/b".into()]),
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -315,6 +338,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: Some(Duration::from_secs(300)),
             random_min_gap: None,
@@ -333,6 +358,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: Some(true),
             timeout: None,
             random_min_gap: None,
@@ -396,6 +423,38 @@ mod tests {
     }
 
     #[test]
+    fn apply_defaults_merges_resource_limits_docker_only_per_job_wins() {
+        let defaults = DefaultsConfig {
+            image: Some("alpine:latest".into()),
+            network: None,
+            volumes: None,
+            labels: None,
+            memory: Some("4g".into()),
+            cpus: Some(2.0),
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+            webhook: None,
+            success_exit_codes: None,
+        };
+        let docker = apply_defaults(empty_job(), Some(&defaults));
+        assert_eq!(docker.memory.as_deref(), Some("4g"));
+        assert_eq!(docker.cpus, Some(2.0));
+
+        let mut own = empty_job();
+        own.memory = Some("1g".into());
+        own.cpus = Some(0.5);
+        let own = apply_defaults(own, Some(&defaults));
+        assert_eq!(own.memory.as_deref(), Some("1g"));
+        assert_eq!(own.cpus, Some(0.5));
+
+        let mut cmd = empty_job();
+        cmd.command = Some("echo hi".into());
+        let cmd = apply_defaults(cmd, Some(&defaults));
+        assert!(cmd.memory.is_none() && cmd.cpus.is_none());
+    }
+
+    #[test]
     fn apply_defaults_merges_labels_per_job_wins() {
         // LBL-02 contract: defaults.labels ∪ per-job.labels with per-job
         // value winning on key collision. Standard "operator override"
@@ -419,6 +478,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: Some(defaults_labels),
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -468,6 +529,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: Some(defaults_labels),
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -517,6 +580,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: Some(defaults_labels),
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -567,6 +632,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -598,6 +665,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: Some(Duration::from_secs(90 * 60)),
@@ -609,6 +678,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -755,6 +826,8 @@ mod tests {
             env,
             volumes: Some(vec!["/host:/container".to_string()]),
             labels: Some(parity_labels.clone()),
+            memory: Some("2g".to_string()),
+            cpus: Some(1.5),
             network: Some("container:vpn".to_string()),
             container_name: Some("parity-test-container".to_string()),
             timeout: Some(Duration::from_secs(300)),
@@ -768,6 +841,13 @@ mod tests {
         let json_str = sync::serialize_config_json(&job);
         let v: serde_json::Value = serde_json::from_str(&json_str).expect("valid JSON");
         let obj = v.as_object().expect("top-level object");
+
+        assert_eq!(obj.get("memory").and_then(|m| m.as_str()), Some("2g"));
+        assert_eq!(obj.get("cpus").and_then(|c| c.as_f64()), Some(1.5));
+        let rt: crate::scheduler::docker::DockerJobConfig =
+            serde_json::from_str(&json_str).expect("round-trips");
+        assert_eq!(rt.memory.as_deref(), Some("2g"));
+        assert_eq!(rt.cpus, Some(1.5));
 
         // Every non-secret field DockerJobConfig reads MUST be in the output.
         assert!(
@@ -874,6 +954,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -888,6 +970,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -919,6 +1003,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -933,6 +1019,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -972,6 +1060,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -986,6 +1076,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -1019,6 +1111,8 @@ mod tests {
             env: BTreeMap::new(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
@@ -1033,6 +1127,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -1059,6 +1155,8 @@ mod tests {
             network: None,
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             delete: None,
             timeout: None,
             random_min_gap: None,
@@ -1075,6 +1173,8 @@ mod tests {
             env: Default::default(),
             volumes: None,
             labels: None,
+            memory: None,
+            cpus: None,
             network: None,
             container_name: None,
             timeout: None,
