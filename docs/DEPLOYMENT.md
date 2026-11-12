@@ -275,7 +275,7 @@ scrape_configs:
 Key metric families (full list in the [README Monitoring](../README.md#monitoring) section):
 
 - `cronduit_scheduler_up` — liveness gauge (constant `1`).
-- `cronduit_runs_total{job,status}` — run counts by status.
+- `cronduit_runs_total{job,status}` — run counts by status; zero-seeded per job at boot and on reload so `increase(...) > 0` catches a first failure.
 - `cronduit_run_duration_seconds{job}` — run-duration histogram.
 - `cronduit_docker_reachable` — `1` if bollard can ping the daemon, `0` if the socket preflight failed (useful for diagnosing a wrong `DOCKER_GID` or missing mount).
 

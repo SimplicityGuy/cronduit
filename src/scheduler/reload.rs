@@ -73,6 +73,10 @@ pub async fn do_reload(
                 "config reload successful"
             );
 
+            // Seed per-job run counters for jobs added by this reload (idempotent for
+            // existing ones) so the first failure is visible to increase().
+            crate::telemetry::seed_job_metrics(sync_result.jobs.iter().map(|j| j.name.as_str()));
+
             // 3. Rebuild in-memory jobs map (RELOAD-06: in-flight runs hold clones)
             *jobs = sync_result.jobs.iter().map(|j| (j.id, j.clone())).collect();
 

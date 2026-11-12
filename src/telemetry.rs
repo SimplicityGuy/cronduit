@@ -191,35 +191,6 @@ pub fn setup_metrics() -> PrometheusHandle {
             metrics::gauge!("cronduit_webhook_queue_depth").set(0.0);
             metrics::gauge!("cronduit_docker_reachable").set(0.0);
 
-            // Phase 10 / T-V11-STOP-16 / PITFALLS §1.6: pre-declare each
-            // terminal status label value for `cronduit_runs_total` so the
-            // /metrics text output includes a row for every possible status
-            // from boot — even before the first run of that status fires.
-            // Without this, Prometheus alerts that reference the "stopped"
-            // label value silently go missing on fresh deployments until an
-            // operator stops their first run, which can delay detection of
-            // broken alert routing.
-            //
-            // These register label-only series (no job dimension) that coexist
-            // with the job-scoped samples emitted in run.rs — metrics-exporter-
-            // prometheus renders each distinct label set as its own line, so
-            // `cronduit_runs_total{status="stopped"}` and
-            // `cronduit_runs_total{job="foo",status="stopped"}` are separate
-            // samples. Alerting rules that only care about the status label
-            // can use `sum by (status) (cronduit_runs_total)` or match on the
-            // label-only series directly.
-            for status in [
-                "success",
-                "failed",
-                "timeout",
-                "cancelled",
-                "error",
-                "stopped",
-            ] {
-                metrics::counter!("cronduit_runs_total", "status" => status.to_string())
-                    .increment(0);
-            }
-
             // Phase 20 / WH-11 / D-22 + D-23: closed-enum status pre-seed for
             // the labeled webhook delivery family. Only the `status` dimension
             // is seeded here (no `job` label) — per-job × per-status seeding
@@ -239,4 +210,55 @@ pub fn setup_metrics() -> PrometheusHandle {
             handle
         })
         .clone()
+}
+
+/// Terminal `status` label values of `cronduit_runs_total{job,status}`; mirrors the
+/// status strings `scheduler::run::run_job` finalizes a run with.
+pub const RUN_STATUSES: [&str; 6] = [
+    "success",
+    "failed",
+    "timeout",
+    "cancelled",
+    "error",
+    "stopped",
+];
+
+/// Zero-seed the per-job run counters for the given job names.
+///
+/// Seeds `cronduit_runs_total{job,status}` for every terminal status and
+/// `cronduit_run_failures_total{job,reason}` for every closed-enum reason.
+/// Prometheus `increase()`/`rate()` read 0 for a series whose first sample is
+/// already 1, so without a prior 0 sample the first failure of a job (and the
+/// first after each restart) is invisible to `increase(...) > 0` alerts.
+///
+/// Called from the two places a configured job set is established: boot
+/// (`cli::run`) and every config reload (`scheduler::reload`). It is idempotent
+/// (`increment(0)` never changes a live value), so re-seeding on each reload is
+/// safe and gives newly added jobs their series without a restart.
+///
+/// Removed or disabled jobs: the `metrics` facade cannot delete series, so
+/// their series stay on `/metrics` frozen at their last value until restart.
+/// This is harmless (a frozen counter has `increase() == 0`) and bounded by
+/// the number of distinct job names seen since boot.
+///
+/// Must run after [`setup_metrics`] has installed the recorder.
+pub fn seed_job_metrics<'a>(job_names: impl IntoIterator<Item = &'a str>) {
+    for name in job_names {
+        for status in RUN_STATUSES {
+            metrics::counter!(
+                "cronduit_runs_total",
+                "job" => name.to_string(),
+                "status" => status,
+            )
+            .increment(0);
+        }
+        for reason in crate::scheduler::run::FailureReason::ALL {
+            metrics::counter!(
+                "cronduit_run_failures_total",
+                "job" => name.to_string(),
+                "reason" => reason.as_label(),
+            )
+            .increment(0);
+        }
+    }
 }
