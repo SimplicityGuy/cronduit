@@ -14,7 +14,8 @@ body = """
 {% endif %}\
 {% for group, commits in commits | group_by(attribute="group") %}
     ### {{ group | striptags | trim | upper_first }}
-    {% for commit in commits %}
+    {# unique(attribute="message") drops repeated lines: a squash merge's body can repeat its title as a bullet #}
+    {% for commit in commits | unique(attribute="message") %}
         - {% if commit.scope %}*({{ commit.scope }})*: {% endif %}\
             {{ commit.message | upper_first }}\
     {% endfor %}
@@ -25,7 +26,10 @@ trim = true
 [git]
 conventional_commits = true
 filter_unconventional = true
-split_commits = false
+# Split each squash-merge body into its own commits. GitHub squash merges put
+# the real `feat(...)`/`fix(...)` lines in the body as `* ` bullets, which
+# are otherwise invisible to the subject-only parser.
+split_commits = true
 # Rewrite non-conventional squash-merge titles so git-cliff's conventional
 # parser accepts them. Cronduit ships one `Phase N: ...` squash-merge per
 # executed GSD phase (e.g. `Phase 12: Docker Healthcheck + rc.1 Cut (#29)`)
@@ -33,6 +37,10 @@ split_commits = false
 # is conventional-commits form, so without these preprocessors git-cliff
 # silently drops them and rc release notes come out near-empty.
 commit_preprocessors = [
+    # Strip the GitHub squash-merge bullet so `* feat(x): y` parses as `feat(x): y`.
+    { pattern = "(?m)^\\* ", replace = "" },
+    # Drop trailer lines (Co-Authored-By, Claude-Session, Refs, ...) so they don't leak into notes.
+    { pattern = "(?mi)^(co-authored-by|claude-session|signed-off-by|reviewed-by|refs|closes|fixes|resolves):.*$", replace = "" },
     { pattern = "^(Phase \\d+: .*)", replace = "feat: $1" },
     { pattern = "^(Milestone .*)", replace = "feat: $1" },
 ]
