@@ -16,15 +16,25 @@ pub fn parse_memory_bytes(input: &str) -> Result<i64, String> {
     let value: f64 = num.parse().map_err(|_| {
         format!("`{input}` is not a valid memory size (expected e.g. \"512m\", \"16g\")")
     })?;
-    let mult: f64 = match unit.trim() {
-        "" | "b" => 1.0,
-        "k" | "kb" | "kib" => 1024.0,
-        "m" | "mb" | "mib" => 1024.0 * 1024.0,
-        "g" | "gb" | "gib" => 1024.0 * 1024.0 * 1024.0,
-        "t" | "tb" | "tib" => 1024.0_f64.powi(4),
-        other => {
+    // Docker (go-units) accepts `<prefix>[i][b]` with prefix in k/m/g/t/p, e.g.
+    // `16g`, `16gb`, `16gi`, `16gib`, `1p`. All units are binary.
+    let u = unit.trim();
+    let u = u.strip_suffix('b').unwrap_or(u);
+    let (prefix, had_i) = match u.strip_suffix('i') {
+        Some(rest) => (rest, true),
+        None => (u, false),
+    };
+    let mult: f64 = match prefix {
+        "" if !had_i => 1.0,
+        "k" => 1024.0,
+        "m" => 1024.0_f64.powi(2),
+        "g" => 1024.0_f64.powi(3),
+        "t" => 1024.0_f64.powi(4),
+        "p" => 1024.0_f64.powi(5),
+        _ => {
             return Err(format!(
-                "`{input}` has unknown unit `{other}` (use b, k, m, g, or t)"
+                "`{input}` has unknown unit `{}` (use b, k, m, g, t, or p)",
+                unit.trim()
             ));
         }
     };
@@ -74,11 +84,23 @@ mod tests {
         assert_eq!(parse_memory_bytes("1.5gb").unwrap(), 1536 * 1024 * 1024);
         assert_eq!(parse_memory_bytes("6291456").unwrap(), 6 * 1024 * 1024);
         assert_eq!(parse_memory_bytes(" 8m ").unwrap(), 8 * 1024 * 1024);
+        assert_eq!(parse_memory_bytes("16gi").unwrap(), 16 * 1024 * 1024 * 1024);
+        assert_eq!(
+            parse_memory_bytes("16GiB").unwrap(),
+            16 * 1024 * 1024 * 1024
+        );
+        assert_eq!(parse_memory_bytes("1ti").unwrap(), 1024_i64.pow(4));
+        assert_eq!(parse_memory_bytes("1p").unwrap(), 1024_i64.pow(5));
+        assert_eq!(parse_memory_bytes("1pb").unwrap(), 1024_i64.pow(5));
+        assert_eq!(parse_memory_bytes("1pib").unwrap(), 1024_i64.pow(5));
+        assert_eq!(parse_memory_bytes("8mb").unwrap(), 8 * 1024 * 1024);
     }
 
     #[test]
     fn memory_rejects_bad() {
-        for bad in ["", "g", "0", "0m", "-1g", "12x", "abc", "1..5g"] {
+        for bad in [
+            "", "g", "0", "0m", "-1g", "12x", "abc", "1..5g", "8i", "8ib", "8gx", "8e",
+        ] {
             assert!(parse_memory_bytes(bad).is_err(), "{bad} should fail");
         }
     }
