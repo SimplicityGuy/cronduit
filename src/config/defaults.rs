@@ -194,6 +194,12 @@ pub fn apply_defaults(mut job: JobConfig, defaults: Option<&DefaultsConfig>) -> 
     {
         job.webhook = Some(v.clone());
     }
+    // success_exit_codes applies to every job type; per-job replaces defaults.
+    if job.success_exit_codes.is_none()
+        && let Some(v) = &defaults.success_exit_codes
+    {
+        job.success_exit_codes = Some(v.clone());
+    }
     // NOTE: random_min_gap is intentionally NOT merged -- see module doc.
     // NOTE: cmd is per-job ONLY -- DefaultsConfig has no `cmd` field.
     // NOTE: container_name is per-job ONLY -- two containers cannot share a name.
@@ -226,6 +232,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         }
     }
 
@@ -239,6 +246,7 @@ mod tests {
             timeout: Some(Duration::from_secs(300)),
             random_min_gap: Some(Duration::from_secs(90 * 60)),
             webhook: None,
+            success_exit_codes: None,
         }
     }
 
@@ -254,6 +262,7 @@ mod tests {
             timeout: None,
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.image.as_deref(), Some("alpine:latest"));
@@ -271,6 +280,7 @@ mod tests {
             timeout: None,
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.network.as_deref(), Some("container:vpn"));
@@ -288,6 +298,7 @@ mod tests {
             timeout: None,
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(
@@ -308,6 +319,7 @@ mod tests {
             timeout: Some(Duration::from_secs(300)),
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.timeout, Some(Duration::from_secs(300)));
@@ -325,6 +337,7 @@ mod tests {
             timeout: None,
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert_eq!(merged.delete, Some(true));
@@ -410,6 +423,7 @@ mod tests {
             timeout: None,
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -458,6 +472,7 @@ mod tests {
             timeout: None,
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -506,6 +521,7 @@ mod tests {
             timeout: None,
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
 
         let merged = apply_defaults(job, Some(&defaults));
@@ -558,6 +574,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, None);
         assert_eq!(merged.image, None);
@@ -585,6 +602,7 @@ mod tests {
             timeout: None,
             random_min_gap: Some(Duration::from_secs(90 * 60)),
             webhook: None,
+            success_exit_codes: None,
         };
         let defaults_without_gap = DefaultsConfig {
             image: Some("alpine:latest".into()),
@@ -595,6 +613,7 @@ mod tests {
             timeout: None,
             random_min_gap: None,
             webhook: None,
+            success_exit_codes: None,
         };
 
         let merged_with = apply_defaults(job_with_gap, Some(&defaults_with_gap));
@@ -743,6 +762,7 @@ mod tests {
             cmd: Some(vec!["echo".to_string(), "parity".to_string()]),
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         };
 
         let json_str = sync::serialize_config_json(&job);
@@ -861,6 +881,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         };
         let defaults = DefaultsConfig {
             image: None,
@@ -877,6 +898,7 @@ mod tests {
                 unsigned: false,
                 fire_every: 1,
             }),
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         let wh = merged.webhook.expect("webhook filled from defaults");
@@ -904,6 +926,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         };
         let defaults = DefaultsConfig {
             image: None,
@@ -920,6 +943,7 @@ mod tests {
                 unsigned: false,
                 fire_every: 1,
             }),
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert!(
@@ -955,6 +979,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: Some(per_job_wh.clone()),
+            success_exit_codes: None,
         };
         let defaults = DefaultsConfig {
             image: None,
@@ -971,6 +996,7 @@ mod tests {
                 unsigned: false,
                 fire_every: 1,
             }),
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         let wh = merged.webhook.unwrap();
@@ -1000,6 +1026,7 @@ mod tests {
             cmd: None,
             tags: Vec::new(),
             webhook: None,
+            success_exit_codes: None,
         };
         let defaults = DefaultsConfig {
             image: None,
@@ -1016,11 +1043,55 @@ mod tests {
                 unsigned: false,
                 fire_every: 1,
             }),
+            success_exit_codes: None,
         };
         let merged = apply_defaults(job, Some(&defaults));
         assert!(
             merged.webhook.is_some(),
             "webhook must apply to command jobs (no type-gate)"
         );
+    }
+
+    #[test]
+    fn success_exit_codes_merge_from_defaults_and_per_job_wins() {
+        let defaults = DefaultsConfig {
+            image: None,
+            network: None,
+            volumes: None,
+            labels: None,
+            delete: None,
+            timeout: None,
+            random_min_gap: None,
+            webhook: None,
+            success_exit_codes: Some(vec![0, 75]),
+        };
+        let mk = |codes: Option<Vec<i64>>, use_defaults: Option<bool>| JobConfig {
+            name: "j".into(),
+            schedule: "* * * * *".into(),
+            command: Some("true".into()),
+            script: None,
+            image: None,
+            use_defaults,
+            env: Default::default(),
+            volumes: None,
+            labels: None,
+            network: None,
+            container_name: None,
+            timeout: None,
+            delete: None,
+            cmd: None,
+            tags: Vec::new(),
+            webhook: None,
+            success_exit_codes: codes,
+        };
+        // Inherited by a non-docker job (applies to every job type).
+        let merged = apply_defaults(mk(None, None), Some(&defaults));
+        assert_eq!(merged.success_exit_codes, Some(vec![0, 75]));
+        // Per-job replaces.
+        let merged = apply_defaults(mk(Some(vec![0, 3]), None), Some(&defaults));
+        assert_eq!(merged.success_exit_codes, Some(vec![0, 3]));
+        // use_defaults = false discards defaults.
+        let merged = apply_defaults(mk(None, Some(false)), Some(&defaults));
+        assert_eq!(merged.success_exit_codes, None);
     }
 }

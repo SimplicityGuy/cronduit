@@ -1,7 +1,8 @@
 //! Pure-Rust exit-code bucket categorizer + aggregator (Phase 21, EXIT-01..EXIT-05).
 //!
 //! Status-discriminator-wins classifier (CONTEXT D-08):
-//!   status="success"          -> None        (handled by success-rate stat per EXIT-03)
+//!   status="success", exit 0  -> None        (handled by success-rate stat per EXIT-03)
+//!   status="success", exit!=0 -> bucketed by its real code (operator `success_exit_codes` hit)
 //!   status="stopped"          -> Bucket::Stopped  (regardless of exit_code 137 — cronduit's SIGKILL path)
 //!   exit_code IS NULL         -> Bucket::Null  (timeout / cancelled-without-code)
 //!   exit_code == Some(1)      -> Bucket::Bucket1
@@ -61,8 +62,10 @@ pub struct HistogramCard {
 /// Returns the bucket for a (status, exit_code) pair, or None for the success path.
 ///
 /// Status-discriminator-wins (D-08):
-/// - `status == "success"` always returns `None` regardless of exit_code (success
-///   does not occupy a bucket — it's reported via the success-rate stat per EXIT-03).
+/// - `status == "success"` with exit code 0/None returns `None` (success does not
+///   occupy a bucket — it's reported via the success-rate stat per EXIT-03). A
+///   success with a non-zero exit code (a `success_exit_codes` hit) is bucketed
+///   by its real code.
 /// - `status == "stopped"` always returns `Some(BucketStopped)` regardless of
 ///   exit_code. This is cronduit's operator-stop path; the SIGKILL-induced exit
 ///   code 137 is incidental, NOT a classifier signal (EXIT-04).
@@ -71,8 +74,17 @@ pub struct HistogramCard {
 ///   (1, 2, 127, 255); the four ranges (3..=9, 10..=126, 128..=143, 144..=254);
 ///   defensive fallback for any code outside POSIX 0..=255 → `BucketNull`.
 pub fn categorize(status: &str, exit_code: Option<i32>) -> Option<ExitBucket> {
-    if status == "success" {
+    // A plain success (exit 0 / no code) occupies no bucket. A success with a
+    // non-zero exit code is an operator-declared `success_exit_codes` hit; it
+    // IS bucketed so e.g. exit 75 stays distinguishable from exit 0.
+    if status == "success" && matches!(exit_code, None | Some(0)) {
         return None;
+    }
+    if status == "stopped" {
+        return Some(ExitBucket::BucketStopped);
+    }
+    if status == "success" {
+        return categorize("failed", exit_code);
     }
     if status == "stopped" {
         return Some(ExitBucket::BucketStopped);
@@ -117,7 +129,12 @@ pub fn aggregate(rows: &[(String, Option<i32>, Option<String>)]) -> HistogramCar
     for (status, exit_code, end_time) in rows {
         if status == "success" {
             success_count += 1;
-            continue;
+            // Plain success: no bucket, no per-code tracking.
+            if matches!(exit_code, None | Some(0)) {
+                continue;
+            }
+            // Non-zero success (`success_exit_codes`): fall through so the real
+            // code is bucketed and eligible for the top-3 list.
         }
         if status == "stopped" {
             stopped_count += 1;
@@ -314,5 +331,29 @@ mod tests {
         assert!(card.top_codes.is_empty());
         assert_eq!(card.success_count, 0);
         assert_eq!(card.stopped_count, 0);
+    }
+
+    #[test]
+    fn success_with_nonzero_exit_is_bucketed_and_counted() {
+        // success_exit_codes hit: exit 75 stays distinguishable from exit 0.
+        assert_eq!(categorize("success", Some(0)), None);
+        assert_eq!(categorize("success", None), None);
+        assert_eq!(
+            categorize("success", Some(75)),
+            Some(ExitBucket::Bucket10to126)
+        );
+        let rows = vec![
+            ("success".to_string(), Some(0), Some("t1".to_string())),
+            ("success".to_string(), Some(75), Some("t2".to_string())),
+            ("success".to_string(), Some(75), Some("t3".to_string())),
+            ("failed".to_string(), Some(1), Some("t4".to_string())),
+        ];
+        let card = aggregate(&rows);
+        assert_eq!(card.success_count, 3);
+        assert_eq!(card.buckets.get(&ExitBucket::Bucket10to126), Some(&2));
+        assert_eq!(card.buckets.get(&ExitBucket::Bucket1), Some(&1));
+        assert_eq!(card.top_codes[0].code, 75);
+        assert_eq!(card.top_codes[0].count, 2);
+        assert!((card.success_rate.unwrap() - 0.75).abs() < 1e-9);
     }
 }

@@ -108,6 +108,13 @@ pub struct DefaultsConfig {
     /// like `labels`). Validators in `validate.rs` reject malformed shapes.
     #[serde(default)]
     pub webhook: Option<WebhookConfig>,
+    /// Exit codes (integers 0-255) that finalize a run as `success` instead
+    /// of `failed`. The real exit code is still recorded and displayed.
+    /// `None` means the default `[0]`. Timeout / stopped / spawn errors are
+    /// never promoted to success. Applies to every job type; mergeable from
+    /// `[defaults]` (per-job replaces). Validated in `validate.rs`.
+    #[serde(default)]
+    pub success_exit_codes: Option<Vec<i64>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +187,13 @@ pub struct JobConfig {
     /// bin layer (Plan 05) — not from `config_json`. See RESEARCH Open Q 1.
     #[serde(default)]
     pub webhook: Option<WebhookConfig>,
+    /// Exit codes (integers 0-255) that finalize a run as `success` instead
+    /// of `failed`. The real exit code is still recorded and displayed.
+    /// `None` means the default `[0]`. Timeout / stopped / spawn errors are
+    /// never promoted to success. Applies to every job type; mergeable from
+    /// `[defaults]` (per-job replaces). Validated in `validate.rs`.
+    #[serde(default)]
+    pub success_exit_codes: Option<Vec<i64>>,
 }
 
 /// Per-job and `[defaults]` webhook configuration.
