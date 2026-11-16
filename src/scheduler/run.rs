@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::RunResult;
 use super::command::{self, RunStatus};
+use super::job_env::JobEnv;
 
 /// Closed-enum failure reasons for the cronduit_run_failures_total metric (D-05).
 /// Cardinality fixed at 8 values -- never add unbounded labels.
@@ -126,6 +127,7 @@ pub async fn run_job(
     active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
     webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
     scheduled_for: Option<String>, // Phase 21 FCTX-06 (D-02): RFC3339 fire-decision timestamp
+    env: JobEnv,
 ) -> RunResult {
     let start = tokio::time::Instant::now();
 
@@ -177,6 +179,7 @@ pub async fn run_job(
         cancel,
         active_runs,
         webhook_tx,
+        env,
     )
     .await
 }
@@ -193,6 +196,7 @@ pub async fn run_job(
 ///
 /// The legacy scheduler-driven `run_job` path is preserved unchanged for
 /// cron-tick + catch-up runs (RESEARCH Q1 RESOLVED).
+#[allow(clippy::too_many_arguments)]
 pub async fn run_job_with_existing_run_id(
     pool: DbPool,
     docker: Option<Docker>,
@@ -201,6 +205,7 @@ pub async fn run_job_with_existing_run_id(
     cancel: CancellationToken,
     active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
     webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
+    env: JobEnv,
 ) -> RunResult {
     let start = tokio::time::Instant::now();
     tracing::info!(
@@ -219,6 +224,7 @@ pub async fn run_job_with_existing_run_id(
         cancel,
         active_runs,
         webhook_tx,
+        env,
     )
     .await
 }
@@ -239,6 +245,7 @@ async fn continue_run(
     cancel: CancellationToken,
     active_runs: Arc<RwLock<HashMap<i64, crate::scheduler::RunEntry>>>,
     webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
+    env: JobEnv,
 ) -> RunResult {
     // 1b. Create broadcast channel for SSE subscribers (UI-14, D-03).
     let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<LogLine>(256);
@@ -351,9 +358,13 @@ async fn continue_run(
         }
         "docker" => match &docker {
             Some(docker_client) => {
+                // [jobs.env] values come from the in-memory config (the
+                // caller's `env`), never from config_json, which holds only
+                // `env_keys` (T-02-03). See `scheduler::job_env`.
                 let docker_result = super::docker::execute_docker(
                     docker_client,
                     &job.config_json,
+                    &env,
                     &job.name,
                     run_id,
                     timeout,
@@ -876,6 +887,7 @@ mod tests {
             test_active_runs(),
             webhook_tx_test,
             None, // Phase 21 FCTX-06: test passes None (no fire_time materialized in test fixture)
+            Default::default(),
         )
         .await;
 
@@ -946,6 +958,7 @@ mod tests {
             test_active_runs(),
             webhook_tx_test,
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await;
 
@@ -1002,6 +1015,7 @@ mod tests {
             test_active_runs(),
             webhook_tx_test,
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await;
 
@@ -1070,6 +1084,7 @@ mod tests {
             cancel,
             test_active_runs(),
             webhook_tx_test,
+            Default::default(),
         )
         .await;
 
@@ -1141,6 +1156,7 @@ mod tests {
                 active1,
                 webhook_tx_test1,
                 None, // Phase 21 FCTX-06: test passes None
+                Default::default(),
             ),
             run_job(
                 pool2,
@@ -1151,6 +1167,7 @@ mod tests {
                 active2,
                 webhook_tx_test2,
                 None, // Phase 21 FCTX-06: test passes None
+                Default::default(),
             ),
         );
 
@@ -1230,6 +1247,7 @@ mod tests {
             test_active_runs(),
             tx,
             None,
+            Default::default(),
         )
         .await;
         let code = match pool.reader() {

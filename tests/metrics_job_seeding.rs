@@ -126,7 +126,14 @@ command = "echo a"
 "#;
     let cfg = write_config(one);
     let mut jobs = HashMap::new();
-    let (r, _) = do_reload(&pool, cfg.path(), &mut jobs, chrono_tz::UTC).await;
+    let (r, _) = do_reload(
+        &pool,
+        cfg.path(),
+        &mut jobs,
+        &mut Default::default(),
+        chrono_tz::UTC,
+    )
+    .await;
     assert_eq!(r.added, 1, "{:?}", r.error_message);
     let body = handle.render();
     assert_seeded(&body, "seed-reload-a");
@@ -139,7 +146,14 @@ command = "echo a"
         ),
     )
     .unwrap();
-    let (r, _) = do_reload(&pool, cfg.path(), &mut jobs, chrono_tz::UTC).await;
+    let (r, _) = do_reload(
+        &pool,
+        cfg.path(),
+        &mut jobs,
+        &mut Default::default(),
+        chrono_tz::UTC,
+    )
+    .await;
     assert_eq!(r.added, 1, "{:?}", r.error_message);
     let body = handle.render();
     assert_seeded(&body, "seed-reload-a");
@@ -197,6 +211,7 @@ async fn first_failure_moves_the_seeded_series_from_0_to_1() {
         active,
         wtx,
         None,
+        Default::default(),
     )
     .await;
     assert_eq!(res.status, "failed");

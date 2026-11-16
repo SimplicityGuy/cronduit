@@ -99,6 +99,7 @@ labels = {{ "traefik.enable" = "true", "traefik.http.routers.x.rule" = "Host(`x.
     let result = execute_docker(
         &docker,
         &config_json,
+        &Default::default(),
         "labels-merge-job",
         42,
         Duration::from_secs(30),

@@ -16,6 +16,7 @@ use crate::db::DbPool;
 use crate::db::queries::DbJob;
 use crate::scheduler::cmd::{ReloadResult, ReloadStatus, SchedulerCmd};
 use crate::scheduler::fire;
+use crate::scheduler::job_env::{JobEnvMap, build_job_env_map};
 use crate::scheduler::sync;
 use chrono_tz::Tz;
 
@@ -26,10 +27,16 @@ use chrono_tz::Tz;
 /// a new fire heap (RELOAD-05, RELOAD-06, RELOAD-07).
 ///
 /// In-flight runs are not affected because they hold cloned DbJob values (RELOAD-06).
+///
+/// On success `job_env` is rebuilt from the freshly parsed config, so `[jobs.env]`
+/// edits (including rotated secret values, which do not change `config_hash`)
+/// reach the next run with no restart. In-flight runs keep the `Arc` they were
+/// spawned with. On failure `job_env` is left untouched, like `jobs`.
 pub async fn do_reload(
     pool: &DbPool,
     config_path: &Path,
     jobs: &mut HashMap<i64, DbJob>,
+    job_env: &mut JobEnvMap,
     tz: Tz,
 ) -> (ReloadResult, Option<BinaryHeap<Reverse<fire::FireEntry>>>) {
     // 1. Parse and validate (RELOAD-04: failure leaves running config untouched)
@@ -79,6 +86,11 @@ pub async fn do_reload(
 
             // 3. Rebuild in-memory jobs map (RELOAD-06: in-flight runs hold clones)
             *jobs = sync_result.jobs.iter().map(|j| (j.id, j.clone())).collect();
+
+            // 3b. Rebuild the resolved [jobs.env] map from the in-memory config.
+            // Values never go through config_json (T-02-03), so this is the only
+            // way an env edit reaches the next docker run.
+            *job_env = build_job_env_map(&parsed.config);
 
             // 4. Rebuild fire heap with new job set
             let new_heap = fire::build_initial_heap(&sync_result.jobs, tz);

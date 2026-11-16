@@ -347,6 +347,12 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         cfg.server.webhook_drain_grace,
     );
 
+    // Resolved [jobs.env] per job name (cronduit-1b1). config_json stores only
+    // env_keys (T-02-03), so this in-memory map is the SOLE source of env
+    // values for docker runs. The scheduler loop owns it and `do_reload`
+    // rebuilds it on every successful reload.
+    let job_env = crate::scheduler::job_env::build_job_env_map(cfg);
+
     // Spawn the scheduler loop.
     let scheduler_handle = crate::scheduler::spawn(
         pool.clone(),
@@ -359,6 +365,7 @@ pub async fn execute(cli: &Cli) -> anyhow::Result<i32> {
         config_path.to_path_buf(),
         active_runs,
         webhook_tx,
+        job_env,
     );
 
     // Serve web (blocks until cancel).

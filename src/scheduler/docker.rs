@@ -8,7 +8,7 @@
 //! DOCKER-06: auto_remove=false to avoid the moby#8441 race.
 //! DOCKER-07: Labels carry run_id and job_name (never secrets).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use bollard::Docker;
@@ -18,6 +18,7 @@ use bollard::query_parameters::{
     StopContainerOptions,
 };
 use futures_util::StreamExt;
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -25,13 +26,16 @@ use super::command::{ExecResult, RunStatus};
 use super::log_pipeline::{LogSender, make_log_line};
 
 /// Docker-specific fields deserialized from the job's `config_json`.
+///
+/// There is deliberately no `env` field: `config_json` stores only the
+/// `[jobs.env]` key names (`env_keys`, T-02-03), never values. The resolved
+/// values reach the executor as the separate `env` argument of
+/// [`execute_docker`] (see `crate::scheduler::job_env`). An `env` key in
+/// `config_json` is ignored.
 #[derive(Debug, Deserialize)]
 pub struct DockerJobConfig {
     /// Docker image (required for docker-type jobs).
     pub image: String,
-    /// Environment variables to pass to the container.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
     /// Volume bind mounts (e.g. `["/host:/container:ro"]`).
     #[serde(default)]
     pub volumes: Option<Vec<String>>,
@@ -103,7 +107,25 @@ pub struct DockerExecResult {
     pub container_id: Option<String>,
 }
 
+/// Build the container's `Env` (`KEY=VALUE` strings) from a job's resolved
+/// `[jobs.env]`. This is the only place the secret values are exposed; the
+/// result goes straight into `ContainerCreateBody.env`. Returns `None` for an
+/// empty env so the container inherits only the image's own environment.
+pub fn container_env(env: &BTreeMap<String, SecretString>) -> Option<Vec<String>> {
+    if env.is_empty() {
+        return None;
+    }
+    Some(
+        env.iter()
+            .map(|(k, v)| format!("{k}={}", v.expose_secret()))
+            .collect(),
+    )
+}
+
 /// Execute a Docker job: create -> start -> inspect -> wait/timeout/cancel -> drain logs -> remove.
+///
+/// `env` is the job's resolved `[jobs.env]` (from the in-memory config, never
+/// from `config_json`); it becomes the container's `Env`.
 ///
 /// The lifecycle state machine:
 /// Creating -> Starting -> Running -> Exited -> LogsDrained -> Removed
@@ -114,6 +136,7 @@ pub struct DockerExecResult {
 pub async fn execute_docker(
     docker: &Docker,
     config_json: &str,
+    env: &BTreeMap<String, SecretString>,
     job_name: &str,
     run_id: i64,
     timeout: Duration,
@@ -199,9 +222,6 @@ pub async fn execute_docker(
     labels.insert("cronduit.run_id".to_string(), run_id.to_string());
     labels.insert("cronduit.job_name".to_string(), job_name.to_string());
 
-    // Build env vars as KEY=VALUE strings.
-    let env_vec: Vec<String> = config.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
-
     // Resource limits (docker-only). `memory_swap` equal to `memory` means no
     // swap allowance beyond the limit.
     let memory_bytes = match config
@@ -234,11 +254,7 @@ pub async fn execute_docker(
     let container_body = ContainerCreateBody {
         image: Some(config.image.clone()),
         cmd: config.cmd.clone(),
-        env: if env_vec.is_empty() {
-            None
-        } else {
-            Some(env_vec)
-        },
+        env: container_env(env),
         labels: Some(labels),
         host_config: Some(host_config),
         ..Default::default()
@@ -633,10 +649,10 @@ mod tests {
             "network": "container:vpn",
             "container_name": "my-job"
         }"#;
+        // An `env` key in config_json is ignored: values never travel through
+        // config_json (T-02-03); they come from the in-memory config instead.
         let config: DockerJobConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.image, "alpine:latest");
-        assert_eq!(config.env.get("FOO").unwrap(), "bar");
-        assert_eq!(config.env.get("BAZ").unwrap(), "qux");
         assert_eq!(config.volumes.as_ref().unwrap().len(), 1);
         assert_eq!(config.volumes.as_ref().unwrap()[0], "/host:/container:ro");
         assert_eq!(config.network.as_ref().unwrap(), "container:vpn");
@@ -648,7 +664,6 @@ mod tests {
         let json = r#"{"image": "nginx:1.25"}"#;
         let config: DockerJobConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.image, "nginx:1.25");
-        assert!(config.env.is_empty());
         assert!(config.cmd.is_none());
         assert!(config.volumes.is_none());
         assert!(config.network.is_none());
@@ -658,6 +673,30 @@ mod tests {
             "delete must default to None; `maybe_cleanup_container` treats None as \
              `delete = true` semantics (remove), consistent with spec"
         );
+    }
+
+    #[test]
+    fn container_env_formats_resolved_secrets_as_key_value_pairs() {
+        let mut env = BTreeMap::new();
+        env.insert("FOO".to_string(), SecretString::from("bar"));
+        env.insert(
+            "DSN".to_string(),
+            SecretString::from("postgres://u:p@h/db?x=1"),
+        );
+        env.insert("EMPTY".to_string(), SecretString::from(""));
+        assert_eq!(
+            container_env(&env),
+            Some(vec![
+                "DSN=postgres://u:p@h/db?x=1".to_string(),
+                "EMPTY=".to_string(),
+                "FOO=bar".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn container_env_is_none_for_empty_env() {
+        assert_eq!(container_env(&BTreeMap::new()), None);
     }
 
     #[test]

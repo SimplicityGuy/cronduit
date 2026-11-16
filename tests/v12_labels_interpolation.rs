@@ -102,6 +102,7 @@ labels = {{ "deployment.id" = "${{DEPLOYMENT_ID}}" }}
     let result = execute_docker(
         &docker,
         &config_json,
+        &Default::default(),
         "labels-interp-job",
         44,
         Duration::from_secs(30),

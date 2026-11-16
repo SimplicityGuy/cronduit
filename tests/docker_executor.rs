@@ -77,6 +77,7 @@ async fn test_docker_basic_echo() {
     let result = execute_docker(
         &docker,
         config_json,
+        &Default::default(),
         "test-echo",
         1,
         Duration::from_secs(30),
@@ -129,6 +130,7 @@ async fn test_docker_timeout_stops_container() {
     let result = execute_docker(
         &docker,
         config_json,
+        &Default::default(),
         "test-timeout",
         2,
         Duration::from_secs(2),
@@ -287,6 +289,7 @@ async fn test_docker_execute_preflight_failure_returns_error() {
     let result = execute_docker(
         &docker,
         config_json,
+        &Default::default(),
         "test-preflight-fail",
         3,
         Duration::from_secs(30),

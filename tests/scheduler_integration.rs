@@ -130,6 +130,7 @@ async fn test_command_job_fires_and_captures_logs() {
             test_active_runs(),
             test_webhook_tx(),
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await;
 
@@ -205,6 +206,7 @@ async fn test_script_job_fires_and_captures_logs() {
             test_active_runs(),
             test_webhook_tx(),
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await;
 
@@ -266,6 +268,7 @@ async fn test_failed_command_records_exit_code() {
             test_active_runs(),
             test_webhook_tx(),
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await;
 
@@ -315,6 +318,7 @@ async fn test_timeout_preserves_partial_logs() {
             test_active_runs(),
             test_webhook_tx(),
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await;
 
@@ -380,6 +384,7 @@ async fn test_sync_disables_removed_jobs() {
             test_active_runs(),
             test_webhook_tx(),
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await;
         assert_eq!(run_result.status, "success");
@@ -467,6 +472,7 @@ async fn test_concurrent_runs_same_job() {
                 test_active_runs(),
                 test_webhook_tx(),
                 None, // Phase 21 FCTX-06: test passes None
+                Default::default(),
             ),
             run_job(
                 pool2,
@@ -477,6 +483,7 @@ async fn test_concurrent_runs_same_job() {
                 test_active_runs(),
                 test_webhook_tx(),
                 None, // Phase 21 FCTX-06: test passes None
+                Default::default(),
             ),
         );
 
@@ -534,6 +541,7 @@ async fn test_timeout_with_success_exit_codes_stays_timeout() {
             test_active_runs(),
             tx,
             None,
+            Default::default(),
         )
         .await;
 
@@ -584,6 +592,7 @@ async fn test_promoted_success_run_does_not_fire_failed_webhook() {
             test_active_runs(),
             tx,
             None,
+            Default::default(),
         )
         .await;
         assert_eq!(result.status, "success");

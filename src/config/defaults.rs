@@ -15,6 +15,13 @@
 //! 5. `DockerJobConfig` in `src/scheduler/docker.rs` -- the executor-side
 //!    deserialize struct that reads the serialized JSON.
 //!
+//! `env` is the exception: its values are secrets and never enter
+//! `config_json` (only `env_keys`). They reach `execute_docker` through a
+//! separate in-memory path, `scheduler::job_env` (built at startup, rebuilt
+//! on every reload). `parity_env_reaches_container_via_job_env` below guards
+//! that path; before cronduit-1b1 it did not exist and env never reached
+//! docker containers.
+//!
 //! When one of the five drifts without the others, silent behavior regressions
 //! slip through unit tests that construct hand-rolled fixtures. The class of
 //! bug that produced both the `[defaults]` merge bug (issue #20) AND the
@@ -48,14 +55,17 @@
 //!     }
 //!     class DockerJobConfig {
 //!         +image: String
-//!         +env: HashMap~String,String~
 //!         +volumes: Option~Vec~String~~
 //!         +cmd: Option~Vec~String~~
 //!         +network: Option~String~
 //!         +container_name: Option~String~
 //!     }
 //!     JobConfig --> DefaultsConfig : apply_defaults merges image/network/volumes/delete/timeout
+//!     class JobEnvMap {
+//!         +job name: Arc~BTreeMap~String,SecretString~~
+//!     }
 //!     JobConfig --> DockerJobConfig : serialize_config_json -> config_json -> deserialize
+//!     JobConfig --> JobEnvMap : build_job_env_map (in memory, rebuilt on reload) -> execute_docker env
 //! ```
 //!
 //! ## Parity table
@@ -63,7 +73,7 @@
 //! | DockerJobConfig field | JobConfig field  | serialize_config_json  | compute_config_hash | apply_defaults decision | Notes |
 //! |---|---|---|---|---|---|
 //! | `image`           | `image`          | yes                    | yes                 | mergeable               | Falls back to `[defaults].image` |
-//! | `env`             | `env`            | keys only (`env_keys`) | excluded            | per-job only (secret)   | T-02-03: values are `SecretString`, never hashed/logged |
+//! | (`env` argument)  | `env`            | keys only (`env_keys`) | excluded            | per-job only (secret)   | T-02-03: values are `SecretString`, never hashed/logged. Not a `DockerJobConfig` field: values reach `execute_docker` via `scheduler::job_env` |
 //! | `volumes`         | `volumes`        | yes                    | yes                 | mergeable               | Per-job REPLACES defaults (no concatenation) |
 //! | `cmd`             | `cmd`            | yes                    | yes                 | per-job only            | NOT in `DefaultsConfig`. `Some(vec![])` is distinct from `None` |
 //! | `network`         | `network`        | yes                    | yes                 | mergeable               | Includes `container:<name>` VPN mode -- marquee feature |
@@ -894,6 +904,127 @@ mod tests {
             Some(parity_labels),
             "Layer 5 regressed: DockerJobConfig.labels did not round-trip through config_json"
         );
+    }
+
+    #[test]
+    fn parity_env_reaches_container_via_job_env() {
+        // cronduit-1b1 regression guard. `env` is the one Docker field that
+        // does NOT ride config_json (T-02-03 stores only env_keys), so the
+        // JSON parity test above cannot catch it going missing. This test
+        // drives the real pipeline -- interpolate -> parse -> apply_defaults
+        // -> validate -> build_job_env_map -> container_env -- and asserts
+        // the operator's exact pairs come out the other end, with and without
+        // [defaults] inheritance, while config_json still holds only keys.
+        use crate::scheduler::docker::container_env;
+        use crate::scheduler::job_env::{build_job_env_map, env_for};
+        use crate::scheduler::sync;
+        use std::io::Write;
+
+        let var = "CRONDUIT_PARITY_ENV_1B1";
+        let _guard = crate::config::interpolate::tests::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // SAFETY: ENV_MUTEX serializes env-mutating tests (see interpolate.rs).
+        unsafe { std::env::set_var(var, "interp-secret") };
+        let toml = format!(
+            r#"
+[server]
+timezone = "UTC"
+
+[defaults]
+image = "alpine:latest"
+network = "bridge"
+
+[[jobs]]
+name = "inherits"
+schedule = "*/5 * * * *"
+
+[jobs.env]
+LITERAL = "plain-secret"
+FROM_VAR = "${{{var}}}"
+
+[[jobs]]
+name = "standalone"
+schedule = "*/5 * * * *"
+image = "alpine:3"
+use_defaults = false
+
+[jobs.env]
+ONLY = "standalone-secret"
+
+[[jobs]]
+name = "no-env"
+schedule = "*/5 * * * *"
+"#
+        );
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(toml.as_bytes()).unwrap();
+        let parsed = crate::config::parse_and_validate(f.path()).expect("config parses");
+        let map = build_job_env_map(&parsed.config);
+
+        assert_eq!(
+            container_env(&env_for(&map, "inherits")),
+            Some(vec![
+                "FROM_VAR=interp-secret".to_string(),
+                "LITERAL=plain-secret".to_string(),
+            ]),
+            "[jobs.env] (literal + ${{VAR}}) must reach the container env of a job \
+             that inherits [defaults]"
+        );
+        assert_eq!(
+            container_env(&env_for(&map, "standalone")),
+            Some(vec!["ONLY=standalone-secret".to_string()]),
+            "use_defaults = false must not drop the job's own [jobs.env]"
+        );
+        assert_eq!(
+            container_env(&env_for(&map, "no-env")),
+            None,
+            "[defaults] has no env: a job without [jobs.env] gets none"
+        );
+
+        for job in &parsed.config.jobs {
+            let json = sync::serialize_config_json(job);
+            for secret in ["plain-secret", "interp-secret", "standalone-secret"] {
+                assert!(
+                    !json.contains(secret),
+                    "T-02-03 breach: env value leaked into config_json: {json}"
+                );
+            }
+            let obj: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let keys: Vec<&str> = job.env.keys().map(String::as_str).collect();
+            if keys.is_empty() {
+                assert!(obj.get("env_keys").is_none());
+            } else {
+                assert_eq!(obj["env_keys"], serde_json::json!(keys));
+            }
+        }
+    }
+
+    #[test]
+    fn apply_defaults_never_touches_env() {
+        // [defaults] has no env field; env is per-job only in both
+        // use_defaults modes.
+        let mut job = empty_job();
+        job.env
+            .insert("K".to_string(), SecretString::from("per-job-value"));
+        for use_defaults in [None, Some(true), Some(false)] {
+            let mut j = empty_job();
+            j.env = job.env.clone();
+            j.use_defaults = use_defaults;
+            let merged = apply_defaults(j, Some(&full_defaults()));
+            let got: Vec<(&str, &str)> = merged
+                .env
+                .iter()
+                .map(|(k, v)| (k.as_str(), secrecy::ExposeSecret::expose_secret(v)))
+                .collect();
+            assert_eq!(
+                got,
+                vec![("K", "per-job-value")],
+                "use_defaults={use_defaults:?}"
+            );
+        }
+        job.env.clear();
+        assert!(apply_defaults(job, Some(&full_defaults())).env.is_empty());
     }
 
     #[test]

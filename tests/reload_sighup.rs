@@ -84,7 +84,14 @@ async fn reload_creates_updates_disables_jobs() {
     let mut jobs: HashMap<i64, DbJob> = enabled.into_iter().map(|j| (j.id, j)).collect();
 
     // 4. Call do_reload
-    let (result, new_heap) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
+    let (result, new_heap) = do_reload(
+        &pool,
+        config_file.path(),
+        &mut jobs,
+        &mut Default::default(),
+        chrono_tz::UTC,
+    )
+    .await;
 
     // 5. Assert ReloadResult counts
     assert_eq!(result.status, ReloadStatus::Ok);
@@ -133,7 +140,14 @@ async fn reload_with_parse_error_leaves_config_untouched() {
     // Write invalid TOML
     std::fs::write(config_file.path(), "this is [[[invalid toml").expect("write bad config");
 
-    let (result, new_heap) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
+    let (result, new_heap) = do_reload(
+        &pool,
+        config_file.path(),
+        &mut jobs,
+        &mut Default::default(),
+        chrono_tz::UTC,
+    )
+    .await;
 
     // RELOAD-04: Failed reload leaves running config untouched
     assert_eq!(result.status, ReloadStatus::Error);
