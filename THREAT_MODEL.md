@@ -83,10 +83,12 @@ An operator misconfiguring a job's `image` or `command` can run arbitrary code w
 |------------|--------------------------------|-----|
 | `CONTAINERS=1` | `GET /containers/json`, `GET /containers/{id}/json`, `GET /containers/{id}/logs`, `POST /containers/create`, `/start`, `/wait`, `/stop`, `/kill`, `DELETE /containers/{id}` | Run the job container, stream its logs, read exit state and OOM flag, stop/kill on timeout or operator Stop, remove it, inspect the `container:<name>` target in pre-flight, and reconcile orphans at boot. |
 | `IMAGES=1` | `POST /images/create`, `GET /images/{name}/json` | Check for the image locally, pull when missing, and record the image digest. |
-| `NETWORKS=1` | `GET /networks/{name}` | Pre-flight existence check for jobs that set `network = "<user-defined network>"`. Read-only use. Omit only if no job uses a user-defined network. |
+| `NETWORKS=1` | `GET /networks/{name}` | Pre-flight existence check for jobs that set `network = "<user-defined network>"`. Cronduit only reads, but the proxy gates per group and verb, so with `POST=1`/`DELETE=1` this also permits network create/connect/disconnect/prune/delete. Opt-in: omit if no job uses a user-defined network. |
 | `POST=1` | (verb gate) | Enables POST on the allowed groups: create, start, wait, stop, kill, image pull. |
 | `DELETE=1` | (verb gate) | Enables DELETE on `/containers/{id}` for `delete = true` jobs. `POST=1` does not imply it. |
 | always allowed | `GET /_ping` | Startup and periodic reachability check. |
+
+Residual risk of `NETWORKS=1`: a compromised Cronduit could alter host networking (e.g. attach containers to other networks). For a strictly read-only grant, front the socket with a proxy that supports per-method-per-path rules (e.g. `wollomatic/socket-proxy`).
 
 Not granted: `VOLUMES`, `EXEC`, `INFO`, `SWARM`, `SYSTEM`, `BUILD`, `SECRETS`, `CONFIGS`, `SERVICES`, `TASKS`, `NODES`, `PLUGINS`, `AUTH`. Bind mounts and named volumes in `volumes = [...]` are passed inside the container-create body and need no `/volumes` endpoint.
 

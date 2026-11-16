@@ -6,9 +6,9 @@
 # This compose file runs cronduit with NO direct access to /var/run/docker.sock.
 # Instead, a `tecnativa/docker-socket-proxy` sidecar mediates every Docker API
 # call through a narrow allowlist: cronduit can list/create/start/wait/remove
-# containers, pull images, and inspect (read-only) networks, but it CANNOT access
-# the rest of the Docker API (volumes, exec into containers, daemon info, swarm,
-# system prune, creating/deleting networks).
+# containers, pull images, and (with NETWORKS=1, opt-in) reach the networks API,
+# but it CANNOT access the rest of the Docker API (volumes, exec into
+# containers, daemon info, swarm, system prune).
 #
 # Use this file when:
 #   * You are running on macOS + Docker Desktop. The socket GID inside the
@@ -70,10 +70,14 @@ services:
       # NETWORKS=1 is required for any job that sets `network = "<name>"` (a
       # user-defined network): Cronduit's pre-flight issues GET /networks/<name>
       # before creating the container. Without it the proxy answers 403 and the
-      # run fails with docker_permission_denied. It only exposes the network API
-      # to Cronduit; network create/delete still needs POST/DELETE on /networks,
-      # which Cronduit never calls. Jobs using only bridge/host/none or
-      # container:<name> do not need it.
+      # run fails with docker_permission_denied.
+      # SECURITY TRADE-OFF: docker-socket-proxy gates by group and by HTTP verb
+      # separately, not per path. Because POST=1 and DELETE=1 are on, NETWORKS=1
+      # also lets a compromised Cronduit create, connect, disconnect, prune and
+      # delete networks (Cronduit itself only ever calls GET /networks/<name>).
+      # Opt-in: if no job uses a user-defined network, remove this line. For a
+      # strict read-only network grant, use a proxy with per-method-per-path
+      # rules (e.g. wollomatic/socket-proxy).
       - NETWORKS=1
       - POST=1
       # DELETE=1 is required (D-29, resolves 08-RESEARCH.md Q1) because bollard's
