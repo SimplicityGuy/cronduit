@@ -21,9 +21,10 @@ use cronduit::scheduler::run::run_job;
 use cronduit::scheduler::sync::sync_config_to_db;
 use cronduit::telemetry::{RUN_STATUSES, seed_job_metrics, setup_metrics};
 
-const REASONS: [&str; 7] = [
+const REASONS: [&str; 8] = [
     "image_pull_failed",
     "network_target_unavailable",
+    "docker_permission_denied",
     "timeout",
     "exit_nonzero",
     "oom",

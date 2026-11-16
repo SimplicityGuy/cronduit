@@ -1,7 +1,7 @@
 <!-- generated-by: gsd-doc-writer -->
 # Cronduit Threat Model
 
-**Revision:** 2026-05-19 (v1.2.1 — T-I4 webhook-URL credential scrubbing)
+**Revision:** 2026-11-15 (socket-proxy allowlist documented)
 **Scope:** Single-node, single-operator self-hosted deployments.
 
 ---
@@ -74,6 +74,23 @@ An attacker who gains access to the Cronduit web UI (unauthenticated in v1) or w
 ### Residual Risk
 
 An operator misconfiguring a job's `image` or `command` can run arbitrary code with host Docker access. This is inherent to any tool that manages Docker containers and is documented as the headline security trade-off.
+
+### Socket-proxy allowlist (hardened variant)
+
+`examples/docker-compose.secure.yml` puts `tecnativa/docker-socket-proxy` between Cronduit and the socket. The proxy is default-deny; each group below is enabled because Cronduit makes the listed bollard calls. Nothing else is granted.
+
+| Proxy flag | Docker endpoints Cronduit calls | Why |
+|------------|--------------------------------|-----|
+| `CONTAINERS=1` | `GET /containers/json`, `GET /containers/{id}/json`, `GET /containers/{id}/logs`, `POST /containers/create`, `/start`, `/wait`, `/stop`, `/kill`, `DELETE /containers/{id}` | Run the job container, stream its logs, read exit state and OOM flag, stop/kill on timeout or operator Stop, remove it, inspect the `container:<name>` target in pre-flight, and reconcile orphans at boot. |
+| `IMAGES=1` | `POST /images/create`, `GET /images/{name}/json` | Check for the image locally, pull when missing, and record the image digest. |
+| `NETWORKS=1` | `GET /networks/{name}` | Pre-flight existence check for jobs that set `network = "<user-defined network>"`. Read-only use. Omit only if no job uses a user-defined network. |
+| `POST=1` | (verb gate) | Enables POST on the allowed groups: create, start, wait, stop, kill, image pull. |
+| `DELETE=1` | (verb gate) | Enables DELETE on `/containers/{id}` for `delete = true` jobs. `POST=1` does not imply it. |
+| always allowed | `GET /_ping` | Startup and periodic reachability check. |
+
+Not granted: `VOLUMES`, `EXEC`, `INFO`, `SWARM`, `SYSTEM`, `BUILD`, `SECRETS`, `CONFIGS`, `SERVICES`, `TASKS`, `NODES`, `PLUGINS`, `AUTH`. Bind mounts and named volumes in `volumes = [...]` are passed inside the container-create body and need no `/volumes` endpoint.
+
+If the proxy denies an endpoint, the run ends `status=error` with `docker_permission_denied: Docker denied GET /networks/<name> (HTTP 403). ... add NETWORKS=1 ...` and `cronduit_run_failures_total{reason="docker_permission_denied"}` increments. This is distinct from `docker_unavailable` (daemon unreachable).
 
 ### Recommendations
 
@@ -333,3 +350,4 @@ The existing STRIDE analysis from Phase 1 remains valid. This section summarizes
 | Phase 6 complete | 2026-04-12 | Expanded with four threat models (Docker socket, untrusted client, config tamper, malicious image). Updated all STRIDE entries with Phase 2-6 mitigations. Resolved all TBD items. |
 | Phase 20 stub | 2026-05-01 | Added Threat Model 5 (Webhook Outbound) as a words-only stub satisfying WH-08. Canonical close-out (full STRIDE rows + residual-risk language for v1.3 deferred allowlist) is Phase 24's milestone close-out per ROADMAP. |
 | Phase 24 close-out | 2026-05-17 | TM5 canonical rewrite (replaces v1.2 stub); new TM6 (Operator-supplied Docker Labels); STRIDE rows T-S3/T-T4/T-I4/T-D4 added; v1.2 milestone close. |
+| Allowlist doc | 2026-11-15 | TM1: documented the full socket-proxy allowlist (adds `NETWORKS=1` for jobs with a user-defined `network`) and the `docker_permission_denied` failure reason. |

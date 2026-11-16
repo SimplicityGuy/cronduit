@@ -16,6 +16,11 @@
 #       workflow logs the divergence and still passes — the fix is correct
 #       regardless because it removes busybox wget from the path.
 #
+#   (4) secure-variant user-defined network smoke — `examples/docker-compose.secure.yml`
+#       (socket-proxy) runs a job with `network = <user-defined network>` and the
+#       run succeeds. Guards the `NETWORKS=1` allowlist entry: without it the
+#       proxy 403s GET /networks/<name> and the run ends `docker_permission_denied`.
+#
 # Security note: the only GHA context interpolated into `run:` blocks is
 # `steps.ops08_old.outputs.old_status`, routed through an `env:` block per
 # the project's "never inline ${{ ... }} in shell" convention (T-12-04-01).
@@ -240,3 +245,73 @@ jobs:
         if: always()
         run: |
           docker rm -f cronduit-ops08-old cronduit-ops08-new || true
+
+      # ----------------------------------------------------------------------
+      # Assertion 4: secure (socket-proxy) variant runs a job that sets
+      # `network = <user-defined network>`. The network is created and removed
+      # by this workflow; only resources named cronduit-smoke-* are touched.
+      # ----------------------------------------------------------------------
+      - name: Prepare secure-variant smoke project
+        run: |
+          set -eu
+          d=/tmp/compose-smoke-secure
+          mkdir -p "$d"
+          cp examples/docker-compose.secure.yml "$d/docker-compose.yml"
+          cat > "$d/docker-compose.override.yml" <<'EOF'
+          services:
+            cronduit:
+              image: cronduit:ci
+          EOF
+          cat > "$d/cronduit.toml" <<'EOF'
+          [server]
+          bind = "0.0.0.0:8080"
+          timezone = "UTC"
+
+          [defaults]
+          delete = true
+          timeout = "2m"
+
+          [[jobs]]
+          name = "net-smoke"
+          schedule = "* * * * *"
+          image = "alpine:3"
+          network = "cronduit-smoke-net"
+          cmd = ["echo", "hello from a user-defined network"]
+          EOF
+          docker network create cronduit-smoke-net
+
+      - name: Up secure compose stack
+        working-directory: /tmp/compose-smoke-secure
+        run: docker compose -p cronduit-smoke-secure up -d
+
+      - name: Assert net-smoke run succeeds behind the socket proxy (max 150s)
+        run: |
+          set -eu
+          series_ok='cronduit_runs_total{job="net-smoke",status="success"}'
+          series_err='cronduit_runs_total{job="net-smoke",status="error"}'
+          for i in $(seq 1 150); do
+            body=$(curl -fsS http://localhost:8080/metrics 2>/dev/null || true)
+            ok=$(printf '%s\n' "$body" | grep -F "$series_ok " | awk '{print $2}' | head -n1)
+            err=$(printf '%s\n' "$body" | grep -F "$series_err " | awk '{print $2}' | head -n1)
+            echo "[secure t+${i}s] success=${ok:-none} error=${err:-none}"
+            case "${err:-0}" in 0|0.0|0e0) ;; *) echo "::error::net-smoke errored behind the socket proxy (NETWORKS=1 missing?)"; exit 1 ;; esac
+            case "${ok:-0}" in 0|0.0|0e0) ;; *) echo "net-smoke succeeded behind the socket proxy"; exit 0 ;; esac
+            sleep 1
+          done
+          echo "::error::net-smoke did not complete within 150s"
+          exit 1
+
+      - name: Diagnostics — secure stack
+        if: failure()
+        working-directory: /tmp/compose-smoke-secure
+        run: |
+          echo "::group::secure stack logs"
+          docker compose -p cronduit-smoke-secure logs --tail=200 || true
+          echo "::endgroup::"
+
+      - name: Tear down secure stack and smoke network
+        if: always()
+        working-directory: /tmp/compose-smoke-secure
+        run: |
+          docker compose -p cronduit-smoke-secure down -v || true
+          docker network rm cronduit-smoke-net || true

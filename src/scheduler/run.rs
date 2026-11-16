@@ -17,10 +17,11 @@ use super::RunResult;
 use super::command::{self, RunStatus};
 
 /// Closed-enum failure reasons for the cronduit_run_failures_total metric (D-05).
-/// Cardinality fixed at 7 values -- never add unbounded labels.
+/// Cardinality fixed at 8 values -- never add unbounded labels.
 pub enum FailureReason {
     ImagePullFailed,
     NetworkTargetUnavailable,
+    DockerPermissionDenied,
     Timeout,
     ExitNonzero,
     Oom,
@@ -30,9 +31,10 @@ pub enum FailureReason {
 
 impl FailureReason {
     /// Every variant, for zero-seeding the per-job failure series.
-    pub const ALL: [FailureReason; 7] = [
+    pub const ALL: [FailureReason; 8] = [
         Self::ImagePullFailed,
         Self::NetworkTargetUnavailable,
+        Self::DockerPermissionDenied,
         Self::Timeout,
         Self::ExitNonzero,
         Self::Oom,
@@ -44,6 +46,7 @@ impl FailureReason {
         match self {
             Self::ImagePullFailed => "image_pull_failed",
             Self::NetworkTargetUnavailable => "network_target_unavailable",
+            Self::DockerPermissionDenied => "docker_permission_denied",
             Self::Timeout => "timeout",
             Self::ExitNonzero => "exit_nonzero",
             Self::Oom => "oom",
@@ -571,7 +574,7 @@ fn finalize_args_from_docker_result(
     )
 }
 
-/// Classify a run failure into one of the 7 FailureReason variants (D-05).
+/// Classify a run failure into one of the 8 FailureReason variants (D-05).
 ///
 /// Maps error_message strings from docker_preflight, docker_pull, and docker_orphan
 /// to the closed enum. Unknown errors default to `Unknown`.
@@ -586,8 +589,14 @@ fn classify_failure_reason(status: &str, error_msg: Option<&str>) -> FailureReas
             _ => FailureReason::ExitNonzero,
         },
         "error" => match error_msg {
-            Some(msg) if msg.starts_with("network_target_unavailable:") => {
+            Some(msg)
+                if msg.starts_with("network_target_unavailable:")
+                    || msg.starts_with("network_not_found:") =>
+            {
                 FailureReason::NetworkTargetUnavailable
+            }
+            Some(msg) if msg.starts_with("docker_permission_denied:") => {
+                FailureReason::DockerPermissionDenied
             }
             Some(msg) if msg.starts_with("image pull failed:") => FailureReason::ImagePullFailed,
             Some("orphaned at restart") => FailureReason::Abandoned,
@@ -690,6 +699,7 @@ mod tests {
         let all = [
             FailureReason::ImagePullFailed,
             FailureReason::NetworkTargetUnavailable,
+            FailureReason::DockerPermissionDenied,
             FailureReason::Timeout,
             FailureReason::ExitNonzero,
             FailureReason::Oom,
@@ -697,7 +707,7 @@ mod tests {
             FailureReason::Unknown,
         ];
         let labels: std::collections::HashSet<_> = all.iter().map(|r| r.as_label()).collect();
-        assert_eq!(labels.len(), 7);
+        assert_eq!(labels.len(), 8);
         assert!(labels.iter().all(|l| !l.trim().is_empty()));
     }
 
