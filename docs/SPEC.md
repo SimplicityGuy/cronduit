@@ -219,6 +219,7 @@ Run failures are classified into a closed enum that surfaces in the `cronduit_ru
 |---|---|
 | `image_pull_failed` | Docker image pull exhausted retries |
 | `network_target_unavailable` | `container:<name>` target missing, or named network not found |
+| `docker_permission_denied` | Docker or a socket proxy answered 401/403 for a pre-flight endpoint; the error names the endpoint and the proxy allowlist group to enable |
 | `timeout` | Per-job `timeout` exceeded |
 | `exit_nonzero` | Process or container exited with non-zero status |
 | `oom` | Docker container was OOM-killed by the kernel (`State.OOMKilled`) |

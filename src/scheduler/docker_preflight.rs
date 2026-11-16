@@ -20,6 +20,14 @@ pub enum PreflightError {
     NetworkTargetUnavailable(String),
     /// Named network does not exist.
     NetworkNotFound(String),
+    /// Docker (or a socket proxy in front of it) answered 401/403 for an
+    /// endpoint. The daemon is reachable; the endpoint is denied. Fields are
+    /// the HTTP status (401/403), the denied `METHOD /path` and the proxy allowlist group to enable.
+    PermissionDenied {
+        status: u16,
+        endpoint: String,
+        hint: String,
+    },
 }
 
 impl PreflightError {
@@ -31,6 +39,15 @@ impl PreflightError {
                 format!("network_target_unavailable: {name}")
             }
             Self::NetworkNotFound(name) => format!("network_not_found: {name}"),
+            Self::PermissionDenied {
+                status,
+                endpoint,
+                hint,
+            } => {
+                format!(
+                    "docker_permission_denied: Docker denied {endpoint} (HTTP {status}). {hint}"
+                )
+            }
         }
     }
 }
@@ -74,6 +91,28 @@ pub async fn preflight_network(docker: &Docker, network_mode: &str) -> Result<()
     }
 }
 
+/// Map a bollard error from a pre-flight call to a `PreflightError`.
+///
+/// 401/403 means the daemon (or a socket proxy such as
+/// `tecnativa/docker-socket-proxy`) is reachable but refuses the endpoint, so
+/// it must not be reported as `docker_unavailable`.
+fn classify_error(err: &bollard::errors::Error, endpoint: String, group: &str) -> PreflightError {
+    match err {
+        bollard::errors::Error::DockerResponseServerError {
+            status_code: status @ (401 | 403),
+            ..
+        } => PreflightError::PermissionDenied {
+            status: *status,
+            endpoint,
+            hint: format!(
+                "If Docker is behind a socket proxy, add {group}=1 to its allowlist \
+                 (see THREAT_MODEL.md)."
+            ),
+        },
+        e => PreflightError::DockerUnavailable(e.to_string()),
+    }
+}
+
 /// Validate that a target container exists and is running.
 async fn validate_container_target(docker: &Docker, target: &str) -> Result<(), PreflightError> {
     match docker.inspect_container(target, None).await {
@@ -108,10 +147,11 @@ async fn validate_container_target(docker: &Docker, target: &str) -> Result<(), 
             // Container does not exist.
             Err(PreflightError::NetworkTargetUnavailable(target.to_string()))
         }
-        Err(e) => {
-            // Docker daemon error -- classify as unavailable.
-            Err(PreflightError::DockerUnavailable(e.to_string()))
-        }
+        Err(e) => Err(classify_error(
+            &e,
+            format!("GET /containers/{target}/json"),
+            "CONTAINERS",
+        )),
     }
 }
 
@@ -125,10 +165,11 @@ async fn validate_named_network(docker: &Docker, network_name: &str) -> Result<(
             // Network does not exist.
             Err(PreflightError::NetworkNotFound(network_name.to_string()))
         }
-        Err(e) => {
-            // Docker daemon error.
-            Err(PreflightError::DockerUnavailable(e.to_string()))
-        }
+        Err(e) => Err(classify_error(
+            &e,
+            format!("GET /networks/{network_name}"),
+            "NETWORKS",
+        )),
     }
 }
 
@@ -146,6 +187,55 @@ mod tests {
 
         let err = PreflightError::NetworkNotFound("mynet".to_string());
         assert_eq!(err.to_error_message(), "network_not_found: mynet");
+    }
+
+    fn server_err(code: u16) -> bollard::errors::Error {
+        bollard::errors::Error::DockerResponseServerError {
+            status_code: code,
+            message: "Forbidden".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_403_maps_to_permission_denied_not_unavailable() {
+        let err = classify_error(&server_err(403), "GET /networks/mynet".into(), "NETWORKS");
+        let msg = err.to_error_message();
+        assert!(matches!(err, PreflightError::PermissionDenied { .. }));
+        assert!(msg.starts_with("docker_permission_denied:"), "{msg}");
+        assert!(msg.contains("HTTP 403"), "{msg}");
+        assert!(msg.contains("GET /networks/mynet"), "{msg}");
+        assert!(msg.contains("NETWORKS=1"), "{msg}");
+        assert!(!msg.contains("docker_unavailable"), "{msg}");
+    }
+
+    #[test]
+    fn test_container_403_names_containers_group() {
+        let err = classify_error(
+            &server_err(403),
+            "GET /containers/vpn/json".into(),
+            "CONTAINERS",
+        );
+        let msg = err.to_error_message();
+        assert!(msg.contains("GET /containers/vpn/json"), "{msg}");
+        assert!(msg.contains("CONTAINERS=1"), "{msg}");
+    }
+
+    #[test]
+    fn test_401_also_permission_denied() {
+        let err = classify_error(&server_err(401), "GET /networks/x".into(), "NETWORKS");
+        assert!(matches!(
+            err,
+            PreflightError::PermissionDenied { status: 401, .. }
+        ));
+        let msg = err.to_error_message();
+        assert!(msg.contains("HTTP 401"), "{msg}");
+        assert!(!msg.contains("403"), "{msg}");
+    }
+
+    #[test]
+    fn test_other_errors_stay_docker_unavailable() {
+        let err = classify_error(&server_err(500), "GET /networks/x".into(), "NETWORKS");
+        assert!(matches!(err, PreflightError::DockerUnavailable(_)));
     }
 
     #[test]

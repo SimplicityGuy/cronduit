@@ -137,7 +137,7 @@ mod metrics_tests {
     #[test]
     #[ignore = "not yet implemented"]
     fn failure_reason_labels_are_bounded_enum() {
-        // Assert: FailureReason enum has exactly 7 variants
+        // Assert: FailureReason enum has exactly 8 variants
         // Assert: each variant produces a valid label string
         // Assert: no variant produces an empty or whitespace label
         todo!("Implement failure reason label validation test")

@@ -6,8 +6,9 @@
 # This compose file runs cronduit with NO direct access to /var/run/docker.sock.
 # Instead, a `tecnativa/docker-socket-proxy` sidecar mediates every Docker API
 # call through a narrow allowlist: cronduit can list/create/start/wait/remove
-# containers and pull images, but it CANNOT access the rest of the Docker API
-# (networks, volumes, exec into containers, daemon info, swarm, system prune).
+# containers, pull images, and (with NETWORKS=1, opt-in) reach the networks API,
+# but it CANNOT access the rest of the Docker API (volumes, exec into
+# containers, daemon info, swarm, system prune).
 #
 # Use this file when:
 #   * You are running on macOS + Docker Desktop. The socket GID inside the
@@ -53,16 +54,31 @@ services:
   #                    NOT imply DELETE in docker-socket-proxy -- each HTTP verb
   #                    is a separate flag.
   #
-  # NOT granted: NETWORKS, VOLUMES, EXEC, INFO, SWARM, SYSTEM, BUILD, SERVICES,
-  # TASKS, NODES, PLUGINS, AUTH, SECRETS, CONFIGS, DISTRIBUTION, SESSION. If
-  # cronduit ever needs more (e.g. to inspect a named network for
-  # container:<name> mode), the error is loud and the allowlist can be extended
-  # here in one place.
+  # Every group below maps to a bollard call Cronduit makes (see THREAT_MODEL.md
+  # "Socket-proxy allowlist" for the endpoint-by-endpoint table). GET /_ping
+  # (startup reachability check) is always allowed by docker-socket-proxy.
+  #
+  # NOT granted: VOLUMES, EXEC, INFO, SWARM, SYSTEM, BUILD, SERVICES, TASKS,
+  # NODES, PLUGINS, AUTH, SECRETS, CONFIGS, DISTRIBUTION, SESSION. If a job
+  # fails with `docker_permission_denied: Docker denied GET /<path>`, the message
+  # names the endpoint group to add here, in one place.
   dockerproxy:
     image: tecnativa/docker-socket-proxy:latest
     environment:
       - CONTAINERS=1
       - IMAGES=1
+      # NETWORKS=1 is required for any job that sets `network = "<name>"` (a
+      # user-defined network): Cronduit's pre-flight issues GET /networks/<name>
+      # before creating the container. Without it the proxy answers 403 and the
+      # run fails with docker_permission_denied.
+      # SECURITY TRADE-OFF: docker-socket-proxy gates by group and by HTTP verb
+      # separately, not per path. Because POST=1 and DELETE=1 are on, NETWORKS=1
+      # also lets a compromised Cronduit create, connect, disconnect, prune and
+      # delete networks (Cronduit itself only ever calls GET /networks/<name>).
+      # Opt-in: if no job uses a user-defined network, remove this line. For a
+      # strict read-only network grant, use a proxy with per-method-per-path
+      # rules (e.g. wollomatic/socket-proxy).
+      - NETWORKS=1
       - POST=1
       # DELETE=1 is required (D-29, resolves 08-RESEARCH.md Q1) because bollard's
       # remove_container call issues HTTP DELETE /containers/{id}; POST=1 alone

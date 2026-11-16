@@ -117,7 +117,7 @@ Network modes are validated before container create (`scheduler/docker_preflight
 | `host`, `none`, `bridge`, `""` | Built-in — no validation needed. |
 | named network | Inspect for existence — else `network_not_found`. |
 
-If Docker is unreachable at all, pre-flight returns `docker_unavailable`. The Docker client is optional: if `bollard::Docker::connect_with_defaults()` fails at startup, Cronduit still boots and command/script jobs work; only docker-type jobs fail. At boot, orphaned containers (rows still `running` in the DB) are reconciled (`scheduler/docker_orphan.rs`).
+If Docker is unreachable at all, pre-flight returns `docker_unavailable`. If Docker (or a socket proxy in front of it) answers 401/403 for the inspect call, pre-flight returns `docker_permission_denied`, naming the denied endpoint and the proxy allowlist group (`NETWORKS` / `CONTAINERS`). The Docker client is optional: if `bollard::Docker::connect_with_defaults()` fails at startup, Cronduit still boots and command/script jobs work; only docker-type jobs fail. At boot, orphaned containers (rows still `running` in the DB) are reconciled (`scheduler/docker_orphan.rs`).
 
 ## Persistence model
 
