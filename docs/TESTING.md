@@ -97,6 +97,9 @@ cargo test --test docker_executor -- --ignored --nocapture --test-threads=1
 
 # Marquee: network = "container:<name>" end-to-end
 cargo test --test docker_container_network -- --ignored --nocapture --test-threads=1
+
+# [jobs.env] reaches the container Env, and a reload updates the next run's Env
+cargo test --test docker_job_env -- --ignored --nocapture --test-threads=1
 ```
 
 ## Testcontainers-backed Docker + Postgres tests

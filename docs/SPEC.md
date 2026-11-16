@@ -160,6 +160,8 @@ delete = true
 RESTIC_PASSWORD = "${RESTIC_PASSWORD}"   # Interpolated at parse time, wrapped in SecretString
 ```
 
+`[jobs.env]` applies to Docker jobs only: its pairs become the container's `Env` (on top of the image's own environment). Command and script jobs ignore it and inherit the Cronduit process environment. `[defaults]` has no `env`; each job's block is its own.
+
 **Overriding the image's baked-in CMD** — the `cmd` field is an optional list of strings that overrides the Docker image's default `CMD`. When set, the vec is passed verbatim to the container at start time via bollard's `ContainerCreateBody.cmd`. When unset, the container runs with whatever `CMD` the image defines (which may be nothing at all — e.g. `alpine:latest` has no default `CMD`, so a docker job using `alpine` with no `cmd` will exit immediately with no output). `cmd` is a **per-job-only field** and is **NOT available under `[defaults]`** — every job must declare its own override (or inherit the image default). This matches the semantics of `docker run IMAGE CMD...` on the command line.
 
 ```toml
@@ -201,13 +203,28 @@ The Phase 4 marquee feature. Lifecycle:
 
 1. **Image presence check.** If the image is missing locally, pull it with **3-attempt exponential backoff**. Image pull failures are classified as terminal (`reason=image_pull_failed`) vs. transient and retried.
 2. **Network preflight.** For `network = "container:<name>"` and named networks, validate the target before attempting to spawn — three distinct error categories surface as `reason=network_target_unavailable`.
-3. **Container create.** Always with `auto_remove=false`. This is non-negotiable: bollard's `auto_remove=true` races with `wait_container` and can truncate logs or lose exit codes (moby#8441, observed during Phase 4).
+3. **Container create.** Always with `auto_remove=false`. This is non-negotiable: bollard's `auto_remove=true` races with `wait_container` and can truncate logs or lose exit codes (moby#8441, observed during Phase 4). The container's `Env` is the job's resolved `[jobs.env]` as `KEY=VALUE` pairs (see below).
 4. **Labels.** Every spawned container is labeled `cronduit.run_id=<id>` so orphan reconciliation on restart can find rows still marked `status=running` and either reattach or mark them `abandoned`.
 5. **Start + concurrent log streaming.** stdout and stderr stream through the bounded log channel (same as command/script jobs).
 6. **`wait_container`.** Block until the container exits. Capture the exit code into `job_runs.exit_code`.
 7. **10s SIGTERM grace.** On Cronduit shutdown, send SIGTERM to running containers and wait up to 10 seconds before SIGKILL.
 8. **Explicit remove.** If the job's `delete = true`, call `remove_container` after the drain completes. This is the cronduit-side deletion that the `delete` config field actually triggers.
 9. **Status write.** Write the final `job_runs` row with one of `success`, `failed`, `timeout`, `cancelled`.
+
+**How `[jobs.env]` reaches the container.** Env values are secrets, so they never travel through the database: `jobs.config_json` stores only `env_keys` (the key names), and the executor reads every other Docker setting from `config_json`. The resolved `SecretString` values stay in memory instead:
+
+```mermaid
+flowchart LR
+    TOML["config file<br/>[jobs.env]"] -->|"parse + ${VAR} interpolation"| CFG["in-memory config<br/>SecretString values"]
+    CFG -->|"key names only"| DB[("jobs.config_json<br/>env_keys")]
+    CFG -->|"per-job env map,<br/>keyed by job name"| SCHED["scheduler loop"]
+    SCHED -->|"env for this run"| EXEC["Docker executor"]
+    DB -->|"image, cmd, network, ..."| EXEC
+    EXEC -->|"KEY=VALUE, exposed only here"| CTR["container Env"]
+    RELOAD["reload<br/>(SIGHUP, file watch, API)"] -->|"rebuild map"| SCHED
+```
+
+The scheduler loop holds a map of job name to resolved env, built at startup and rebuilt on every successful reload (a failed reload keeps the previous map). Each run takes its job's env when it starts, so an env edit or a rotated secret applies to the next run with no restart, and an in-flight run keeps the env it started with. Because `env` is excluded from `config_hash`, an env-only edit reports the job as `unchanged` but still takes effect. Values are exposed (`expose_secret`) only when the executor builds the container's `Env`; they never reach `config_json`, logs, the web UI or metrics. Versions up to and including 1.3.1 lacked this path and created Docker containers without `[jobs.env]`.
 
 The `container:<name>` mode is validated end-to-end by a `testcontainers` integration test that spawns a sidecar `alpine sleep` container, then a second container with `network_mode = "container:<sidecar>"`, and confirms the second joins the first's network namespace.
 

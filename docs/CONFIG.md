@@ -474,11 +474,15 @@ AWS_ACCESS_KEY_ID = "${AWS_ACCESS_KEY_ID}"
 AWS_SECRET_ACCESS_KEY = "${AWS_SECRET_ACCESS_KEY}"
 ```
 
-Environment variables passed to the docker container at start time. Values support env var interpolation via `${VAR}` — Cronduit resolves the reference at parse time by reading the host process's environment, then wraps the resolved value in `secrecy::SecretString` so it never appears in `Debug` output, log lines, metric labels, or the `config_json` stored in the database.
+Environment variables set in the docker container's `Env` when Cronduit creates it, as `KEY=VALUE` pairs on top of the image's own environment (a `[jobs.env]` key overrides an image variable of the same name). Values support env var interpolation via `${VAR}` — Cronduit resolves the reference at parse time by reading the host process's environment, then wraps the resolved value in `secrecy::SecretString` so it never appears in `Debug` output, log lines, metric labels, the web UI, or the `config_json` stored in the database.
 
-**env is NOT merged from `[defaults]`.** Each job's env block is its own. The `env` field is also never hashed into `config_hash` — the column stores `env_keys` (just the key names) instead, so changes to secret values do not trigger phantom "config changed" reloads, and the values never appear in any audit log.
+How the values reach the container: Cronduit keeps the resolved `[jobs.env]` of every job **in memory**, keyed by job name, and hands it to the Docker executor when a run starts. The values are exposed only when the container's `Env` is built. They are never written to the database: the `jobs.config_json` column stores `env_keys` (the key names only). On every successful [reload](#hot-reload) Cronduit re-reads the file, re-interpolates `${VAR}` and rebuilds the in-memory env, so an edited value, an added or removed key, or a rotated secret applies to the **next** run without a restart. A run already in progress keeps the env it started with. A failed reload leaves the previous env in place.
 
-`[jobs.env]` is currently only read for docker jobs. Command and script jobs inherit the Cronduit process's environment (with `PATH`, `HOME`, and a few other basics). A future release may add per-job env for command/script too — track issues on the repo if you need this.
+> **Cronduit 1.3.1 and earlier did not pass `[jobs.env]` to docker containers at all** (the executor read env back from `config_json`, which holds only key names). Upgrade if a docker job depends on `[jobs.env]`.
+
+**env is NOT merged from `[defaults]`.** `[defaults]` has no `env` field, and each job's env block is its own: `use_defaults = false` neither adds nor removes env. The `env` field is also never hashed into `config_hash`, so changes to secret values do not trigger phantom "config changed" updates (the job reports as `unchanged` on reload, but the new values still apply to the next run), and the values never appear in any audit log.
+
+`[jobs.env]` is only applied to **docker** jobs. Command and script jobs do **not** receive it: a `[jobs.env]` block on a command or script job is accepted by the parser but ignored. Those jobs inherit the Cronduit process's own environment (with `PATH`, `HOME`, and a few other basics), so set the variables they need on the Cronduit process itself (for example the compose file's `environment:` block). A future release may add per-job env for command/script too — track issues on the repo if you need this.
 
 ## Cron syntax
 
@@ -579,16 +583,22 @@ Field-by-field behavior:
 - `[jobs.env]` values — interpolated, wrapped in SecretString.
 - `[[jobs]].command`, `[[jobs]].script`, `[[jobs]].cmd` — **interpolated.** Env-var interpolation is a whole-file textual `${VAR}` pass that runs over the entire TOML source before parsing, so it resolves `${VAR}` in **every** field, including `command`, `script`, and `cmd`. Be aware of the shell-injection risk: `command = "curl ${URL}"` substitutes user-controlled text into the command at parse time. To keep parse-time config separate from runtime values, prefer passing the value as an env var to the job and referencing it inside the command string (where it is obvious to the reader that the value is runtime, not parse-time).
 
-If you need to make a command's behavior depend on the environment, use shell expansion:
+If you need to make a docker job's behavior depend on the environment, pass the value through `[jobs.env]` and use shell expansion inside the container:
 
 ```toml
-command = "sh -c 'curl -sf \"$HEALTHCHECK_URL\"'"
+[[jobs]]
+name = "healthcheck"
+schedule = "*/5 * * * *"
+image = "curlimages/curl:8.5.0"
+cmd = ["sh", "-c", "curl -sf \"$HEALTHCHECK_URL\""]
 
 [jobs.env]
 HEALTHCHECK_URL = "${HEALTHCHECK_URL}"
 ```
 
-Here the outer `${HEALTHCHECK_URL}` is interpolated by Cronduit at parse time into `[jobs.env]`, then the inner `$HEALTHCHECK_URL` is expanded by `sh -c` at runtime when the command runs. Two-step interpolation keeps parse-time config separate from runtime shell expansion.
+Here the outer `${HEALTHCHECK_URL}` is interpolated by Cronduit at parse time into `[jobs.env]`, then the inner `$HEALTHCHECK_URL` is expanded by `sh -c` inside the container at runtime. Two-step interpolation keeps parse-time config separate from runtime shell expansion.
+
+Command and script jobs do not receive `[jobs.env]` (see [`[jobs.env]`](#jobsenv--environment-variables)). For them, `$VAR` in `command = "sh -c '...'"` or in a script resolves at runtime against the environment Cronduit itself was started with, so set the variable on the Cronduit process (for example the compose file's `environment:` block) instead.
 
 ## Validation
 
@@ -649,7 +659,7 @@ Three reload paths, all converging on the same `do_reload` codepath:
 
 ### 1. File watcher (automatic)
 
-When `[server].watch_config = true` (the default), Cronduit uses `notify` 8.2 to watch the config file for changes. On a save, it waits 500ms (debounce), then re-reads, re-validates, re-interpolates env vars, re-merges `[defaults]`, and syncs the DB.
+When `[server].watch_config = true` (the default), Cronduit uses `notify` 8.2 to watch the config file for changes. On a save, it waits 500ms (debounce), then re-reads, re-validates, re-interpolates env vars, re-merges `[defaults]`, syncs the DB, and rebuilds the in-memory `[jobs.env]` values that the next docker run uses.
 
 The watcher detects both atomic saves (editor writes to `.tmp` then renames) and in-place edits. It gracefully handles the file being temporarily absent (some editors delete-then-create) by retrying.
 
