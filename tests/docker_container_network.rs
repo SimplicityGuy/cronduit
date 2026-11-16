@@ -66,6 +66,7 @@ async fn test_container_network_mode() {
     let result = execute_docker(
         &docker,
         &config_json,
+        &Default::default(),
         "marquee-container-network",
         100,
         Duration::from_secs(30),
@@ -149,6 +150,7 @@ async fn test_container_network_target_stopped() {
     let result = execute_docker(
         &docker,
         &config_json,
+        &Default::default(),
         "test-stopped-target",
         101,
         Duration::from_secs(30),
@@ -198,6 +200,7 @@ async fn test_host_and_none_network_modes() {
         let result = execute_docker(
             &docker,
             &config,
+            &Default::default(),
             "network-mode-regression",
             run_id,
             Duration::from_secs(30),

@@ -110,7 +110,7 @@ fn offset_range(input: &str, line: &str, range: std::ops::Range<usize>) -> std::
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex;
 

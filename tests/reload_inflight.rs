@@ -64,7 +64,14 @@ async fn inflight_run_survives_reload() {
 
     // 3. Call do_reload with the same config
     let mut jobs: HashMap<i64, DbJob> = enabled.into_iter().map(|j| (j.id, j)).collect();
-    let (result, _) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
+    let (result, _) = do_reload(
+        &pool,
+        config_file.path(),
+        &mut jobs,
+        &mut Default::default(),
+        chrono_tz::UTC,
+    )
+    .await;
 
     assert_eq!(result.status, ReloadStatus::Ok);
 

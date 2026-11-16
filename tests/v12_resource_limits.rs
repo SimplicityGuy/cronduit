@@ -96,6 +96,7 @@ memory = "64m"
     let result = execute_docker(
         &docker,
         &serialize_config_json_for_tests(&job),
+        &Default::default(),
         "limits-job",
         1,
         Duration::from_secs(60),
@@ -149,6 +150,7 @@ memory = "16m"
     let result = execute_docker(
         &docker,
         &serialize_config_json_for_tests(&job),
+        &Default::default(),
         "oom-job",
         2,
         Duration::from_secs(60),
@@ -191,6 +193,7 @@ memory = "64m"
     let result = execute_docker(
         &docker,
         &serialize_config_json_for_tests(&job),
+        &Default::default(),
         "exit-job",
         3,
         Duration::from_secs(60),

@@ -355,6 +355,112 @@ impl OwnedContainer {
     }
 }
 
+/// Docker client for the same endpoint the fixtures use (`docker_endpoint`).
+pub fn docker() -> Result<Docker> {
+    connect(&docker_endpoint())
+}
+
+/// Guard for a container that the code under test creates, e.g. a cronduit
+/// docker job run with `delete = false` and `container_name = guard.name()`,
+/// so the test can inspect it after the run.
+///
+/// Ownership: the name carries an unpredictable token, and removal also
+/// requires the container's `cronduit.job_name` label to match, so the guard
+/// can never remove a pre-existing or unrelated container. Drop removes the
+/// container on its own thread and runtime, so cleanup also runs when the
+/// test panics.
+pub struct ExecutorContainer {
+    name: String,
+    job_name: String,
+    endpoint: String,
+}
+
+impl ExecutorContainer {
+    pub fn new(job_name: &str) -> Self {
+        let token = ulid::Ulid::generate().to_string().to_lowercase();
+        Self {
+            name: format!("cronduit-test-{job_name}-{token}"),
+            job_name: job_name.to_string(),
+            endpoint: docker_endpoint(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Remove the container now (no-op if it does not exist).
+    pub async fn remove(&self) -> Result<()> {
+        remove_executor_container(&connect(&self.endpoint)?, &self.name, &self.job_name).await
+    }
+}
+
+impl Drop for ExecutorContainer {
+    fn drop(&mut self) {
+        let (name, job_name, endpoint) = (
+            self.name.clone(),
+            self.job_name.clone(),
+            self.endpoint.clone(),
+        );
+        let result = thread::spawn(move || -> Result<()> {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(async {
+                remove_executor_container(&connect(&endpoint)?, &name, &job_name).await
+            })
+        })
+        .join()
+        .map_err(|_| anyhow!("executor container cleanup panicked"))
+        .and_then(|r| r);
+        if let Err(error) = result {
+            if thread::panicking() {
+                eprintln!("executor container cleanup failed during unwind: {error:#}");
+            } else {
+                panic!("executor container cleanup failed: {error:#}");
+            }
+        }
+    }
+}
+
+async fn remove_executor_container(docker: &Docker, name: &str, job_name: &str) -> Result<()> {
+    let inspect = match docker
+        .inspect_container(name, None::<InspectContainerOptions>)
+        .await
+    {
+        Ok(c) => c,
+        Err(Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => return Ok(()),
+        Err(e) => return Err(e).context("inspect executor container"),
+    };
+    if inspect.name.as_deref().map(|n| n.trim_start_matches('/')) != Some(name) {
+        bail!("refusing to remove container whose name does not match {name}");
+    }
+    let labels = inspect.config.and_then(|c| c.labels).unwrap_or_default();
+    if labels.get("cronduit.job_name").map(String::as_str) != Some(job_name) {
+        bail!("refusing to remove {name}: cronduit.job_name label is not {job_name}");
+    }
+    let id = inspect.id.context("executor container has no ID")?;
+    match docker
+        .remove_container(
+            &id,
+            Some(RemoveContainerOptions {
+                force: true,
+                v: true,
+                ..Default::default()
+            }),
+        )
+        .await
+    {
+        Ok(())
+        | Err(Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => Ok(()),
+        Err(e) => Err(e).context("remove executor container"),
+    }
+}
+
 fn connect(endpoint: &str) -> Result<Docker> {
     // Match the former fixtures: DOCKER_TLS_VERIFY=0 means plain HTTP.
     // Bollard's generic defaults instead test only whether the variable exists.

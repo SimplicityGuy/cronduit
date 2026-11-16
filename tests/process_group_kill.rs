@@ -231,6 +231,7 @@ async fn stop_kills_shell_pipeline_grandchildren() {
             active_clone,
             test_webhook_tx(),
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await
     });
@@ -332,6 +333,7 @@ async fn stop_kills_backgrounded_processes_in_script() {
             active_clone,
             test_webhook_tx(),
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         )
         .await
     });

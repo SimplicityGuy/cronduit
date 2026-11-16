@@ -15,6 +15,7 @@ pub mod docker_orphan;
 pub mod docker_preflight;
 pub mod docker_pull;
 pub mod fire;
+pub mod job_env;
 pub mod log_pipeline;
 pub mod random;
 pub mod reload;
@@ -82,9 +83,20 @@ pub struct SchedulerLoop {
     /// can emit `RunFinalized` at step 7d. The worker is spawned by the
     /// bin layer (`src/cli/run.rs`) at startup with the matching Receiver.
     pub webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
+    /// Resolved `[jobs.env]` per job name, built from the in-memory config at
+    /// startup and rebuilt by `reload::do_reload` on every successful reload.
+    /// The ONLY source of env values for docker runs: `config_json` holds
+    /// just `env_keys` (T-02-03). See `job_env`.
+    pub job_env: job_env::JobEnvMap,
 }
 
 impl SchedulerLoop {
+    /// The resolved `[jobs.env]` for `job`, as of the latest successful
+    /// (re)load. Each run gets its own `Arc` clone at spawn time.
+    fn env_for(&self, job: &DbJob) -> job_env::JobEnv {
+        job_env::env_for(&self.job_env, &job.name)
+    }
+
     /// Run the main scheduler loop until cancellation.
     ///
     /// D-01: Selects over next-fire sleep, join_set reaping, and cancel token.
@@ -140,6 +152,7 @@ impl SchedulerLoop {
                                 self.active_runs.clone(),
                                 self.webhook_tx.clone(),
                                 scheduled_for,
+                                self.env_for(job),
                             ));
                             tracing::warn!(
                                 target: "cronduit.scheduler",
@@ -170,6 +183,7 @@ impl SchedulerLoop {
                                 self.active_runs.clone(),
                                 self.webhook_tx.clone(),
                                 scheduled_for,
+                                self.env_for(job),
                             ));
                             tracing::info!(
                                 target: "cronduit.scheduler",
@@ -218,6 +232,7 @@ impl SchedulerLoop {
                                     self.active_runs.clone(),
                                     self.webhook_tx.clone(),
                                     None,
+                                    self.env_for(job),
                                 ));
                                 tracing::info!(
                                     target: "cronduit.scheduler",
@@ -250,6 +265,7 @@ impl SchedulerLoop {
                                     child_cancel,
                                     self.active_runs.clone(),
                                     self.webhook_tx.clone(),
+                                    self.env_for(job),
                                 ));
                                 tracing::info!(
                                     target: "cronduit.scheduler",
@@ -287,6 +303,7 @@ impl SchedulerLoop {
                                 &self.pool,
                                 &self.config_path,
                                 &mut self.jobs,
+                                &mut self.job_env,
                                 self.tz,
                             ).await;
                             if let Some(h) = new_heap {
@@ -323,6 +340,7 @@ impl SchedulerLoop {
                                                 self.active_runs.clone(),
                                                 self.webhook_tx.clone(),
                                                 None,
+                                                self.env_for(job),
                                             ));
                                         }
                                     }
@@ -343,6 +361,7 @@ impl SchedulerLoop {
                                                 child_cancel,
                                                 self.active_runs.clone(),
                                                 self.webhook_tx.clone(),
+                                                self.env_for(job),
                                             ));
                                         } else {
                                             tracing::warn!(
@@ -407,7 +426,7 @@ impl SchedulerLoop {
                                     "coalescing queued reload requests into one additional reload"
                                 );
                                 let (coal_result, coal_heap) = reload::do_reload(
-                                    &self.pool, &self.config_path, &mut self.jobs, self.tz,
+                                    &self.pool, &self.config_path, &mut self.jobs, &mut self.job_env, self.tz,
                                 ).await;
                                 if let Some(h) = coal_heap {
                                     heap = h;
@@ -578,6 +597,8 @@ impl SchedulerLoop {
 /// Spawn the scheduler loop on a new tokio task.
 ///
 /// Accepts `Vec<DbJob>` and converts to `HashMap` internally for O(1) lookup.
+/// `job_env` is the resolved `[jobs.env]` map built from the startup config
+/// (`job_env::build_job_env_map`); `do_reload` keeps it current.
 /// Returns a `JoinHandle` that resolves when the loop exits (on cancellation).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(
@@ -591,6 +612,7 @@ pub fn spawn(
     config_path: PathBuf,
     active_runs: Arc<RwLock<HashMap<i64, RunEntry>>>,
     webhook_tx: tokio::sync::mpsc::Sender<crate::webhooks::RunFinalized>,
+    job_env: job_env::JobEnvMap,
 ) -> JoinHandle<()> {
     let jobs_map: HashMap<i64, DbJob> = jobs.into_iter().map(|j| (j.id, j)).collect();
     let scheduler = SchedulerLoop {
@@ -604,6 +626,7 @@ pub fn spawn(
         config_path,
         active_runs,
         webhook_tx,
+        job_env,
     };
     tokio::spawn(scheduler.run())
 }
@@ -684,6 +707,7 @@ mod tests {
             test_active_runs(),
             webhook_tx_test,
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         ));
 
         // Cancel after a small delay to let the run start.
@@ -756,6 +780,7 @@ mod tests {
             test_active_runs(),
             webhook_tx_test,
             None, // Phase 21 FCTX-06: test passes None
+            Default::default(),
         ));
 
         // Cancel immediately.

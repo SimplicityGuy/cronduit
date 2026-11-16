@@ -8,10 +8,11 @@
 //!
 //! These are pure unit tests — no Docker daemon required.
 
-use cronduit::scheduler::docker::DockerJobConfig;
+use cronduit::scheduler::docker::{DockerJobConfig, container_env};
 use cronduit::scheduler::docker_preflight::PreflightError;
 use cronduit::scheduler::docker_pull::PullError;
-use std::collections::HashMap;
+use secrecy::SecretString;
+use std::collections::{BTreeMap, HashMap};
 
 /// DOCKER-04: volumes bind mount strings are preserved as-is.
 ///
@@ -32,61 +33,44 @@ fn docker_config_volumes_preserved_for_host_config() {
     assert_eq!(volumes[1], "/data:/data");
 }
 
-/// DOCKER-04: env vars are stored as a map and can be converted to KEY=VALUE format.
+/// DOCKER-04 / cronduit-1b1: `config_json` never carries env values.
 ///
-/// The executor converts config.env into Vec<String> of "KEY=VALUE" pairs
-/// for ContainerCreateBody.env. This test verifies the source map is correct.
+/// `[jobs.env]` values are `SecretString`s that travel from the in-memory
+/// config to the executor (`scheduler::job_env`), not through `config_json`,
+/// which stores only `env_keys` (T-02-03). An `env` key in `config_json` is
+/// ignored, so the DB cannot become a second, stale source of env values.
 #[test]
-fn docker_config_env_vars_parse_to_map() {
+fn docker_config_ignores_env_in_config_json() {
     let json = r#"{
         "image": "myapp:v1",
-        "env": {"DATABASE_URL": "postgres://localhost/db", "SECRET_KEY": "s3cr3t"}
+        "env_keys": ["DATABASE_URL"],
+        "env": {"DATABASE_URL": "postgres://localhost/db"}
     }"#;
 
     let config: DockerJobConfig = serde_json::from_str(json).unwrap();
-
-    assert_eq!(
-        config.env.get("DATABASE_URL").unwrap(),
-        "postgres://localhost/db"
+    assert_eq!(config.image, "myapp:v1");
+    let dbg = format!("{config:?}");
+    assert!(
+        !dbg.contains("postgres://localhost/db"),
+        "DockerJobConfig must not hold env values: {dbg}"
     );
-    assert_eq!(config.env.get("SECRET_KEY").unwrap(), "s3cr3t");
-    assert_eq!(config.env.len(), 2);
 }
 
 /// DOCKER-04: env var formatting as KEY=VALUE strings matches Docker API expectations.
 ///
-/// The executor uses format!("{k}={v}") for each env entry.
-/// This test verifies the formatted output is correct for the Docker API.
+/// `container_env` builds `ContainerCreateBody.env` from the job's resolved
+/// `[jobs.env]`; it is the one place the secret values are exposed.
 #[test]
-fn docker_config_env_vars_format_as_key_value_strings() {
-    let json = r#"{"image": "alpine:latest", "env": {"FOO": "bar", "PATH": "/usr/bin"}}"#;
-    let config: DockerJobConfig = serde_json::from_str(json).unwrap();
+fn docker_container_env_formats_key_value_strings() {
+    let mut env = BTreeMap::new();
+    env.insert("FOO".to_string(), SecretString::from("bar"));
+    env.insert("PATH".to_string(), SecretString::from("/usr/bin"));
+    env.insert("EQ".to_string(), SecretString::from("a=b"));
 
-    // Replicate the formatting done in execute_docker.
-    let env_vec: Vec<String> = config.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    let env_vec = container_env(&env).expect("non-empty env produces Some");
+    assert_eq!(env_vec, vec!["EQ=a=b", "FOO=bar", "PATH=/usr/bin"]);
 
-    // Must produce exactly 2 KEY=VALUE strings.
-    assert_eq!(env_vec.len(), 2);
-
-    // Both must be in KEY=VALUE format.
-    for entry in &env_vec {
-        assert!(entry.contains('='), "env entry must be KEY=VALUE: {entry}");
-        let parts: Vec<&str> = entry.splitn(2, '=').collect();
-        assert_eq!(
-            parts.len(),
-            2,
-            "env entry must split into exactly key and value"
-        );
-    }
-
-    // Verify specific values are present.
-    let mut found = HashMap::new();
-    for entry in &env_vec {
-        let parts: Vec<&str> = entry.splitn(2, '=').collect();
-        found.insert(parts[0].to_string(), parts[1].to_string());
-    }
-    assert_eq!(found.get("FOO").unwrap(), "bar");
-    assert_eq!(found.get("PATH").unwrap(), "/usr/bin");
+    assert_eq!(container_env(&BTreeMap::new()), None);
 }
 
 /// DOCKER-04: container_name field is optional and passes through.
@@ -138,11 +122,9 @@ fn docker_label_keys_match_orphan_reconciliation_filter() {
 /// T-04-03: Labels contain only run_id (integer) and job_name (string), never secrets.
 #[test]
 fn docker_labels_do_not_contain_env_var_values() {
-    let json = r#"{
-        "image": "alpine:latest",
-        "env": {"SECRET": "my-secret-value", "PASSWORD": "hunter2"}
-    }"#;
-    let config: DockerJobConfig = serde_json::from_str(json).unwrap();
+    let mut env = BTreeMap::new();
+    env.insert("SECRET".to_string(), SecretString::from("my-secret-value"));
+    env.insert("PASSWORD".to_string(), SecretString::from("hunter2"));
 
     // Simulate the label building.
     let run_id: i64 = 1;
@@ -168,8 +150,8 @@ fn docker_labels_do_not_contain_env_var_values() {
         );
     }
 
-    // Config env vars exist (not silently dropped).
-    assert_eq!(config.env.len(), 2);
+    // Env vars exist (not silently dropped) and reach the container env.
+    assert_eq!(container_env(&env).map(|v| v.len()), Some(2));
 }
 
 /// DOCKER-06: DockerExecResult.image_digest carries the container's image digest.

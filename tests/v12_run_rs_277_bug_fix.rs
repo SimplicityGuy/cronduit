@@ -96,6 +96,7 @@ async fn docker_run_writes_real_container_id_not_digest() {
     let docker_result = execute_docker(
         &docker,
         config_json,
+        &Default::default(),
         "v12-fctx-bug-fix-cid",
         run_id,
         Duration::from_secs(30),
@@ -186,6 +187,7 @@ async fn docker_run_writes_image_digest_as_sha256() {
     let docker_result = execute_docker(
         &docker,
         config_json,
+        &Default::default(),
         "v12-fctx-bug-fix-digest",
         run_id,
         Duration::from_secs(30),

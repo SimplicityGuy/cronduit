@@ -94,6 +94,7 @@ labels = {{ "backup.exclude" = "true" }}
     let result = execute_docker(
         &docker,
         &config_json,
+        &Default::default(),
         "labels-replace-job",
         43,
         Duration::from_secs(30),

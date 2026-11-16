@@ -77,7 +77,14 @@ async fn random_schedule_stable_across_unchanged_reload() {
     // 3. Reload with SAME config (no changes)
     let enabled = get_enabled_jobs(&pool).await.unwrap();
     let mut jobs: HashMap<i64, DbJob> = enabled.into_iter().map(|j| (j.id, j)).collect();
-    let (result, _) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
+    let (result, _) = do_reload(
+        &pool,
+        config_file.path(),
+        &mut jobs,
+        &mut Default::default(),
+        chrono_tz::UTC,
+    )
+    .await;
 
     assert_eq!(result.status, ReloadStatus::Ok);
 
@@ -112,7 +119,14 @@ async fn random_schedule_rerandomized_on_change() {
 
     let enabled = get_enabled_jobs(&pool).await.unwrap();
     let mut jobs: HashMap<i64, DbJob> = enabled.into_iter().map(|j| (j.id, j)).collect();
-    let (result, _) = do_reload(&pool, config_file.path(), &mut jobs, chrono_tz::UTC).await;
+    let (result, _) = do_reload(
+        &pool,
+        config_file.path(),
+        &mut jobs,
+        &mut Default::default(),
+        chrono_tz::UTC,
+    )
+    .await;
 
     assert_eq!(result.status, ReloadStatus::Ok);
     assert_eq!(result.updated, 1, "job-a should be updated");
