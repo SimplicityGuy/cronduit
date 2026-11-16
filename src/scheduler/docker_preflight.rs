@@ -22,8 +22,12 @@ pub enum PreflightError {
     NetworkNotFound(String),
     /// Docker (or a socket proxy in front of it) answered 401/403 for an
     /// endpoint. The daemon is reachable; the endpoint is denied. Fields are
-    /// the denied `METHOD /path` and the proxy allowlist group to enable.
-    PermissionDenied { endpoint: String, hint: String },
+    /// the HTTP status (401/403), the denied `METHOD /path` and the proxy allowlist group to enable.
+    PermissionDenied {
+        status: u16,
+        endpoint: String,
+        hint: String,
+    },
 }
 
 impl PreflightError {
@@ -35,8 +39,14 @@ impl PreflightError {
                 format!("network_target_unavailable: {name}")
             }
             Self::NetworkNotFound(name) => format!("network_not_found: {name}"),
-            Self::PermissionDenied { endpoint, hint } => {
-                format!("docker_permission_denied: Docker denied {endpoint} (HTTP 403). {hint}")
+            Self::PermissionDenied {
+                status,
+                endpoint,
+                hint,
+            } => {
+                format!(
+                    "docker_permission_denied: Docker denied {endpoint} (HTTP {status}). {hint}"
+                )
             }
         }
     }
@@ -89,9 +99,10 @@ pub async fn preflight_network(docker: &Docker, network_mode: &str) -> Result<()
 fn classify_error(err: &bollard::errors::Error, endpoint: String, group: &str) -> PreflightError {
     match err {
         bollard::errors::Error::DockerResponseServerError {
-            status_code: 401 | 403,
+            status_code: status @ (401 | 403),
             ..
         } => PreflightError::PermissionDenied {
+            status: *status,
             endpoint,
             hint: format!(
                 "If Docker is behind a socket proxy, add {group}=1 to its allowlist \
@@ -191,6 +202,7 @@ mod tests {
         let msg = err.to_error_message();
         assert!(matches!(err, PreflightError::PermissionDenied { .. }));
         assert!(msg.starts_with("docker_permission_denied:"), "{msg}");
+        assert!(msg.contains("HTTP 403"), "{msg}");
         assert!(msg.contains("GET /networks/mynet"), "{msg}");
         assert!(msg.contains("NETWORKS=1"), "{msg}");
         assert!(!msg.contains("docker_unavailable"), "{msg}");
@@ -211,7 +223,13 @@ mod tests {
     #[test]
     fn test_401_also_permission_denied() {
         let err = classify_error(&server_err(401), "GET /networks/x".into(), "NETWORKS");
-        assert!(matches!(err, PreflightError::PermissionDenied { .. }));
+        assert!(matches!(
+            err,
+            PreflightError::PermissionDenied { status: 401, .. }
+        ));
+        let msg = err.to_error_message();
+        assert!(msg.contains("HTTP 401"), "{msg}");
+        assert!(!msg.contains("403"), "{msg}");
     }
 
     #[test]
