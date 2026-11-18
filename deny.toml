@@ -20,14 +20,16 @@ targets = [
 all-features = true
 
 [advisories]
-# RustSec advisory DB (default source). No allowlisted IDs in rc.1.
-# If 15-02 surfaces a pre-existing advisory hit on a transitive dep, add
-# the ID here with a comment explaining why it's not exploitable in our
-# code path. Format:
-#   ignore = [
-#       "RUSTSEC-YYYY-NNNN", # rustls path X — analysis link
-#   ]
-ignore = []
+# These are maintenance notices, not reported memory-safety or correctness
+# vulnerabilities. croner and sqlx still expose chrono types, so replacing only
+# our direct dependency cannot remove them. Revisit the complete dependency
+# chain by 2026-12-18; all other RustSec findings remain blocking.
+# https://github.com/chronotope/chrono/issues/1768
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono maintenance notice; croner/sqlx still require it; review by 2026-12-18" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz maintenance notice; replace together with the scheduler's chrono API; review by 2026-12-18" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime maintenance notice in the same chrono migration; review by 2026-12-18" },
+]
 
 [licenses]
 # v1.0/v1.1 posture: every direct or transitive dep must carry one of
